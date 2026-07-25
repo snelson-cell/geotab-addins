@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<script src="https://cdn.jsdelivr.net/npm/apexcharts@3.49.1/dist/apexcharts.min.js"></script>
+<style>
+  #sv-wrap{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:16px;color:#1a2b45;}
+  #sv-wrap h2{font-size:16px;font-weight:600;margin:0;}
+  #sv-sub{font-size:12.5px;color:#8a97a8;margin:2px 0 6px;}
+  #sv-chart{max-width:840px;}
+</style>
+</head>
+<body>
+<div id="sv-wrap">
+  <h2>Speeding rate distribution by office</h2>
+  <div id="sv-sub">Loading… (fetching 30 days of events + distance)</div>
+  <div id="sv-chart"></div>
+</div>
+
+<script>
+geotab.addin.speedingViolin = function () {
+  'use strict';
+  var chart = null;
+  var MIN_VEHICLES = 10;   // offices below this are omitted (not enough for a distribution)
+  var MIN_MILES = 50;      // vehicles below this in 30d excluded (insufficient exposure)
+  var LEAF = {b27AB:'Orlando',b27AC:'Tampa',b27AD:'ATL North',b27AE:'ATL South',b27AF:'Chicago',
+              b27B0:'Indianapolis',b27B1:'N Indiana',b27B2:'Louisville',b27B3:'Detroit',
+              b27B4:'Grand Rapids',b27B5:'Cincinnati',b27B6:'Cleveland',b27B7:'Columbus',b27B8:'American Fork'};
+  var COLORS=['#c0392b','#e8743b','#2b7de9','#27ae60','#8e44ad','#16a085','#d35400','#2c3e50'];
+
+  function median(a){var s=a.slice().sort(function(x,y){return x-y;});var m=s.length>>1;
+    return s.length%2?s[m]:(s[m-1]+s[m])/2;}
+
+  function renderViolin(el, byOffice){
+    var offices = Object.keys(byOffice).sort(function(a,b){return median(byOffice[b])-median(byOffice[a]);});
+    var n = offices.length;
+    if(!n){ document.getElementById('sv-sub').textContent='No office in your data scope has enough vehicles yet.'; return; }
+    var series = offices.map(function(off, i){
+      var vals = byOffice[off];
+      var min=Math.min.apply(null,vals), max=Math.max.apply(null,vals);
+      var bins=16, bw=((max-min)/bins)||1;
+      var counts=new Array(bins).fill(0);
+      vals.forEach(function(v){counts[Math.min(bins-1,Math.floor((v-min)/bw))]++;});
+      var maxc=Math.max.apply(null,counts)||1;
+      var yc = n - i;
+      var pts = vals.map(function(v){
+        var dens = counts[Math.min(bins-1,Math.floor((v-min)/bw))]/maxc;
+        var jit = (Math.random()*2-1)*dens*0.46;
+        return {x:v, y:+(yc+jit).toFixed(3)};
+      });
+      return {name:off, data:pts};
+    });
+    var anns = offices.map(function(off,i){
+      return {y:n-i, borderColor:'#e6ebf1',
+        label:{text:off+' (n='+byOffice[off].length+')', position:'left', textAnchor:'start', offsetX:4, offsetY:-6,
+          borderColor:'transparent', style:{fontSize:'13px',fontWeight:700,color:'#1a2b45',background:'transparent'}}};
+    });
+    if(chart){chart.destroy();}
+    chart = new ApexCharts(el,{
+      chart:{type:'scatter',height:120+n*120,toolbar:{show:false},fontFamily:'inherit'},
+      series:series, colors:COLORS.slice(0,n),
+      markers:{size:5,strokeWidth:0}, fill:{opacity:0.65},
+      xaxis:{title:{text:'Speeding events per 1,000 mi'},tickAmount:8,labels:{formatter:function(v){return Math.round(v);}}},
+      yaxis:{min:0.4,max:n+0.6,labels:{show:false},axisTicks:{show:false},axisBorder:{show:false}},
+      annotations:{yaxis:anns}, legend:{show:false}, grid:{borderColor:'#eef1f5'},
+      tooltip:{custom:function(o){var p=o.w.config.series[o.seriesIndex].data[o.dataPointIndex];
+        return '<div style="padding:6px 9px;font-size:12px"><b>'+o.w.config.series[o.seriesIndex].name+
+        '</b><br>'+Math.round(p.x)+' speeding / 1,000 mi</div>';}}
+    });
+    chart.render();
+  }
+
+  function load(api){
+    var sub = document.getElementById('sv-sub');
+    sub.textContent = 'Loading… (fetching 30 days of events + distance)';
+    var to = new Date();
+    var from = new Date(to.getTime() - 30*24*3600*1000);
+    var fromISO = from.toISOString(), toISO = to.toISOString();
+    api.multiCall([
+      ['Get', {typeName:'Device', resultsLimit:50000}],
+      ['Get', {typeName:'ExceptionEvent', resultsLimit:50000,
+               search:{fromDate:fromISO, toDate:toISO, ruleSearch:{id:'RuleGpsSpeedingWindowId'}}}],
+      ['Get', {typeName:'Trip', resultsLimit:50000, search:{fromDate:fromISO, toDate:toISO}}]
+    ], function(res){
+      var devices=res[0]||[], events=res[1]||[], trips=res[2]||[];
+      var office={}, spd={}, miles={};
+      devices.forEach(function(d){
+        (d.groups||[]).forEach(function(g){ if(LEAF[g.id]) office[d.id]=LEAF[g.id]; });
+      });
+      events.forEach(function(e){ var id=e.device&&e.device.id; if(id) spd[id]=(spd[id]||0)+1; });
+      trips.forEach(function(t){ var id=t.device&&t.device.id; if(id) miles[id]=(miles[id]||0)+(t.distance||0)*0.621371; });
+      var byOffice={};
+      Object.keys(office).forEach(function(id){
+        var mi=miles[id]||0; if(mi<MIN_MILES) return;
+        var rate = Math.round((spd[id]||0)/(mi/1000)*10)/10;
+        (byOffice[office[id]]=byOffice[office[id]]||[]).push(rate);
+      });
+      Object.keys(byOffice).forEach(function(o){ if(byOffice[o].length<MIN_VEHICLES) delete byOffice[o]; });
+      var total = Object.keys(byOffice).reduce(function(s,o){return s+byOffice[o].length;},0);
+      sub.textContent = total+' vehicles across '+Object.keys(byOffice).length+
+        ' offices (≥'+MIN_VEHICLES+' vehicles) · previous 30 days · in your data scope';
+      renderViolin(document.getElementById('sv-chart'), byOffice);
+    }, function(err){ sub.textContent = 'Error loading data: '+err; });
+  }
+
+  return {
+    initialize: function(api, state, cb){ cb(); },
+    focus: function(api, state){ load(api); },
+    blur: function(){}
+  };
+};
+</script>
+</body>
+</html>
