@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<!-- ApexCharts from CDN. If your MyGeotab blocks it (blank chart), see INSTALL.md
+     "Troubleshooting" to inline the library instead. -->
+<script src="https://cdn.jsdelivr.net/npm/apexcharts@3.49.1/dist/apexcharts.min.js"></script>
+<style>
+  #fbt-wrap{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:16px;color:#1a2b45;}
+  #fbt-wrap h2{font-size:16px;font-weight:600;margin:0;}
+  #fbt-sub{font-size:12.5px;color:#8a97a8;margin:2px 0 4px;}
+  #fbt-chart{max-width:760px;}
+</style>
+</head>
+<body>
+<div id="fbt-wrap">
+  <h2>Fleet by Vehicle Type</h2>
+  <div id="fbt-sub">Loading…</div>
+  <div id="fbt-chart"></div>
+</div>
+
+<script>
+// Register the add-in. The name ("fleetByType") is arbitrary but must be unique.
+geotab.addin.fleetByType = function () {
+  'use strict';
+  var chart = null;
+
+  function cleanLabel(mk, md) {
+    if (!md) return null;
+    md = md.replace(/\s+Truck$/, '').trim();
+    // Ram etc. decode to a bare series number -> prefix the make
+    if (/^\d+$/.test(md) && mk) return mk + ' ' + md;
+    return mk ? mk + ' ' + md : md;
+  }
+
+  function render(rows, total) {
+    var el = document.getElementById('fbt-chart');
+    if (chart) { chart.destroy(); }
+    chart = new ApexCharts(el, {
+      chart: { type: 'bar', height: Math.max(320, rows.length * 40), toolbar: { show: false },
+               fontFamily: 'inherit', animations: { speed: 500 } },
+      series: [{ name: 'Vehicles', data: rows.map(function (r) { return r[1]; }) }],
+      xaxis: { categories: rows.map(function (r) { return r[0]; }) },
+      plotOptions: { bar: { horizontal: true, distributed: true, barHeight: '80%', isFunnel: true } },
+      colors: ['#1f5fb8','#2b7de9','#3f8bec','#5199ef','#63a6f1','#78b4f4',
+               '#8ec2f6','#a6d0f9','#bcdcfb','#d0e6fc','#e2f0fe','#eef6ff'],
+      dataLabels: { enabled: true,
+        formatter: function (val, opt) { return opt.w.globals.labels[opt.dataPointIndex] + ':  ' + val; },
+        style: { fontSize: '13px', fontWeight: 600, colors: ['#0e2036'] } },
+      legend: { show: false }, grid: { show: false }, yaxis: { labels: { show: false } },
+      tooltip: { y: { formatter: function (v) { return v + ' (' + (v / total * 100).toFixed(1) + '% of fleet)'; } } }
+    });
+    chart.render();
+  }
+
+  function load(api) {
+    document.getElementById('fbt-sub').textContent = 'Loading…';
+    // Runs in the signed-in user's session -> Geotab auto-scopes results to
+    // THEIR group/data permissions. An OM sees their office; an exec sees all.
+    api.call('Get', { typeName: 'Device', resultsLimit: 50000 }, function (devices) {
+      var counts = {};
+      (devices || []).forEach(function (d) {
+        var label = cleanLabel(d.vinInfoMake, d.vinInfoModel);
+        if (label) counts[label] = (counts[label] || 0) + 1;
+      });
+      var rows = Object.keys(counts).map(function (k) { return [k, counts[k]]; })
+                   .sort(function (a, b) { return b[1] - a[1]; });
+      var total = rows.reduce(function (s, r) { return s + r[1]; }, 0);
+      document.getElementById('fbt-sub').textContent =
+        total + " VIN'd vehicles · " + rows.length + ' models (in your data scope)';
+      render(rows, total);
+    }, function (err) {
+      document.getElementById('fbt-sub').textContent = 'Error loading devices: ' + err;
+    });
+  }
+
+  return {
+    initialize: function (api, state, callback) { callback(); },
+    focus: function (api, state) { load(api); },
+    blur: function () {}
+  };
+};
+</script>
+</body>
+</html>
