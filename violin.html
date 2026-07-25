@@ -39,7 +39,11 @@ geotab.addin.speedingViolin = function () {
     var H = 150 + n*170;
     var perUnit = (H-80)/(n+0.8);
     var labelDY = -(JIT*perUnit + 14);
-    var series = offices.map(function(off, i){
+    // fleet-wide speeding-rate thresholds (median / p80, rounded) — fixed so
+    // "High" means the same for every viewer regardless of scope.
+    var HI = 250, LO = 80;
+    var buckets = {High:[], Moderate:[], Low:[]};
+    offices.forEach(function(off, i){
       var vals = byOffice[off];
       var min=Math.min.apply(null,vals), max=Math.max.apply(null,vals);
       var bins=16, bw=((max-min)/bins)||1;
@@ -47,13 +51,18 @@ geotab.addin.speedingViolin = function () {
       vals.forEach(function(v){counts[Math.min(bins-1,Math.floor((v-min)/bw))]++;});
       var maxc=Math.max.apply(null,counts)||1;
       var yc = n - i;
-      var pts = vals.map(function(v){
+      vals.forEach(function(v){
         var dens = counts[Math.min(bins-1,Math.floor((v-min)/bw))]/maxc;
         var jit = (Math.random()*2-1)*dens*JIT;
-        return {x:v, y:+(yc+jit).toFixed(3)};
+        var pt = {x:v, y:+(yc+jit).toFixed(3), office:off};
+        (v>=HI ? buckets.High : (v>=LO ? buckets.Moderate : buckets.Low)).push(pt);
       });
-      return {name:off, data:pts};
     });
+    var series = [
+      {name:'High (≥250)',       data:buckets.High},
+      {name:'Moderate (80–249)', data:buckets.Moderate},
+      {name:'Low (<80)',         data:buckets.Low}
+    ];
     var anns = [];
     offices.forEach(function(off,i){
       anns.push({y:n-i, borderColor:'transparent',
@@ -65,15 +74,16 @@ geotab.addin.speedingViolin = function () {
     if(chart){chart.destroy();}
     chart = new ApexCharts(el,{
       chart:{type:'scatter',height:H,toolbar:{show:false},fontFamily:'inherit'},
-      series:series, colors:COLORS.slice(0,n),
-      markers:{size:5,strokeWidth:0}, fill:{opacity:0.7},
+      series:series, colors:['#c0392b','#f2994a','#27ae60'],
+      markers:{size:5,strokeWidth:0}, fill:{opacity:0.78},
       xaxis:{title:{text:'Speeding events per 1,000 mi'},tickAmount:8,labels:{formatter:function(v){return Math.round(v);}}},
       yaxis:{min:0.3,max:n+0.7,labels:{show:false},axisTicks:{show:false},axisBorder:{show:false}},
-      annotations:{yaxis:anns}, legend:{show:false},
+      annotations:{yaxis:anns},
+      legend:{show:true, position:'top', horizontalAlign:'right', fontSize:'12px', markers:{radius:12}},
       grid:{borderColor:'#eef1f5', xaxis:{lines:{show:true}}, yaxis:{lines:{show:false}}, padding:{left:12}},
       tooltip:{custom:function(o){var p=o.w.config.series[o.seriesIndex].data[o.dataPointIndex];
-        return '<div style="padding:6px 9px;font-size:12px"><b>'+o.w.config.series[o.seriesIndex].name+
-        '</b><br>'+Math.round(p.x)+' speeding / 1,000 mi</div>';}}
+        return '<div style="padding:6px 9px;font-size:12px"><b>'+p.office+
+        '</b><br>'+Math.round(p.x)+' speeding / 1,000 mi<br>'+o.w.config.series[o.seriesIndex].name+' risk</div>';}}
     });
     chart.render();
   }
