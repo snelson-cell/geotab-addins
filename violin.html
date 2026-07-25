@@ -71,14 +71,24 @@ geotab.addin.speedingViolin = function () {
           style:{fontSize:'13px',fontWeight:700,color:'#1a2b45',background:'transparent'}}});
       if(i<n-1) anns.push({y:n-i-0.5, borderColor:'#eef1f5', strokeDashArray:0});
     });
+    var summary = buckets.High.length+' High · '+buckets.Moderate.length+' Moderate · '+buckets.Low.length+' Low';
+    var xanns = [
+      {x:LO, borderColor:'#e6b23a', strokeDashArray:4,
+       label:{text:'Moderate ≥'+LO, orientation:'horizontal', position:'top', offsetY:-2,
+         style:{fontSize:'10px', color:'#9c7415', background:'#fdf6e3'}}},
+      {x:HI, borderColor:'#d16a55', strokeDashArray:4,
+       label:{text:'High ≥'+HI, orientation:'horizontal', position:'top', offsetY:-2,
+         style:{fontSize:'10px', color:'#a03d28', background:'#fbece8'}}}
+    ];
     if(chart){chart.destroy();}
     chart = new ApexCharts(el,{
       chart:{type:'scatter',height:H,toolbar:{show:false},fontFamily:'inherit'},
+      subtitle:{text:summary, align:'left', offsetY:2, style:{fontSize:'12.5px',fontWeight:600,color:'#5a6b80'}},
       series:series, colors:['#c0392b','#f2994a','#27ae60'],
       markers:{size:5,strokeWidth:0}, fill:{opacity:0.78},
       xaxis:{title:{text:'Speeding events per 1,000 mi'},tickAmount:8,labels:{formatter:function(v){return Math.round(v);}}},
       yaxis:{min:0.3,max:n+0.7,labels:{show:false},axisTicks:{show:false},axisBorder:{show:false}},
-      annotations:{yaxis:anns},
+      annotations:{yaxis:anns, xaxis:xanns},
       legend:{show:true, position:'top', horizontalAlign:'right', fontSize:'12px', markers:{radius:12}},
       grid:{borderColor:'#eef1f5', xaxis:{lines:{show:true}}, yaxis:{lines:{show:false}}, padding:{left:12}},
       tooltip:{custom:function(o){var p=o.w.config.series[o.seriesIndex].data[o.dataPointIndex];
