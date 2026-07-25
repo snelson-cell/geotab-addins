@@ -35,6 +35,10 @@ geotab.addin.speedingViolin = function () {
     var offices = Object.keys(byOffice).sort(function(a,b){return median(byOffice[b])-median(byOffice[a]);});
     var n = offices.length;
     if(!n){ document.getElementById('sv-sub').textContent='No office in your data scope has enough vehicles yet.'; return; }
+    var JIT = 0.30;
+    var H = 150 + n*170;
+    var perUnit = (H-80)/(n+0.8);
+    var labelDY = -(JIT*perUnit + 14);
     var series = offices.map(function(off, i){
       var vals = byOffice[off];
       var min=Math.min.apply(null,vals), max=Math.max.apply(null,vals);
@@ -45,24 +49,28 @@ geotab.addin.speedingViolin = function () {
       var yc = n - i;
       var pts = vals.map(function(v){
         var dens = counts[Math.min(bins-1,Math.floor((v-min)/bw))]/maxc;
-        var jit = (Math.random()*2-1)*dens*0.46;
+        var jit = (Math.random()*2-1)*dens*JIT;
         return {x:v, y:+(yc+jit).toFixed(3)};
       });
       return {name:off, data:pts};
     });
-    var anns = offices.map(function(off,i){
-      return {y:n-i, borderColor:'#e6ebf1',
-        label:{text:off+' (n='+byOffice[off].length+')', position:'left', textAnchor:'start', offsetX:4, offsetY:-6,
-          borderColor:'transparent', style:{fontSize:'13px',fontWeight:700,color:'#1a2b45',background:'transparent'}}};
+    var anns = [];
+    offices.forEach(function(off,i){
+      anns.push({y:n-i, borderColor:'transparent',
+        label:{text:off+' (n='+byOffice[off].length+')', position:'left', textAnchor:'start',
+          offsetX:6, offsetY:labelDY, borderColor:'transparent',
+          style:{fontSize:'13px',fontWeight:700,color:'#1a2b45',background:'transparent'}}});
+      if(i<n-1) anns.push({y:n-i-0.5, borderColor:'#eef1f5', strokeDashArray:0});
     });
     if(chart){chart.destroy();}
     chart = new ApexCharts(el,{
-      chart:{type:'scatter',height:120+n*120,toolbar:{show:false},fontFamily:'inherit'},
+      chart:{type:'scatter',height:H,toolbar:{show:false},fontFamily:'inherit'},
       series:series, colors:COLORS.slice(0,n),
-      markers:{size:5,strokeWidth:0}, fill:{opacity:0.65},
+      markers:{size:5,strokeWidth:0}, fill:{opacity:0.7},
       xaxis:{title:{text:'Speeding events per 1,000 mi'},tickAmount:8,labels:{formatter:function(v){return Math.round(v);}}},
-      yaxis:{min:0.4,max:n+0.6,labels:{show:false},axisTicks:{show:false},axisBorder:{show:false}},
-      annotations:{yaxis:anns}, legend:{show:false}, grid:{borderColor:'#eef1f5'},
+      yaxis:{min:0.3,max:n+0.7,labels:{show:false},axisTicks:{show:false},axisBorder:{show:false}},
+      annotations:{yaxis:anns}, legend:{show:false},
+      grid:{borderColor:'#eef1f5', xaxis:{lines:{show:true}}, yaxis:{lines:{show:false}}, padding:{left:12}},
       tooltip:{custom:function(o){var p=o.w.config.series[o.seriesIndex].data[o.dataPointIndex];
         return '<div style="padding:6px 9px;font-size:12px"><b>'+o.w.config.series[o.seriesIndex].name+
         '</b><br>'+Math.round(p.x)+' speeding / 1,000 mi</div>';}}
