@@ -1,0 +1,11 @@
+# This repo is PUBLIC and frontend-only. Never commit credentials or the
+# Python data tooling (which lives in ~/Documents/Archive/GeoTab, off GitHub).
+*.py
+NOTES.md
+*.json
+!config/*.json
+*.csv
+.env
+.DS_Store
+credentials*
+secrets*
