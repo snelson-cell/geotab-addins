@@ -92,6 +92,23 @@ GitHub Pages rebuilds in ~30–60 s at the same URL. In MyGeotab, hard-refresh
   the vehicle *now*, not who was driving during the 30-day window the events
   come from — hence the "current driver:" prefix rather than a bare name.
 - **Live fetch only** — never bake in a data snapshot, or role-scoping breaks.
+- **Ship CSS from JavaScript, not from `<head>`.** MyGeotab injects the add-in
+  HTML into the host page and the `<head>` goes with it, so a `<style>` block
+  there is silently dropped — the chart still renders (ApexCharts injects its
+  own CSS from JS) while everything around it appears unstyled. `injectStyles()`
+  appends the stylesheet at `initialize()`. The test harness must not add a
+  `<style>` of its own, or it masks this.
+- **Size the chart explicitly and re-render on container resize.** ApexCharts'
+  default `width: '100%'` re-used the width it first measured, so the plot never
+  grew with the pane; the width is now passed from the measured container. It
+  also only reflows on *window* resize, which misses a MyGeotab sidebar collapse
+  or a split-screen drag — a `ResizeObserver` plus a 400ms poll covers it.
+  Two traps worth remembering: an unreferenced `ResizeObserver` can be garbage
+  collected and stop firing, and `ResizeObserver` delivery rides the
+  animation-frame loop, so it goes quiet in a hidden tab. Key the "needs
+  re-render" check on the width last *rendered*, never the width last *seen* —
+  optimistically marking a width handled before the render runs leaves the chart
+  frozen if that render is superseded.
 
 ## Where the data tooling lives (NOT here)
 

@@ -57,9 +57,9 @@ geotab.addin.speedingViolin = function () {
     '  --good-ink:#0a6b18; --warning-ink:#7a5300; --critical-ink:#9b2626;',
     '  --accent:#2a78d6;',
     '  font-family:system-ui,-apple-system,"Segoe UI",sans-serif;',
-    '  color:var(--ink-1); background:var(--page); padding:18px 20px 28px; max-width:1120px;',
+    '  color:var(--ink-1); background:var(--page); padding:18px 20px 28px; width:100%;',
     '}',
-    '#sv-root *{box-sizing:border-box;}',
+    '#sv-root, #sv-root *{box-sizing:border-box;}',
     '.sv-h1{font-size:19px;font-weight:650;margin:0;letter-spacing:-.01em;}',
     '.sv-scope{font-size:12.5px;color:var(--ink-3);margin:3px 0 0;}',
     '.sv-topbar{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:12px;}',
@@ -77,7 +77,11 @@ geotab.addin.speedingViolin = function () {
     '.sv-note--stop{background:#fbece8;border-color:#f0cfc7;color:var(--critical-ink);}',
     '',
     '/* Tier 1 --------------------------------------------------------------- */',
-    '.sv-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(196px,1fr));gap:12px;margin:14px 0 0;}',
+    // Flex, not grid auto-fit: auto-fit kept minting empty tracks on a wide
+    // pane, so four cards sat squashed at the left with dead space beside them.
+    // flex:1 1 200px wraps at any width and always fills the row.
+    '.sv-kpis{display:flex;flex-wrap:wrap;gap:12px;margin:14px 0 0;}',
+    '.sv-kpi{flex:1 1 200px;min-width:0;}',
     '.sv-kpi{background:var(--surface-1);border:1px solid var(--hairline);border-radius:9px;padding:13px 15px 14px;}',
     '.sv-kpi-label{font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;',
     '  color:var(--ink-3);display:flex;align-items:center;gap:5px;}',
@@ -101,7 +105,12 @@ geotab.addin.speedingViolin = function () {
     '.sv-swatch.zone{border-radius:3px;width:12px;height:12px;opacity:.5;}',
     '.sv-swatch.dash{border-radius:0;width:14px;height:0;border-top:2px dashed var(--accent);}',
     '.sv-sep{width:1px;height:14px;background:var(--grid);}',
-    '#sv-chart{min-width:640px;}',
+    '#sv-chart{min-width:460px;}',
+    '@media (max-width:700px){',
+    '  #sv-root{padding:14px 12px 22px;}',
+    '  .sv-kpi-value{font-size:25px;}',
+    '  .sv-legend{gap:10px;font-size:11.5px;}',
+    '}',
     '',
     '.sv-foot{font-size:12px;color:var(--ink-3);margin:10px 2px 0;line-height:1.55;}',
     '.sv-foot b{color:var(--ink-2);font-weight:600;}',
@@ -174,6 +183,10 @@ geotab.addin.speedingViolin = function () {
            grid:'#e1e0d9', accent:'#2a78d6', surface:'#fcfcfb'};
 
   var chart = null, days = 30, apiRef = null, stateRef = null, lastRows = [];
+  // resizeObs must be held in a variable: an unreferenced ResizeObserver is
+  // eligible for garbage collection and silently stops firing.
+  var lastChart = null, lastWidth = 0, resizeTimer = null, resizeObs = null,
+      resizePoll = null, onResize = null;
 
   // ── Small helpers ────────────────────────────────────────────────────────
   function el(id){ return document.getElementById(id); }
@@ -211,6 +224,14 @@ geotab.addin.speedingViolin = function () {
     return {max:s2*8, ticks:8};
   }
   function tierOf(r){ return r>=HI ? 'high' : (r>=LO ? 'mod' : 'low'); }
+  // Stable pseudo-random in [0,1) from a string — used for jitter so a dot keeps
+  // its position across re-renders.
+  function hash01(s){
+    var h = 2166136261;
+    s = String(s);
+    for(var i=0;i<s.length;i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return ((h >>> 0) % 100000) / 100000;
+  }
 
   function note(id, cls, html){
     var n = el(id);
@@ -280,9 +301,19 @@ geotab.addin.speedingViolin = function () {
   // ── Tier 2 ───────────────────────────────────────────────────────────────
   function renderChart(byOffice, offices, stats){
     var n = offices.length;
-    var LANE = 92, JIT = 0.21;
+    // Lane height and the label gutter scale with the space actually available,
+    // so the plot stays legible from a phone-width pane up to a wide monitor.
+    // The width is passed to ApexCharts explicitly rather than left at its
+    // default '100%': on re-render it kept re-using the width it first measured
+    // (the CSS min-width), so the plot never grew when the pane did.
+    var host = el('sv-chart');
+    var avail = Math.max(460, host.clientWidth || host.parentNode.clientWidth || 900);
+    lastWidth = host.parentNode.clientWidth;   // the width this render is for
+    var narrow = avail < 620;
+    var GUTTER = narrow ? 96 : avail < 820 ? 108 : 132;
+    var LANE = avail < 560 ? 74 : avail < 820 ? 84 : 92;
+    var JIT = 0.21;
     var H = n*LANE + 96;
-    var perUnit = (H-96)/(n+0.6);
 
     // Clamp the axis when a thin tail is stretching it — otherwise the bulk of
     // the fleet is squeezed into a sliver. Clamped vehicles are pinned at the
@@ -311,7 +342,10 @@ geotab.addin.speedingViolin = function () {
       vals.forEach(function(r){
         var v = r.rate;
         var dens = counts[Math.min(bins-1,Math.floor((v-min)/bw))]/maxc;
-        var jit = (Math.random()*2-1)*dens*JIT;
+        // Jitter is seeded from the device id, not random: the chart re-renders
+        // on every container resize, and random jitter would make every dot hop
+        // to a new spot each time the pane changed width.
+        var jit = (hash01(r.id)*2-1)*dens*JIT;
         var x = v, off_scale = false;
         if(x > visMax){ x = visMax; off_scale = true; over.push(r); }
         var pt = {x:x, y:+(yc+jit).toFixed(3), office:off, veh:r.veh, drv:r.drv,
@@ -348,19 +382,24 @@ geotab.addin.speedingViolin = function () {
 
     // Office labels live in a left gutter, outside the plot: as in-plot
     // annotations they collided with the marks and the tooltip.
-    var GUTTER = 132, anns = [];
+    var anns = [], nameSize = narrow ? '12px' : '13px',
+        statSize = narrow ? '10px' : '11px';
     offices.forEach(function(off, i){
       var y = n - i, thin = byOffice[off].length < LOW_SAMPLE_N;
+      var med = fmt(median(asc(byOffice[off].map(function(r){return r.rate;}))));
+      // The full "n=9  med 23.4 · thin" overruns a narrow gutter and runs into
+      // the plot, so drop the "med" label — the number is unambiguous next to n.
+      var stat = narrow ? ('n='+byOffice[off].length+' · '+med+(thin ? ' · thin' : ''))
+                        : ('n='+byOffice[off].length+'  med '+med+(thin ? '  · thin' : ''));
       anns.push({y:y, borderColor:'transparent', label:{
         text:off, position:'left', textAnchor:'start', offsetX:-GUTTER, offsetY:-2,
         borderWidth:0, style:{background:'transparent', color:C.ink1,
-        fontSize:'13px', fontWeight:700}}});
+        fontSize:nameSize, fontWeight:700}}});
       anns.push({y:y, borderColor:'transparent', label:{
-        text:'n='+byOffice[off].length+'  med '+fmt(median(asc(byOffice[off].map(function(r){return r.rate;}))))
-             + (thin ? '  · thin' : ''),
+        text:stat,
         position:'left', textAnchor:'start', offsetX:-GUTTER, offsetY:14,
         borderWidth:0, style:{background:'transparent', color: thin ? C.warning : C.ink3,
-        fontSize:'11px', fontWeight:600}}});
+        fontSize:statSize, fontWeight:600}}});
       if(i < n-1) anns.push({y:y-0.5, borderColor:C.grid, strokeDashArray:0});
     });
 
@@ -371,7 +410,7 @@ geotab.addin.speedingViolin = function () {
 
     if(chart){ chart.destroy(); }
     chart = new ApexCharts(el('sv-chart'), {
-      chart:{type:'scatter', height:H, toolbar:{show:false}, fontFamily:'inherit',
+      chart:{type:'scatter', height:H, width:avail, toolbar:{show:false}, fontFamily:'inherit',
         animations:{enabled:false},
         events:{ dataPointSelection: function(e, ctx, cfg){
           var p = cfg.w.config.series[cfg.seriesIndex].data[cfg.dataPointIndex];
@@ -646,6 +685,7 @@ geotab.addin.speedingViolin = function () {
           ' days &middot; your data scope &middot; rule: '+esc(rule.name);
 
         renderKpis(stats);
+        lastChart = {byOffice:byOffice, offices:offices, stats:stats};
         var meta = renderChart(byOffice, offices, stats);
         renderTable(lastRows);
 
@@ -713,6 +753,50 @@ geotab.addin.speedingViolin = function () {
     });
   }
 
+  // ApexCharts only reflows on a window resize, but this pane changes width on
+  // its own — collapsing the MyGeotab sidebar, or a split-screen drag, resizes
+  // the container without a window event. Watch the container instead and
+  // re-render, which also re-picks the responsive gutter and lane height.
+  function watchResize(){
+    var card = el('sv-chart').parentNode;
+    lastWidth = card.clientWidth;
+    // Compare against the width the chart was last actually RENDERED at, not
+    // the last width observed. Marking the observed width as handled before the
+    // debounced render runs leaves the handler convinced it is already done if
+    // that render is superseded or throws, and it then never retries — the
+    // chart stays frozen at a stale size. Keyed on the rendered width this
+    // self-heals: any tick that finds a mismatch tries again.
+    onResize = function(){
+      var w = card.clientWidth;
+      if(!lastChart || !w || Math.abs(w - lastWidth) < 16) return;
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(function(){
+        if(lastChart) renderChart(lastChart.byOffice, lastChart.offices, lastChart.stats);
+      }, 140);
+    };
+    if(typeof ResizeObserver === 'function'){
+      // Held in a variable on purpose: an unreferenced ResizeObserver can be
+      // garbage collected and silently stop firing.
+      resizeObs = new ResizeObserver(onResize);
+      resizeObs.observe(card);
+    }
+    window.addEventListener('resize', onResize);
+    startPoll();
+  }
+
+  // ResizeObserver delivery is tied to the animation-frame loop, so it goes
+  // quiet wherever frames aren't being produced — a backgrounded tab, and some
+  // embedded/iframe contexts. This poll is one clientWidth read and makes the
+  // behaviour independent of that; onResize itself ignores sub-16px changes, so
+  // a tick where nothing moved costs nothing.
+  function startPoll(){
+    if(resizePoll || !onResize) return;
+    resizePoll = setInterval(onResize, 400);
+  }
+  function stopPoll(){
+    if(resizePoll){ clearInterval(resizePoll); resizePoll = null; }
+  }
+
   function wireTools(){
     var t = el('sv-toggle');
     t.addEventListener('click', function(){
@@ -723,9 +807,13 @@ geotab.addin.speedingViolin = function () {
   }
 
   return {
-    initialize: function(api, state, cb){ injectStyles(); buildPeriods(); wireTools(); cb(); },
-    focus: function(api, state){ stateRef = state; load(api); },
-    blur: function(){}
+    initialize: function(api, state, cb){
+      injectStyles(); buildPeriods(); wireTools(); watchResize(); cb();
+    },
+    focus: function(api, state){ stateRef = state; startPoll(); load(api); },
+    // MyGeotab calls blur() when the user navigates away — stop polling rather
+    // than leaving a timer running behind another page.
+    blur: function(){ stopPoll(); }
   };
 };
 </script>
