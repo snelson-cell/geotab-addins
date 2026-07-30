@@ -98,6 +98,20 @@ GitHub Pages rebuilds in ~30–60 s at the same URL. In MyGeotab, hard-refresh
   own CSS from JS) while everything around it appears unstyled. `injectStyles()`
   appends the stylesheet at `initialize()`. The test harness must not add a
   `<style>` of its own, or it masks this.
+- **Never put `overflow` on the chart's container.** `overflow-x:auto` makes
+  `overflow-y` compute to `auto` too (CSS forbids `visible` on one axis beside a
+  non-visible other), so the card silently becomes a scroll container. ApexCharts
+  renders its tooltip *inside* that box, so a tooltip near an edge extends the
+  scroll area, toggles a scrollbar, shifts the layout under the cursor and
+  dismisses itself — the tooltip flashes and vanishes, and hovering feels jerky.
+  The chart is sized to its container, so it fits without any overflow rule.
+- **Don't rebuild the chart while the pointer is on it.** A re-render destroys
+  the element the tooltip is anchored to. The resize handler defers until
+  `mouseleave` (see `pointerInChart`).
+- **The vehicle table flows with the page — no nested scrolling.** It sits below
+  the chart and you never need both at once. A `max-height` scroll box showed
+  ~8 rows of 100+ behind a second scrollbar. Leaving overflow visible also keeps
+  the sticky header anchored to the page scroll.
 - **Size the chart explicitly and re-render on container resize.** ApexCharts'
   default `width: '100%'` re-used the width it first measured, so the plot never
   grew with the pane; the width is now passed from the measured container. It

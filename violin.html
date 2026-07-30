@@ -95,7 +95,14 @@ geotab.addin.speedingViolin = function () {
     '',
     '/* Tier 2 --------------------------------------------------------------- */',
     '.sv-chartcard{background:var(--surface-1);border:1px solid var(--hairline);border-radius:9px;',
-    '  margin:14px 0 0;padding:14px 4px 6px;overflow-x:auto;}',
+    // overflow MUST stay visible. Setting overflow-x:auto here silently made
+    // overflow-y compute to auto as well (CSS forbids visible on one axis
+    // beside a non-visible other), turning the card into a scroll container.
+    // ApexCharts renders its tooltip inside that box, so a tooltip near an edge
+    // extended the scroll area, toggled a scrollbar, shifted the layout under
+    // the cursor and dismissed itself — the tooltip "flashed and vanished", and
+    // hovering felt jerky. The chart is sized to the container, so it fits.
+    '  margin:14px 0 0;padding:14px 4px 6px;overflow:visible;}',
     '.sv-legend{display:flex;flex-wrap:wrap;gap:16px;padding:0 14px 4px;font-size:12px;color:var(--ink-2);}',
     '.sv-legend span{display:inline-flex;align-items:center;gap:6px;}',
     '.sv-swatch{width:11px;height:11px;border-radius:50%;flex:none;}',
@@ -105,11 +112,12 @@ geotab.addin.speedingViolin = function () {
     '.sv-swatch.zone{border-radius:3px;width:12px;height:12px;opacity:.5;}',
     '.sv-swatch.dash{border-radius:0;width:14px;height:0;border-top:2px dashed var(--accent);}',
     '.sv-sep{width:1px;height:14px;background:var(--grid);}',
-    '#sv-chart{min-width:460px;}',
+    '#sv-chart{min-width:380px;}',
     '@media (max-width:700px){',
     '  #sv-root{padding:14px 12px 22px;}',
     '  .sv-kpi-value{font-size:25px;}',
     '  .sv-legend{gap:10px;font-size:11.5px;}',
+    '  table.sv-t th, table.sv-t td{padding:7px 8px;white-space:normal;}',
     '}',
     '',
     '.sv-foot{font-size:12px;color:var(--ink-3);margin:10px 2px 0;line-height:1.55;}',
@@ -122,8 +130,13 @@ geotab.addin.speedingViolin = function () {
     '.sv-tools{display:flex;gap:8px;}',
     '.sv-tools button{font:inherit;font-size:12.5px;font-weight:600;color:var(--ink-2);background:var(--surface-1);',
     '  border:1px solid var(--axis);border-radius:6px;padding:5px 11px;cursor:pointer;}',
-    '.sv-tablewrap{margin:9px 0 0;border:1px solid var(--hairline);border-radius:9px;overflow:auto;',
-    '  max-height:420px;background:var(--surface-1);display:none;}',
+    // No max-height and no overflow at all: the table sits below the chart and
+    // you never need both at once, so it flows with the page. The old 420px
+    // scroll box showed roughly eight rows and hid the rest behind a second
+    // scrollbar. Leaving overflow visible also keeps the sticky header anchored
+    // to the page scroll, so it follows you down all 100+ rows.
+    '.sv-tablewrap{margin:9px 0 0;border:1px solid var(--hairline);border-radius:9px;',
+    '  background:var(--surface-1);display:none;}',
     '.sv-tablewrap.on{display:block;}',
     'table.sv-t{border-collapse:collapse;width:100%;font-size:12.5px;font-variant-numeric:tabular-nums;}',
     'table.sv-t th{position:sticky;top:0;background:var(--surface-1);text-align:left;font-size:10.5px;',
@@ -186,7 +199,7 @@ geotab.addin.speedingViolin = function () {
   // resizeObs must be held in a variable: an unreferenced ResizeObserver is
   // eligible for garbage collection and silently stops firing.
   var lastChart = null, lastWidth = 0, resizeTimer = null, resizeObs = null,
-      resizePoll = null, onResize = null;
+      resizePoll = null, onResize = null, pointerInChart = false;
 
   // ── Small helpers ────────────────────────────────────────────────────────
   function el(id){ return document.getElementById(id); }
@@ -307,7 +320,10 @@ geotab.addin.speedingViolin = function () {
     // default '100%': on re-render it kept re-using the width it first measured
     // (the CSS min-width), so the plot never grew when the pane did.
     var host = el('sv-chart');
-    var avail = Math.max(460, host.clientWidth || host.parentNode.clientWidth || 900);
+    // Floor low enough that the chart effectively always fits its card: the
+    // card can no longer scroll (see the overflow note in the stylesheet), so
+    // anything wider than the container would spill instead.
+    var avail = Math.max(380, host.clientWidth || host.parentNode.clientWidth || 900);
     lastWidth = host.parentNode.clientWidth;   // the width this render is for
     var narrow = avail < 620;
     var GUTTER = narrow ? 96 : avail < 820 ? 108 : 132;
@@ -770,10 +786,16 @@ geotab.addin.speedingViolin = function () {
       var w = card.clientWidth;
       if(!lastChart || !w || Math.abs(w - lastWidth) < 16) return;
       clearTimeout(resizeTimer);
-      resizeTimer = setTimeout(function(){
+      // Never rebuild the chart out from under a pointer that is on it — that
+      // destroys the element the tooltip is anchored to. Wait for mouseleave.
+      function attempt(){
+        if(pointerInChart){ resizeTimer = setTimeout(attempt, 250); return; }
         if(lastChart) renderChart(lastChart.byOffice, lastChart.offices, lastChart.stats);
-      }, 140);
+      }
+      resizeTimer = setTimeout(attempt, 140);
     };
+    card.addEventListener('mouseenter', function(){ pointerInChart = true; });
+    card.addEventListener('mouseleave', function(){ pointerInChart = false; onResize(); });
     if(typeof ResizeObserver === 'function'){
       // Held in a variable on purpose: an unreferenced ResizeObserver can be
       // garbage collected and silently stop firing.
