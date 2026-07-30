@@ -3,89 +3,6 @@
 <head>
 <meta charset="utf-8"/>
 <script src="https://cdn.jsdelivr.net/npm/apexcharts@3.49.1/dist/apexcharts.min.js"></script>
-<style>
-/* Light surface only, on purpose: this renders inside MyGeotab's light chrome
-   and has no independent theme context to respond to. */
-#sv-root{
-  --surface-1:#fcfcfb; --page:#f9f9f7;
-  --ink-1:#0b0b0b; --ink-2:#52514e; --ink-3:#898781;
-  --grid:#e1e0d9; --axis:#c3c2b7; --hairline:rgba(11,11,11,.10);
-  --good:#0ca30c; --warning:#fab219; --critical:#d03b3b;
-  --good-ink:#0a6b18; --warning-ink:#7a5300; --critical-ink:#9b2626;
-  --accent:#2a78d6;
-  font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
-  color:var(--ink-1); background:var(--page); padding:18px 20px 28px; max-width:1120px;
-}
-#sv-root *{box-sizing:border-box;}
-.sv-h1{font-size:19px;font-weight:650;margin:0;letter-spacing:-.01em;}
-.sv-scope{font-size:12.5px;color:var(--ink-3);margin:3px 0 0;}
-.sv-topbar{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:12px;}
-.sv-periods{display:inline-flex;border:1px solid var(--axis);border-radius:7px;overflow:hidden;background:var(--surface-1);}
-.sv-periods button{border:0;background:transparent;color:var(--ink-2);font:inherit;font-size:12.5px;
-  font-weight:600;padding:6px 12px;cursor:pointer;border-right:1px solid var(--grid);}
-.sv-periods button:last-child{border-right:0;}
-.sv-periods button[aria-pressed="true"]{background:var(--accent);color:#fff;}
-
-.sv-note{font-size:12.5px;border-radius:7px;padding:9px 12px;margin:12px 0 0;display:none;
-  border:1px solid var(--hairline);background:var(--surface-1);color:var(--ink-2);}
-.sv-note.on{display:block;}
-.sv-note b{color:var(--ink-1);}
-.sv-note--warn{background:#fdf6e3;border-color:#efdca8;color:var(--warning-ink);}
-.sv-note--stop{background:#fbece8;border-color:#f0cfc7;color:var(--critical-ink);}
-
-/* Tier 1 --------------------------------------------------------------- */
-.sv-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(196px,1fr));gap:12px;margin:14px 0 0;}
-.sv-kpi{background:var(--surface-1);border:1px solid var(--hairline);border-radius:9px;padding:13px 15px 14px;}
-.sv-kpi-label{font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
-  color:var(--ink-3);display:flex;align-items:center;gap:5px;}
-.sv-kpi-value{font-size:29px;font-weight:640;line-height:1.12;margin:7px 0 0;letter-spacing:-.02em;}
-.sv-kpi-value.sm{font-size:21px;}
-.sv-kpi-sub{font-size:12px;color:var(--ink-2);margin:4px 0 0;line-height:1.4;}
-.sv-kpi-sub .muted{color:var(--ink-3);}
-.sv-dot{width:8px;height:8px;border-radius:50%;display:inline-block;flex:none;}
-.sv-action{font-size:12.5px;color:var(--ink-2);background:var(--surface-1);border:1px solid var(--hairline);
-  border-left:3px solid var(--accent);border-radius:7px;padding:9px 13px;margin:12px 0 0;}
-
-/* Tier 2 --------------------------------------------------------------- */
-.sv-chartcard{background:var(--surface-1);border:1px solid var(--hairline);border-radius:9px;
-  margin:14px 0 0;padding:14px 4px 6px;overflow-x:auto;}
-.sv-legend{display:flex;flex-wrap:wrap;gap:16px;padding:0 14px 4px;font-size:12px;color:var(--ink-2);}
-.sv-legend span{display:inline-flex;align-items:center;gap:6px;}
-.sv-swatch{width:11px;height:11px;border-radius:50%;flex:none;}
-.sv-swatch.hollow{background:transparent;border:2px solid var(--ink-2);}
-.sv-swatch.filled{background:var(--ink-2);opacity:.62;}
-.sv-swatch.med{border-radius:2px;background:var(--accent);width:10px;height:10px;}
-.sv-swatch.zone{border-radius:3px;width:12px;height:12px;opacity:.5;}
-.sv-swatch.dash{border-radius:0;width:14px;height:0;border-top:2px dashed var(--accent);}
-.sv-sep{width:1px;height:14px;background:var(--grid);}
-#sv-chart{min-width:640px;}
-
-.sv-foot{font-size:12px;color:var(--ink-3);margin:10px 2px 0;line-height:1.55;}
-.sv-foot b{color:var(--ink-2);font-weight:600;}
-.sv-linkbtn{background:none;border:0;padding:0;font:inherit;color:var(--accent);cursor:pointer;text-decoration:underline;}
-
-/* Tier 3 --------------------------------------------------------------- */
-.sv-tablehead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:20px 0 0;}
-.sv-tabletitle{font-size:14px;font-weight:650;}
-.sv-tools{display:flex;gap:8px;}
-.sv-tools button{font:inherit;font-size:12.5px;font-weight:600;color:var(--ink-2);background:var(--surface-1);
-  border:1px solid var(--axis);border-radius:6px;padding:5px 11px;cursor:pointer;}
-.sv-tablewrap{margin:9px 0 0;border:1px solid var(--hairline);border-radius:9px;overflow:auto;
-  max-height:420px;background:var(--surface-1);display:none;}
-.sv-tablewrap.on{display:block;}
-table.sv-t{border-collapse:collapse;width:100%;font-size:12.5px;font-variant-numeric:tabular-nums;}
-table.sv-t th{position:sticky;top:0;background:var(--surface-1);text-align:left;font-size:10.5px;
-  letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);padding:9px 12px;
-  border-bottom:1px solid var(--grid);white-space:nowrap;z-index:1;}
-table.sv-t td{padding:8px 12px;border-bottom:1px solid var(--grid);color:var(--ink-2);white-space:nowrap;}
-table.sv-t tr:last-child td{border-bottom:0;}
-table.sv-t tr.clickable{cursor:pointer;}
-table.sv-t tr.clickable:hover td{background:#f2f5fa;}
-table.sv-t td.veh{color:var(--ink-1);font-weight:600;}
-table.sv-t td.num{text-align:right;}
-.sv-tier{display:inline-flex;align-items:center;gap:6px;font-weight:600;}
-.sv-tier.high{color:var(--critical-ink);} .sv-tier.mod{color:var(--warning-ink);} .sv-tier.low{color:var(--good-ink);}
-</style>
 </head>
 <body>
 <div id="sv-root">
@@ -122,6 +39,103 @@ table.sv-t td.num{text-align:right;}
 <script>
 geotab.addin.speedingViolin = function () {
   'use strict';
+
+  // MyGeotab does not apply a <style> block from this file's <head> — the add-in
+  // HTML is injected into the host page and the head is dropped, which left the
+  // whole dashboard unstyled while the chart (ApexCharts injects its own CSS
+  // from JS) rendered fine. So the stylesheet ships as a string and is injected
+  // the same way. Do not move this back into <head>.
+  var STYLE_ID = 'sv-styles';
+  var CSS = [
+    "/* Light surface only, on purpose: this renders inside MyGeotab's light chrome",
+    '   and has no independent theme context to respond to. */',
+    '#sv-root{',
+    '  --surface-1:#fcfcfb; --page:#f9f9f7;',
+    '  --ink-1:#0b0b0b; --ink-2:#52514e; --ink-3:#898781;',
+    '  --grid:#e1e0d9; --axis:#c3c2b7; --hairline:rgba(11,11,11,.10);',
+    '  --good:#0ca30c; --warning:#fab219; --critical:#d03b3b;',
+    '  --good-ink:#0a6b18; --warning-ink:#7a5300; --critical-ink:#9b2626;',
+    '  --accent:#2a78d6;',
+    '  font-family:system-ui,-apple-system,"Segoe UI",sans-serif;',
+    '  color:var(--ink-1); background:var(--page); padding:18px 20px 28px; max-width:1120px;',
+    '}',
+    '#sv-root *{box-sizing:border-box;}',
+    '.sv-h1{font-size:19px;font-weight:650;margin:0;letter-spacing:-.01em;}',
+    '.sv-scope{font-size:12.5px;color:var(--ink-3);margin:3px 0 0;}',
+    '.sv-topbar{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:12px;}',
+    '.sv-periods{display:inline-flex;border:1px solid var(--axis);border-radius:7px;overflow:hidden;background:var(--surface-1);}',
+    '.sv-periods button{border:0;background:transparent;color:var(--ink-2);font:inherit;font-size:12.5px;',
+    '  font-weight:600;padding:6px 12px;cursor:pointer;border-right:1px solid var(--grid);}',
+    '.sv-periods button:last-child{border-right:0;}',
+    '.sv-periods button[aria-pressed="true"]{background:var(--accent);color:#fff;}',
+    '',
+    '.sv-note{font-size:12.5px;border-radius:7px;padding:9px 12px;margin:12px 0 0;display:none;',
+    '  border:1px solid var(--hairline);background:var(--surface-1);color:var(--ink-2);}',
+    '.sv-note.on{display:block;}',
+    '.sv-note b{color:var(--ink-1);}',
+    '.sv-note--warn{background:#fdf6e3;border-color:#efdca8;color:var(--warning-ink);}',
+    '.sv-note--stop{background:#fbece8;border-color:#f0cfc7;color:var(--critical-ink);}',
+    '',
+    '/* Tier 1 --------------------------------------------------------------- */',
+    '.sv-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(196px,1fr));gap:12px;margin:14px 0 0;}',
+    '.sv-kpi{background:var(--surface-1);border:1px solid var(--hairline);border-radius:9px;padding:13px 15px 14px;}',
+    '.sv-kpi-label{font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;',
+    '  color:var(--ink-3);display:flex;align-items:center;gap:5px;}',
+    '.sv-kpi-value{font-size:29px;font-weight:640;line-height:1.12;margin:7px 0 0;letter-spacing:-.02em;}',
+    '.sv-kpi-value.sm{font-size:21px;}',
+    '.sv-kpi-sub{font-size:12px;color:var(--ink-2);margin:4px 0 0;line-height:1.4;}',
+    '.sv-kpi-sub .muted{color:var(--ink-3);}',
+    '.sv-dot{width:8px;height:8px;border-radius:50%;display:inline-block;flex:none;}',
+    '.sv-action{font-size:12.5px;color:var(--ink-2);background:var(--surface-1);border:1px solid var(--hairline);',
+    '  border-left:3px solid var(--accent);border-radius:7px;padding:9px 13px;margin:12px 0 0;}',
+    '',
+    '/* Tier 2 --------------------------------------------------------------- */',
+    '.sv-chartcard{background:var(--surface-1);border:1px solid var(--hairline);border-radius:9px;',
+    '  margin:14px 0 0;padding:14px 4px 6px;overflow-x:auto;}',
+    '.sv-legend{display:flex;flex-wrap:wrap;gap:16px;padding:0 14px 4px;font-size:12px;color:var(--ink-2);}',
+    '.sv-legend span{display:inline-flex;align-items:center;gap:6px;}',
+    '.sv-swatch{width:11px;height:11px;border-radius:50%;flex:none;}',
+    '.sv-swatch.hollow{background:transparent;border:2px solid var(--ink-2);}',
+    '.sv-swatch.filled{background:var(--ink-2);opacity:.62;}',
+    '.sv-swatch.med{border-radius:2px;background:var(--accent);width:10px;height:10px;}',
+    '.sv-swatch.zone{border-radius:3px;width:12px;height:12px;opacity:.5;}',
+    '.sv-swatch.dash{border-radius:0;width:14px;height:0;border-top:2px dashed var(--accent);}',
+    '.sv-sep{width:1px;height:14px;background:var(--grid);}',
+    '#sv-chart{min-width:640px;}',
+    '',
+    '.sv-foot{font-size:12px;color:var(--ink-3);margin:10px 2px 0;line-height:1.55;}',
+    '.sv-foot b{color:var(--ink-2);font-weight:600;}',
+    '.sv-linkbtn{background:none;border:0;padding:0;font:inherit;color:var(--accent);cursor:pointer;text-decoration:underline;}',
+    '',
+    '/* Tier 3 --------------------------------------------------------------- */',
+    '.sv-tablehead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:20px 0 0;}',
+    '.sv-tabletitle{font-size:14px;font-weight:650;}',
+    '.sv-tools{display:flex;gap:8px;}',
+    '.sv-tools button{font:inherit;font-size:12.5px;font-weight:600;color:var(--ink-2);background:var(--surface-1);',
+    '  border:1px solid var(--axis);border-radius:6px;padding:5px 11px;cursor:pointer;}',
+    '.sv-tablewrap{margin:9px 0 0;border:1px solid var(--hairline);border-radius:9px;overflow:auto;',
+    '  max-height:420px;background:var(--surface-1);display:none;}',
+    '.sv-tablewrap.on{display:block;}',
+    'table.sv-t{border-collapse:collapse;width:100%;font-size:12.5px;font-variant-numeric:tabular-nums;}',
+    'table.sv-t th{position:sticky;top:0;background:var(--surface-1);text-align:left;font-size:10.5px;',
+    '  letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);padding:9px 12px;',
+    '  border-bottom:1px solid var(--grid);white-space:nowrap;z-index:1;}',
+    'table.sv-t td{padding:8px 12px;border-bottom:1px solid var(--grid);color:var(--ink-2);white-space:nowrap;}',
+    'table.sv-t tr:last-child td{border-bottom:0;}',
+    'table.sv-t tr.clickable{cursor:pointer;}',
+    'table.sv-t tr.clickable:hover td{background:#f2f5fa;}',
+    'table.sv-t td.veh{color:var(--ink-1);font-weight:600;}',
+    'table.sv-t td.num{text-align:right;}',
+    '.sv-tier{display:inline-flex;align-items:center;gap:6px;font-weight:600;}',
+    '.sv-tier.high{color:var(--critical-ink);} .sv-tier.mod{color:var(--warning-ink);} .sv-tier.low{color:var(--good-ink);}'
+  ].join('\n');
+  function injectStyles(){
+    if(document.getElementById(STYLE_ID)) return;
+    var s = document.createElement('style');
+    s.id = STYLE_ID;
+    s.textContent = CSS;
+    document.head.appendChild(s);
+  }
 
   // ── Configuration ────────────────────────────────────────────────────────
   var PERIODS = [30, 60, 90];
@@ -709,7 +723,7 @@ geotab.addin.speedingViolin = function () {
   }
 
   return {
-    initialize: function(api, state, cb){ buildPeriods(); wireTools(); cb(); },
+    initialize: function(api, state, cb){ injectStyles(); buildPeriods(); wireTools(); cb(); },
     focus: function(api, state){ stateRef = state; load(api); },
     blur: function(){}
   };
