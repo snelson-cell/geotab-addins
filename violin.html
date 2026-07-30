@@ -7,6 +7,8 @@
   #sv-wrap{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:16px;color:#1a2b45;}
   #sv-wrap h2{font-size:16px;font-weight:600;margin:0;}
   #sv-sub{font-size:12.5px;color:#8a97a8;margin:2px 0 6px;}
+  #sv-warn{font-size:12.5px;color:#a03d28;background:#fbece8;border:1px solid #f0cfc7;
+           border-radius:6px;padding:8px 10px;margin:6px 0;display:none;max-width:820px;}
   #sv-chart{max-width:840px;}
 </style>
 </head>
@@ -14,6 +16,7 @@
 <div id="sv-wrap">
   <h2>Speeding rate distribution by office</h2>
   <div id="sv-sub">Loading… (fetching 30 days of events + distance)</div>
+  <div id="sv-warn"></div>
   <div id="sv-chart"></div>
 </div>
 
@@ -21,27 +24,58 @@
 geotab.addin.speedingViolin = function () {
   'use strict';
   var chart = null;
+  var DAYS = 30;
   var MIN_VEHICLES = 10;   // offices below this are omitted (not enough for a distribution)
   var MIN_MILES = 50;      // vehicles below this in 30d excluded (insufficient exposure)
+  var EVENT_LIMIT = 50000, TRIP_LIMIT = 50000;
+
+  // Fleet-wide speeding-rate tiers, events per 1,000 mi — fixed so "High" means
+  // the same for every viewer regardless of data scope. Derived from the fleet
+  // median / 80th percentile and rounded. These are calibrated to the rule
+  // resolved below: change the rule, re-derive these (see README).
+  var LO = 10, HI = 40;
+
+  // Which Geotab rule counts as "speeding". Resolved at runtime instead of
+  // hardcoded, because a rule that is deleted or swapped in MyGeotab takes its
+  // exception events with it — the previous version queried a rule id that no
+  // longer existed and silently charted every vehicle at 0.
+  // Preferred ids first; falls back to matching the rule name.
+  var RULE_IDS = ['RulePostedSpeedingId', 'RuleGpsSpeedingWindowId'];
+  var RULE_NAME = /^speeding$/i;
+
   var LEAF = {b27AB:'Orlando',b27AC:'Tampa',b27AD:'ATL North',b27AE:'ATL South',b27AF:'Chicago',
               b27B0:'Indianapolis',b27B1:'N Indiana',b27B2:'Louisville',b27B3:'Detroit',
-              b27B4:'Grand Rapids',b27B5:'Cincinnati',b27B6:'Cleveland',b27B7:'Columbus',b27B8:'American Fork'};
-  var COLORS=['#c0392b','#e8743b','#2b7de9','#27ae60','#8e44ad','#16a085','#d35400','#2c3e50'];
+              b27B4:'Grand Rapids',b27B5:'Cincinnati',b27B6:'Cleveland',b27B7:'Columbus',
+              b27B8:'American Fork'};
 
   function median(a){var s=a.slice().sort(function(x,y){return x-y;});var m=s.length>>1;
     return s.length%2?s[m]:(s[m-1]+s[m])/2;}
 
-  function renderViolin(el, byOffice){
+  function el(id){ return document.getElementById(id); }
+  function warn(msg){
+    var w = el('sv-warn');
+    w.style.display = 'block';
+    w.innerHTML = (w.innerHTML ? w.innerHTML + '<br>' : '') + msg;
+  }
+  function clearWarn(){ var w = el('sv-warn'); w.innerHTML=''; w.style.display='none'; }
+
+  // Pick the speeding rule out of the database's rule list.
+  function resolveRule(rules){
+    var byId = {};
+    (rules||[]).forEach(function(r){ if(r && r.id) byId[r.id] = r; });
+    for(var i=0;i<RULE_IDS.length;i++){ if(byId[RULE_IDS[i]]) return byId[RULE_IDS[i]]; }
+    var named = (rules||[]).filter(function(r){ return RULE_NAME.test(r && r.name || ''); });
+    return named.length ? named[0] : null;
+  }
+
+  function renderViolin(node, byOffice){
     var offices = Object.keys(byOffice).sort(function(a,b){return median(byOffice[b])-median(byOffice[a]);});
     var n = offices.length;
-    if(!n){ document.getElementById('sv-sub').textContent='No office in your data scope has enough vehicles yet.'; return; }
+    if(!n){ el('sv-sub').textContent='No office in your data scope has enough vehicles yet.'; return; }
     var JIT = 0.30;
     var H = 150 + n*170;
     var perUnit = (H-80)/(n+0.8);
     var labelDY = -(JIT*perUnit + 14);
-    // fleet-wide speeding-rate thresholds (median / p80, rounded) — fixed so
-    // "High" means the same for every viewer regardless of scope.
-    var HI = 250, LO = 80;
     var buckets = {High:[], Moderate:[], Low:[]};
     offices.forEach(function(off, i){
       var vals = byOffice[off];
@@ -58,10 +92,11 @@ geotab.addin.speedingViolin = function () {
         (v>=HI ? buckets.High : (v>=LO ? buckets.Moderate : buckets.Low)).push(pt);
       });
     });
+    // legend text derives from the tier constants so the two can't drift apart
     var series = [
-      {name:'High (≥250)',       data:buckets.High},
-      {name:'Moderate (80–249)', data:buckets.Moderate},
-      {name:'Low (<80)',         data:buckets.Low}
+      {name:'High (≥'+HI+')',              data:buckets.High},
+      {name:'Moderate ('+LO+'–'+(HI-1)+')', data:buckets.Moderate},
+      {name:'Low (<'+LO+')',               data:buckets.Low}
     ];
     var anns = [];
     offices.forEach(function(off,i){
@@ -81,54 +116,93 @@ geotab.addin.speedingViolin = function () {
          style:{fontSize:'10px', color:'#a03d28', background:'#fbece8'}}}
     ];
     if(chart){chart.destroy();}
-    chart = new ApexCharts(el,{
+    chart = new ApexCharts(node,{
       chart:{type:'scatter',height:H,toolbar:{show:false},fontFamily:'inherit'},
       subtitle:{text:summary, align:'left', offsetY:2, style:{fontSize:'12.5px',fontWeight:600,color:'#5a6b80'}},
       series:series, colors:['#c0392b','#f2994a','#27ae60'],
       markers:{size:5,strokeWidth:0}, fill:{opacity:0.78},
-      xaxis:{title:{text:'Speeding events per 1,000 mi'},tickAmount:8,labels:{formatter:function(v){return Math.round(v);}}},
+      xaxis:{title:{text:'Speeding events per 1,000 mi'},tickAmount:8,
+             labels:{formatter:function(v){return Math.round(v);}}},
       yaxis:{min:0.3,max:n+0.7,labels:{show:false},axisTicks:{show:false},axisBorder:{show:false}},
       annotations:{yaxis:anns, xaxis:xanns},
       legend:{show:true, position:'top', horizontalAlign:'right', fontSize:'12px', markers:{radius:12}},
       grid:{borderColor:'#eef1f5', xaxis:{lines:{show:true}}, yaxis:{lines:{show:false}}, padding:{left:12}},
       tooltip:{custom:function(o){var p=o.w.config.series[o.seriesIndex].data[o.dataPointIndex];
         return '<div style="padding:6px 9px;font-size:12px"><b>'+p.office+
-        '</b><br>'+Math.round(p.x)+' speeding / 1,000 mi<br>'+o.w.config.series[o.seriesIndex].name+' risk</div>';}}
+        '</b><br>'+(Math.round(p.x*10)/10)+' speeding / 1,000 mi<br>'+
+        o.w.config.series[o.seriesIndex].name+' risk</div>';}}
     });
     chart.render();
   }
 
   function load(api){
-    var sub = document.getElementById('sv-sub');
-    sub.textContent = 'Loading… (fetching 30 days of events + distance)';
+    var sub = el('sv-sub');
+    clearWarn();
+    sub.textContent = 'Loading… (fetching '+DAYS+' days of events + distance)';
     var to = new Date();
-    var from = new Date(to.getTime() - 30*24*3600*1000);
+    var from = new Date(to.getTime() - DAYS*24*3600*1000);
     var fromISO = from.toISOString(), toISO = to.toISOString();
+
+    function fail(msg){ sub.textContent = msg; }
+
     api.multiCall([
+      ['Get', {typeName:'Rule'}],
       ['Get', {typeName:'Device', resultsLimit:50000}],
-      ['Get', {typeName:'ExceptionEvent', resultsLimit:50000,
-               search:{fromDate:fromISO, toDate:toISO, ruleSearch:{id:'RuleGpsSpeedingWindowId'}}}],
-      ['Get', {typeName:'Trip', resultsLimit:50000, search:{fromDate:fromISO, toDate:toISO}}]
+      ['Get', {typeName:'Trip', resultsLimit:TRIP_LIMIT, search:{fromDate:fromISO, toDate:toISO}}]
     ], function(res){
-      var devices=res[0]||[], events=res[1]||[], trips=res[2]||[];
-      var office={}, spd={}, miles={};
-      devices.forEach(function(d){
-        (d.groups||[]).forEach(function(g){ if(LEAF[g.id]) office[d.id]=LEAF[g.id]; });
-      });
-      events.forEach(function(e){ var id=e.device&&e.device.id; if(id) spd[id]=(spd[id]||0)+1; });
-      trips.forEach(function(t){ var id=t.device&&t.device.id; if(id) miles[id]=(miles[id]||0)+(t.distance||0)*0.621371; });
-      var byOffice={};
-      Object.keys(office).forEach(function(id){
-        var mi=miles[id]||0; if(mi<MIN_MILES) return;
-        var rate = Math.round((spd[id]||0)/(mi/1000)*10)/10;
-        (byOffice[office[id]]=byOffice[office[id]]||[]).push(rate);
-      });
-      Object.keys(byOffice).forEach(function(o){ if(byOffice[o].length<MIN_VEHICLES) delete byOffice[o]; });
-      var total = Object.keys(byOffice).reduce(function(s,o){return s+byOffice[o].length;},0);
-      sub.textContent = total+' vehicles across '+Object.keys(byOffice).length+
-        ' offices (≥'+MIN_VEHICLES+' vehicles) · previous 30 days · in your data scope';
-      renderViolin(document.getElementById('sv-chart'), byOffice);
-    }, function(err){ sub.textContent = 'Error loading data: '+err; });
+      var rules = res[0]||[], devices = res[1]||[], trips = res[2]||[];
+
+      var rule = resolveRule(rules);
+      if(!rule){
+        fail('Could not find a speeding rule in this database. Looked for ids ['+
+             RULE_IDS.join(', ')+'] and a rule named "Speeding".');
+        return;
+      }
+      if(trips.length >= TRIP_LIMIT){
+        warn('Trip results hit the '+TRIP_LIMIT.toLocaleString()+
+             ' row limit — distances may be understated. Fetch in weekly chunks.');
+      }
+
+      api.call('Get', {typeName:'ExceptionEvent', resultsLimit:EVENT_LIMIT,
+        search:{fromDate:fromISO, toDate:toISO, ruleSearch:{id:rule.id}}}, function(events){
+        events = events||[];
+        if(events.length >= EVENT_LIMIT){
+          warn('Exception results hit the '+EVENT_LIMIT.toLocaleString()+
+               ' row limit — rates may be understated.');
+        }
+
+        var office={}, spd={}, miles={};
+        devices.forEach(function(d){
+          (d.groups||[]).forEach(function(g){ if(LEAF[g.id]) office[d.id]=LEAF[g.id]; });
+        });
+        events.forEach(function(e){ var id=e.device&&e.device.id; if(id) spd[id]=(spd[id]||0)+1; });
+        trips.forEach(function(t){ var id=t.device&&t.device.id;
+          if(id) miles[id]=(miles[id]||0)+(t.distance||0)*0.621371; });
+
+        var byOffice={}, scoped=0;
+        Object.keys(office).forEach(function(id){
+          var mi=miles[id]||0; if(mi<MIN_MILES) return;
+          scoped++;
+          var rate = Math.round((spd[id]||0)/(mi/1000)*10)/10;
+          (byOffice[office[id]]=byOffice[office[id]]||[]).push(rate);
+        });
+
+        // An all-zero chart is indistinguishable from a genuinely clean fleet,
+        // so say so explicitly rather than rendering a flat line of dots at 0.
+        if(scoped && !events.length){
+          fail('The "'+rule.name+'" rule ('+rule.id+') returned no events in the last '+DAYS+
+               ' days, so every rate would be 0. The rule may be disabled or renamed — ' +
+               'check Rules in MyGeotab before trusting this chart.');
+          return;
+        }
+
+        Object.keys(byOffice).forEach(function(o){ if(byOffice[o].length<MIN_VEHICLES) delete byOffice[o]; });
+        var total = Object.keys(byOffice).reduce(function(s,o){return s+byOffice[o].length;},0);
+        sub.textContent = total+' vehicles across '+Object.keys(byOffice).length+
+          ' offices (≥'+MIN_VEHICLES+' vehicles) · previous '+DAYS+' days · in your data scope · rule: '+rule.name;
+        renderViolin(el('sv-chart'), byOffice);
+      }, function(err){ fail('Error loading speeding events: '+err); });
+    }, function(err){ fail('Error loading data: '+err); });
   }
 
   return {

@@ -50,9 +50,20 @@ GitHub Pages rebuilds in ~30–60 s at the same URL. In MyGeotab, hard-refresh
 ## Design conventions
 
 - **Chart library:** ApexCharts (CDN). Keep it consistent across add-ins.
-- **Speeding-risk tiers (fleet-wide, fixed):** Low `<80`, Moderate `80–249`,
-  High `≥250` events/1,000 mi (fleet median / 80th percentile). Colors:
+- **Speeding-risk tiers (fleet-wide, fixed):** Low `<10`, Moderate `10–39`,
+  High `≥40` events/1,000 mi (fleet median / 80th percentile). Colors:
   High `#c0392b`, Moderate `#f2994a`, Low `#27ae60`.
+- **Tiers are calibrated to a specific rule** — currently `RulePostedSpeedingId`
+  ("Speeding"). They are *not* transferable: the retired `RuleGpsSpeedingWindowId`
+  fired ~4× as often, which is why the old tiers were `<80 / 80–249 / ≥250`.
+  If the speeding rule changes in MyGeotab, re-derive the median/p80 from live
+  data and update `LO`/`HI` in `violin.html` — otherwise every vehicle collapses
+  into one tier.
+- **Never hardcode a rule id as the only lookup.** A rule deleted in MyGeotab
+  takes its historical exception events with it, and the Get call then returns
+  `[]` rather than an error — which renders a plausible-looking chart of all
+  zeros. Resolve rules by id-list *and* name fallback, and fail loudly on an
+  empty result (see `resolveRule` / the zero-event guard in `violin.html`).
 - **Data unit:** the vehicle (solid); driver labels are the current Geotab
   assignment (approximate).
 - **Live fetch only** — never bake in a data snapshot, or role-scoping breaks.
