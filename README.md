@@ -12,7 +12,7 @@ that user's role (an office OM sees their office; an exec sees the whole fleet).
 | File | Menu name | What it shows |
 |---|---|---|
 | [`fleetFunnel.html`](fleetFunnel.html) | Fleet by Type | Funnel of the fleet by vehicle model (VIN-decoded) |
-| [`violin.html`](violin.html) | Speeding Distribution | Per-vehicle speeding rate (events/1,000 mi) distributed by office, dots colored High/Moderate/Low |
+| [`violin.html`](violin.html) | Speeding Distribution | KPI summary + per-vehicle speeding rate (events/1,000 mi) distributed by office, over Safe/Watch/High-risk zones, with a per-vehicle table |
 
 Install config: [`config/mira-fleet-charts.config.json`](config/mira-fleet-charts.config.json) ·
 Step-by-step: [`INSTALL.md`](INSTALL.md)
@@ -50,15 +50,32 @@ GitHub Pages rebuilds in ~30–60 s at the same URL. In MyGeotab, hard-refresh
 ## Design conventions
 
 - **Chart library:** ApexCharts (CDN). Keep it consistent across add-ins.
-- **Speeding-risk tiers (fleet-wide, fixed):** Low `<10`, Moderate `10–39`,
-  High `≥40` events/1,000 mi (fleet median / 80th percentile). Colors:
-  High `#c0392b`, Moderate `#f2994a`, Low `#27ae60`.
+- **Speeding-risk tiers (fleet-wide, fixed):** Safe `<10`, Watch `10–39`,
+  High risk `≥40` events/1,000 mi (fleet median / 80th percentile, derived
+  2026-07-30). Status colors: high `#d03b3b`, watch `#fab219`, safe `#0ca30c`.
+- **Thresholds are policy; statistics are description.** The tiers are *fixed*
+  so "High risk" means the same thing to every viewer regardless of data scope,
+  and stays comparable month over month. The fleet-median line and per-office
+  median markers are computed live and move with the data. Don't blur the two.
+- **This database is young, so the tiers will go stale — but not silently.**
+  `checkDrift()` recomputes the empirical median/p80 on every render and raises
+  a visible banner with re-derived values once ≥85% of vehicles land in one
+  tier. When it fires, update `LO`/`HI` in `violin.html` **and** this section.
 - **Tiers are calibrated to a specific rule** — currently `RulePostedSpeedingId`
   ("Speeding"). They are *not* transferable: the retired `RuleGpsSpeedingWindowId`
   fired ~4× as often, which is why the old tiers were `<80 / 80–249 / ≥250`.
-  If the speeding rule changes in MyGeotab, re-derive the median/p80 from live
-  data and update `LO`/`HI` in `violin.html` — otherwise every vehicle collapses
-  into one tier.
+- **Tier is encoded by background zone, never by dot color.** Tier is a pure
+  function of x-position, so coloring the dots by tier spends the only free
+  visual channel restating the axis. It also can't be made accessible: red↔green
+  measures ΔE 2.8 under protanopia (validated, target ≥8) — no hex choice fixes
+  that, because red and green *are* the confusion axis. Large labelled regions
+  don't depend on hue discrimination. Dot fill carries driver-assigned instead.
+- **Axis maxima come from a round step, not from rounding the data max.**
+  Dividing a rounded max by a tick count is what produced ticks like
+  `0/23/45/68/90`. See `axisScale()`.
+- **Nothing is hidden without saying so.** Offices under the size cutoff,
+  vehicles under the mileage floor, and outliers pinned at the axis edge are all
+  named in the footer. A hidden office reads as an office with no problem.
 - **Never hardcode a rule id as the only lookup.** A rule deleted in MyGeotab
   takes its historical exception events with it, and the Get call then returns
   `[]` rather than an error — which renders a plausible-looking chart of all
