@@ -48,8 +48,12 @@ geotab.addin.speedingViolin = function () {
               b27B4:'Grand Rapids',b27B5:'Cincinnati',b27B6:'Cleveland',b27B7:'Columbus',
               b27B8:'American Fork'};
 
-  function median(a){var s=a.slice().sort(function(x,y){return x-y;});var m=s.length>>1;
+  // vals are {rate, veh, drv} records — sort/summarise on .rate
+  function median(a){var s=a.map(function(r){return r.rate;}).sort(function(x,y){return x-y;});
+    var m=s.length>>1;
     return s.length%2?s[m]:(s[m-1]+s[m])/2;}
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
 
   function el(id){ return document.getElementById(id); }
   function warn(msg){
@@ -79,16 +83,18 @@ geotab.addin.speedingViolin = function () {
     var buckets = {High:[], Moderate:[], Low:[]};
     offices.forEach(function(off, i){
       var vals = byOffice[off];
-      var min=Math.min.apply(null,vals), max=Math.max.apply(null,vals);
+      var rates = vals.map(function(r){return r.rate;});
+      var min=Math.min.apply(null,rates), max=Math.max.apply(null,rates);
       var bins=16, bw=((max-min)/bins)||1;
       var counts=new Array(bins).fill(0);
-      vals.forEach(function(v){counts[Math.min(bins-1,Math.floor((v-min)/bw))]++;});
+      rates.forEach(function(v){counts[Math.min(bins-1,Math.floor((v-min)/bw))]++;});
       var maxc=Math.max.apply(null,counts)||1;
       var yc = n - i;
-      vals.forEach(function(v){
+      vals.forEach(function(r){
+        var v = r.rate;
         var dens = counts[Math.min(bins-1,Math.floor((v-min)/bw))]/maxc;
         var jit = (Math.random()*2-1)*dens*JIT;
-        var pt = {x:v, y:+(yc+jit).toFixed(3), office:off};
+        var pt = {x:v, y:+(yc+jit).toFixed(3), office:off, veh:r.veh, drv:r.drv};
         (v>=HI ? buckets.High : (v>=LO ? buckets.Moderate : buckets.Low)).push(pt);
       });
     });
@@ -127,10 +133,17 @@ geotab.addin.speedingViolin = function () {
       annotations:{yaxis:anns, xaxis:xanns},
       legend:{show:true, position:'top', horizontalAlign:'right', fontSize:'12px', markers:{radius:12}},
       grid:{borderColor:'#eef1f5', xaxis:{lines:{show:true}}, yaxis:{lines:{show:false}}, padding:{left:12}},
+      // Office is already the row label, so the tooltip identifies the vehicle
+      // and its current driver instead. The driver is Geotab's current
+      // assignment, not who was behind the wheel for these events — labelled
+      // "current driver" so it doesn't read as attribution.
       tooltip:{custom:function(o){var p=o.w.config.series[o.seriesIndex].data[o.dataPointIndex];
-        return '<div style="padding:6px 9px;font-size:12px"><b>'+p.office+
-        '</b><br>'+(Math.round(p.x*10)/10)+' speeding / 1,000 mi<br>'+
-        o.w.config.series[o.seriesIndex].name+' risk</div>';}}
+        return '<div style="padding:7px 10px;font-size:12px;line-height:1.45">'+
+        '<b>'+esc(p.veh)+'</b><br>'+
+        (p.drv ? '<span style="color:#5a6b80">current driver:</span> '+esc(p.drv)
+               : '<span style="color:#9aa6b5">no driver assigned</span>')+'<br>'+
+        (Math.round(p.x*10)/10)+' speeding / 1,000 mi<br>'+
+        '<span style="color:#5a6b80">'+o.w.config.series[o.seriesIndex].name+' risk</span></div>';}}
     });
     chart.render();
   }
@@ -148,9 +161,12 @@ geotab.addin.speedingViolin = function () {
     api.multiCall([
       ['Get', {typeName:'Rule'}],
       ['Get', {typeName:'Device', resultsLimit:50000}],
-      ['Get', {typeName:'Trip', resultsLimit:TRIP_LIMIT, search:{fromDate:fromISO, toDate:toISO}}]
+      ['Get', {typeName:'Trip', resultsLimit:TRIP_LIMIT, search:{fromDate:fromISO, toDate:toISO}}],
+      ['Get', {typeName:'DeviceStatusInfo'}],
+      ['Get', {typeName:'User', search:{isDriver:true}}]
     ], function(res){
-      var rules = res[0]||[], devices = res[1]||[], trips = res[2]||[];
+      var rules = res[0]||[], devices = res[1]||[], trips = res[2]||[],
+          status = res[3]||[], users = res[4]||[];
 
       var rule = resolveRule(rules);
       if(!rule){
@@ -171,9 +187,25 @@ geotab.addin.speedingViolin = function () {
                ' row limit — rates may be understated.');
         }
 
-        var office={}, spd={}, miles={};
+        var office={}, spd={}, miles={}, vehName={};
         devices.forEach(function(d){
+          vehName[d.id] = d.name || d.id;
           (d.groups||[]).forEach(function(g){ if(LEAF[g.id]) office[d.id]=LEAF[g.id]; });
+        });
+
+        // device -> current driver name. status.driver is either a {id:...}
+        // object or the string sentinel 'UnknownDriverId' when nobody is
+        // assigned, so only dicts count.
+        var userName={};
+        users.forEach(function(u){
+          var full = ((u.firstName||'')+' '+(u.lastName||'')).trim();
+          userName[u.id] = full || u.name || u.id;
+        });
+        var driver={};
+        status.forEach(function(s){
+          var did = s.device && s.device.id;
+          var d = s.driver;
+          if(did && d && typeof d === 'object' && d.id) driver[did] = userName[d.id] || '';
         });
         events.forEach(function(e){ var id=e.device&&e.device.id; if(id) spd[id]=(spd[id]||0)+1; });
         trips.forEach(function(t){ var id=t.device&&t.device.id;
@@ -184,7 +216,8 @@ geotab.addin.speedingViolin = function () {
           var mi=miles[id]||0; if(mi<MIN_MILES) return;
           scoped++;
           var rate = Math.round((spd[id]||0)/(mi/1000)*10)/10;
-          (byOffice[office[id]]=byOffice[office[id]]||[]).push(rate);
+          (byOffice[office[id]]=byOffice[office[id]]||[]).push(
+            {rate:rate, veh:vehName[id]||id, drv:driver[id]||''});
         });
 
         // An all-zero chart is indistinguishable from a genuinely clean fleet,

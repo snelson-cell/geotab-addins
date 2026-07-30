@@ -65,7 +65,15 @@ GitHub Pages rebuilds in ~30–60 s at the same URL. In MyGeotab, hard-refresh
   zeros. Resolve rules by id-list *and* name fallback, and fail loudly on an
   empty result (see `resolveRule` / the zero-event guard in `violin.html`).
 - **Data unit:** the vehicle (solid); driver labels are the current Geotab
-  assignment (approximate).
+  assignment (approximate). The violin tooltip names the vehicle and its
+  current driver — the office is already the row label, so repeating it there
+  wasted the hover. Driver comes from `DeviceStatusInfo.driver` (a `{id}` object,
+  or the string `UnknownDriverId` when nobody is assigned) joined to
+  `Get User {isDriver:true}`. Roughly a third of vehicles have no assignment and
+  show "no driver assigned".
+- **Don't present the driver as attribution.** It is who Geotab has assigned to
+  the vehicle *now*, not who was driving during the 30-day window the events
+  come from — hence the "current driver:" prefix rather than a bare name.
 - **Live fetch only** — never bake in a data snapshot, or role-scoping breaks.
 
 ## Where the data tooling lives (NOT here)
