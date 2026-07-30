@@ -98,6 +98,14 @@ GitHub Pages rebuilds in ~30–60 s at the same URL. In MyGeotab, hard-refresh
   own CSS from JS) while everything around it appears unstyled. `injectStyles()`
   appends the stylesheet at `initialize()`. The test harness must not add a
   `<style>` of its own, or it masks this.
+- **Drill through to today's trips, not the vehicle edit page.** The question a
+  dot raises is "what did it actually do?", which the trips view answers with
+  route, stops and events. Parameter names follow the documented `tripsHistory`
+  URL contract — `#tripsHistory,dateRange:(interval:Today),entityType:Device,`
+  `selectedEntities:!(<id>)` — so `gotoPage` serialises to exactly that hash.
+  See [Using MyGeotab URLs](https://developers.geotab.com/myGeotab/guides/myGeotabUrls/);
+  the add-in guide lists valid page names but not their parameters, so check the
+  URL guide rather than guessing.
 - **Never put `overflow` on the chart's container.** `overflow-x:auto` makes
   `overflow-y` compute to `auto` too (CSS forbids `visible` on one axis beside a
   non-visible other), so the card silently becomes a scroll container. ApexCharts

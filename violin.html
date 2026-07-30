@@ -430,7 +430,7 @@ geotab.addin.speedingViolin = function () {
         animations:{enabled:false},
         events:{ dataPointSelection: function(e, ctx, cfg){
           var p = cfg.w.config.series[cfg.seriesIndex].data[cfg.dataPointIndex];
-          if(p && p.id) goToDevice(p.id);
+          if(p && p.id) goToTrips(p.id);
         }}},
       series:series,
       colors:[C.ink2, C.ink2],
@@ -459,7 +459,7 @@ geotab.addin.speedingViolin = function () {
           Math.round(p.miles).toLocaleString()+' mi</span><br>'+
           '<span style="color:'+tCol+';font-weight:600">'+tName+'</span>'+
           (p.off_scale ? '<br><span style="color:#9b2626">beyond axis — pinned at '+visMax+'</span>' : '')+
-          '<br><span style="color:#898781;font-size:11px">click to open the vehicle</span></div>';
+          '<br><span style="color:#898781;font-size:11px">click for today’s trips</span></div>';
       }}
     });
     chart.render();
@@ -478,9 +478,21 @@ geotab.addin.speedingViolin = function () {
   }
 
   // ── Tier 3 ───────────────────────────────────────────────────────────────
-  function goToDevice(id){
+  // Drill through to today's trips for the vehicle, not to its edit page: the
+  // question a dot raises is "what did it actually do?", and the trips view
+  // answers that with the route, stops and events. Parameter names follow the
+  // documented tripsHistory URL contract —
+  //   #tripsHistory,dateRange:(interval:Today),entityType:Device,selectedEntities:!(<id>)
+  // — so gotoPage serialises to exactly that hash.
+  function goToTrips(id){
     if(stateRef && typeof stateRef.gotoPage === 'function'){
-      try { stateRef.gotoPage('device', {id:id}); } catch(e){}
+      try {
+        stateRef.gotoPage('tripsHistory', {
+          dateRange: {interval: 'Today'},
+          entityType: 'Device',
+          selectedEntities: [id]
+        });
+      } catch(e){}
     }
   }
 
@@ -501,7 +513,7 @@ geotab.addin.speedingViolin = function () {
     var w = el('sv-tablewrap');
     w.innerHTML = head + body + '</tbody></table>';
     w.querySelectorAll('tr.clickable').forEach(function(tr){
-      tr.addEventListener('click', function(){ goToDevice(tr.getAttribute('data-id')); });
+      tr.addEventListener('click', function(){ goToTrips(tr.getAttribute('data-id')); });
     });
   }
 
