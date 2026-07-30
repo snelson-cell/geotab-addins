@@ -480,16 +480,25 @@ geotab.addin.speedingViolin = function () {
   // ── Tier 3 ───────────────────────────────────────────────────────────────
   // Drill through to today's trips for the vehicle, not to its edit page: the
   // question a dot raises is "what did it actually do?", and the trips view
-  // answers that with the route, stops and events. Parameter names follow the
-  // documented tripsHistory URL contract —
-  //   #tripsHistory,dateRange:(interval:Today),entityType:Device,selectedEntities:!(<id>)
-  // — so gotoPage serialises to exactly that hash.
+  // answers that with the route, stops and events.
+  //
+  // BOTH `devices` and `selectedEntities` are required. The published URL guide
+  // documents only selectedEntities, and with that alone the page loads empty —
+  // world-wide mapBounds and `routes:()`. Diffing a hand-built link against one
+  // MyGeotab writes itself, `devices:!(<id>)` is the sole missing *input*;
+  // routes, mapBounds and expandedCardIds are all state the page derives after
+  // it loads, so they don't need to be supplied.
+  //
+  // dateRange:{interval:'Today'} is correct as-is — MyGeotab expands it to
+  // (label:Today,startDate:…,endDate:…) against the database's own timezone,
+  // which is better than us computing a UTC offset.
   function goToTrips(id){
     if(stateRef && typeof stateRef.gotoPage === 'function'){
       try {
         stateRef.gotoPage('tripsHistory', {
           dateRange: {interval: 'Today'},
           entityType: 'Device',
+          devices: [id],
           selectedEntities: [id]
         });
       } catch(e){}

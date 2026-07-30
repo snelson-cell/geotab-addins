@@ -101,11 +101,18 @@ GitHub Pages rebuilds in ~30–60 s at the same URL. In MyGeotab, hard-refresh
 - **Drill through to today's trips, not the vehicle edit page.** The question a
   dot raises is "what did it actually do?", which the trips view answers with
   route, stops and events. Parameter names follow the documented `tripsHistory`
-  URL contract — `#tripsHistory,dateRange:(interval:Today),entityType:Device,`
-  `selectedEntities:!(<id>)` — so `gotoPage` serialises to exactly that hash.
+  URL contract, **plus `devices`**, which that guide omits:
+  `dateRange:(interval:Today), entityType:Device, devices:!(<id>),
+  selectedEntities:!(<id>)`. With `selectedEntities` alone the page loads empty —
+  world-wide `mapBounds` and `routes:()`. The way to settle this is to select a
+  vehicle in Trips History by hand and diff the URL MyGeotab writes against the
+  one you build: everything else in it (`routes`, `mapBounds`, `expandedCardIds`)
+  is state the page derives after loading and must not be supplied.
+  `dateRange:(interval:Today)` is right as-is — MyGeotab expands it against the
+  database's timezone, so don't compute a UTC offset yourself.
   See [Using MyGeotab URLs](https://developers.geotab.com/myGeotab/guides/myGeotabUrls/);
-  the add-in guide lists valid page names but not their parameters, so check the
-  URL guide rather than guessing.
+  the add-in guide lists valid page names but no parameters at all, and the URL
+  guide is incomplete, so verify against a real URL.
 - **Never put `overflow` on the chart's container.** `overflow-x:auto` makes
   `overflow-y` compute to `auto` too (CSS forbids `visible` on one axis beside a
   non-visible other), so the card silently becomes a scroll container. ApexCharts
