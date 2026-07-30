@@ -108,7 +108,7 @@ geotab.addin.speedingViolin = function () {
     '.sv-swatch{width:11px;height:11px;border-radius:50%;flex:none;}',
     '.sv-swatch.hollow{background:transparent;border:2px solid var(--ink-2);}',
     '.sv-swatch.filled{background:var(--ink-2);opacity:.62;}',
-    '.sv-swatch.med{border-radius:2px;background:var(--accent);width:10px;height:10px;}',
+    '.sv-swatch.med{border-radius:0;background:none;width:14px;height:14px;object-fit:contain;}',
     '.sv-swatch.zone{border-radius:3px;width:12px;height:12px;opacity:.5;}',
     '.sv-swatch.dash{border-radius:0;width:14px;height:0;border-top:2px dashed var(--accent);}',
     '.sv-sep{width:1px;height:14px;background:var(--grid);}',
@@ -194,6 +194,12 @@ geotab.addin.speedingViolin = function () {
   var C = {good:'#0ca30c', warning:'#fab219', critical:'#d03b3b',
            ink1:'#0b0b0b', ink2:'#52514e', ink3:'#898781',
            grid:'#e1e0d9', accent:'#2a78d6', surface:'#fcfcfb'};
+
+  // Mira mark, cropped out of assets/mira-home-logo.png (the wordmark removed)
+  // and inlined as a data URI: the add-in is served from GitHub Pages but runs
+  // inside my.geotab.com, so a relative asset path would resolve against the
+  // wrong origin. 825 bytes.
+  var MARK = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAADAElEQVR42u2bT0gUURzHZxUVKkWwf9ih//egdhCCCOnQIQ8dOhQRXexSkLeOZf+I8rCXKBIiypqJJImCMAorgmKjiArqEP0DM6Ky3ZkyzbLvT97UMMy4Orszz53fW/iIh1l/v/d5u2+ev98bLW1an0G+SL6B9+AuyIAWUKOV6KWbdhX+3npwDPSBtyJmsXkPaPgxDMYi4BNoB3VhB473zgB7QH9EOVpRCnAYAJtDDL5FzHSUucUiwCGjX7RTkxz8vphyilUA0ZkuIAHXHIkxn9gFELsmGPyWmHORIiAHGn0GXw8+chBAHPcR0C4hD2kCbPftEb9Xi9smGwHEJpeAdZJykCog4xKwl6OAGy4BJkcBWZeAXo4CHioBSoASoARMBwE5xgLyFPwFYwHvKPglxgL6KHgbYwEdFHwh+M1UQLOTwFWGAl7qplXhJLASjDITsNFbkTnJSMAVv4JkHXjGQMAbMC+oKtsIXiVYwAewtFBTYgG4nUAB2YKD/5eQkU/h4lZhrNwFUPN3t27alWGakzVUvAQXaNtYRgL6xQ53KzVYS9WldhbKJYJFgusSBdwHi0UeTl71WpyvIgqapRBws8kYim5wa3vGKLk0OAzuiObFqAfZXwFvPl/APXAUrG4yrFTYmW0WK2e5L4JPwYYpDNyuxRvOgD8Juw12g4ZCsz4LPEjwRug5mB0089XiAFLSt8KPQK3f7B9g9M9Qp3fwy8AQIwG0vq1xCzjLsCCSXdEzOB58rqTewHQoiekUfAfjouhBCt7FWECvJnZKXAW8puCDjAXkKPhP1R1WApQAJUAJUAJi55ZLQDdHASdcAg5xFLDN83wQKwEUc45LwExJh7WkCejyqUhluAigytNyHwHzJXwKpAjYP0FVui3pAq7pplUVLCBfgWvOJ1XA5bQRPPj/zwlblaIxkxgB38Xzv5Puz68yLDqfsDOGNSFSASPgHLWui+g805GdUxGW7McF/PDpsE6VX+AreCJK7K2BB5HCiWgA28Fp8Fic+hgpQd65vxUvJqe9nnm8AAAAAElFTkSuQmCC';
 
   var chart = null, days = 30, apiRef = null, stateRef = null, lastRows = [];
   // resizeObs must be held in a variable: an unreferenced ResizeObserver is
@@ -419,9 +425,15 @@ geotab.addin.speedingViolin = function () {
       if(i < n-1) anns.push({y:y-0.5, borderColor:C.grid, strokeDashArray:0});
     });
 
+    // Office median drawn as the Mira mark rather than a plain square. Sized a
+    // little larger than the old 5.5px marker so the shape stays legible, and
+    // offset by half its size so it centres on the value rather than hanging
+    // off it.
+    var MARK_PX = narrow ? 13 : 16;
     var points = medPts.map(function(m){
-      return {x:m.x, y:m.y, marker:{size:5.5, shape:'square', fillColor:C.accent,
-              strokeColor:C.surface, strokeWidth:2}};
+      return {x:m.x, y:m.y, marker:{size:0},
+              image:{path:MARK, width:MARK_PX, height:MARK_PX,
+                     offsetX:-MARK_PX/2, offsetY:-MARK_PX/2}};
     });
 
     if(chart){ chart.destroy(); }
@@ -471,7 +483,7 @@ geotab.addin.speedingViolin = function () {
       '<span class="sv-sep"></span>'+
       '<span><i class="sv-swatch filled"></i>Vehicle &mdash; driver assigned</span>'+
       '<span><i class="sv-swatch hollow"></i>Vehicle &mdash; no driver assigned</span>'+
-      '<span><i class="sv-swatch med"></i>Office median</span>'+
+      '<span><img class="sv-swatch med" src="'+MARK+'" alt="">Office median</span>'+
       '<span><i class="sv-swatch dash"></i>Fleet median '+fmt(stats.median)+'</span>';
 
     return {over:over, visMax:visMax, clamped:clamp};
