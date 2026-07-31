@@ -1,7 +1,7 @@
 {
   "name": "Mira Fleet Charts",
   "supportEmail": "snelson@thegrit.com",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "items": [
     {
       "url": "https://snelson-cell.github.io/geotab-addins/fleetFunnel.html",
@@ -15,6 +15,13 @@
       "path": "ActivityLink/",
       "menuName": {
         "en": "Speeding Distribution"
+      }
+    },
+    {
+      "url": "https://snelson-cell.github.io/geotab-addins/topSpeed.html",
+      "path": "ActivityLink/",
+      "menuName": {
+        "en": "Top Speed by Driver"
       }
     }
   ],

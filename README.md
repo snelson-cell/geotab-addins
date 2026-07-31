@@ -12,6 +12,7 @@ that user's role (an office OM sees their office; an exec sees the whole fleet).
 | File | Menu name | What it shows |
 |---|---|---|
 | [`fleetFunnel.html`](fleetFunnel.html) | Fleet by Type | Funnel of the fleet by vehicle model (VIN-decoded) |
+| [`topSpeed.html`](topSpeed.html) | Top Speed by Driver | Peak speed per driver for a chosen day or range, against the written speeding policy, with speeding-event counts and a "speed demon" callout. Built for 1:1s and team meetings |
 | [`violin.html`](violin.html) | Speeding Distribution | KPI summary + per-vehicle speeding rate (events/1,000 mi) distributed by office, over Safe/Watch/High-risk zones, with a per-vehicle table |
 
 Install config: [`config/mira-fleet-charts.config.json`](config/mira-fleet-charts.config.json) ·
@@ -53,6 +54,13 @@ GitHub Pages rebuilds in ~30–60 s at the same URL. In MyGeotab, hard-refresh
 - **Speeding-risk tiers (fleet-wide, fixed):** Safe `<10`, Watch `10–39`,
   High risk `≥40` events/1,000 mi (fleet median / 80th percentile, derived
   2026-07-30). Status colors: high `#d03b3b`, watch `#fab219`, safe `#0ca30c`.
+- **Prefer written policy to derived statistics when it exists.** `topSpeed.html`
+  bands come from Megan Warner's escalations in the `#*-accidents-incidents`
+  Slack channels, not from percentiles: **80+** is a final warning (termination
+  if already on one), **85.1** is where her automated alert fires, **91+** is
+  immediate termination. These superseded an earlier "85+ is termination"
+  wording, so re-confirm with her before trusting them long-term. Percentile
+  bands (as in `violin.html`) are the fallback for when no policy exists.
 - **Thresholds are policy; statistics are description.** The tiers are *fixed*
   so "High risk" means the same thing to every viewer regardless of data scope,
   and stays comparable month over month. The fleet-median line and per-office

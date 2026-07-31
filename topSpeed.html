@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<script src="https://cdn.jsdelivr.net/npm/apexcharts@3.49.1/dist/apexcharts.min.js"></script>
+</head>
+<body>
+<div id="ts-root">
+  <div class="ts-topbar">
+    <div>
+      <h2 class="ts-h1">Top speed by driver</h2>
+      <div class="ts-scope" id="ts-scope">Loading…</div>
+    </div>
+    <div class="ts-dates">
+      <div class="ts-presets" id="ts-presets" role="group" aria-label="Quick ranges"></div>
+      <label class="ts-datefield">From <input type="date" id="ts-from"></label>
+      <label class="ts-datefield">To <input type="date" id="ts-to"></label>
+    </div>
+  </div>
+
+  <div class="ts-note" id="ts-stop"></div>
+  <div class="ts-note" id="ts-warn"></div>
+
+  <div class="ts-hero" id="ts-hero"></div>
+  <div class="ts-kpis" id="ts-kpis"></div>
+
+  <div class="ts-chartcard">
+    <div class="ts-legend" id="ts-legend"></div>
+    <div id="ts-chart"></div>
+  </div>
+  <div class="ts-foot" id="ts-foot"></div>
+
+  <div class="ts-tablehead">
+    <div class="ts-tabletitle">Every driver</div>
+    <div class="ts-tools">
+      <button type="button" id="ts-toggle">Show table</button>
+      <button type="button" id="ts-csv">Export CSV</button>
+    </div>
+  </div>
+  <div class="ts-tablewrap" id="ts-tablewrap"></div>
+</div>
+
+<script>
+geotab.addin.topSpeed = function () {
+  'use strict';
+
+  // ── Policy ───────────────────────────────────────────────────────────────
+  // These are POLICY thresholds, not statistics — taken from Megan Warner's
+  // escalations in the #*-accidents-incidents channels:
+  //   80+   final warning; termination if already on a final   (2026-07-31)
+  //   85.1  the speed her automated alert fires at             (2026-06-18)
+  //   91+   immediate termination                              (2026-06-25)
+  // The policy tightened over time (on 2026-05-15 termination was stated as 85+),
+  // so these track the most recent wording. Update here if it changes again.
+  var FINAL_MPH = 80, ALERT_MPH = 85.1, TERM_MPH = 91;
+  var POLICY_NOTE = 'Policy: ' + FINAL_MPH + '+ mph is a final warning, ' + TERM_MPH +
+                    '+ is immediate termination. Alerts fire at ' + ALERT_MPH + '.';
+
+  var TOP_N = 20;            // rows on the chart — it gets shown on a meeting screen
+  var TRIP_LIMIT = 50000, EVENT_LIMIT = 50000;
+  var KMH_TO_MPH = 0.621371;
+  var SPEED_RULE_IDS = ['RulePostedSpeedingId', 'RuleGpsSpeedingWindowId'];
+  var SPEED_RULE_NAME = /^speeding$/i;
+
+  var LEAF = {b27AB:'Orlando',b27AC:'Tampa',b27AD:'ATL North',b27AE:'ATL South',b27AF:'Chicago',
+              b27B0:'Indianapolis',b27B1:'N Indiana',b27B2:'Louisville',b27B3:'Detroit',
+              b27B4:'Grand Rapids',b27B5:'Cincinnati',b27B6:'Cleveland',b27B7:'Columbus',
+              b27B8:'American Fork'};
+
+  var C = {surface:'#fcfcfb', page:'#f9f9f7', ink1:'#0b0b0b', ink2:'#52514e', ink3:'#898781',
+           grid:'#e1e0d9', axis:'#c3c2b7', accent:'#2a78d6',
+           good:'#0ca30c', warning:'#fab219', critical:'#d03b3b'};
+
+  var chart=null, apiRef=null, stateRef=null, lastRows=[], lastChart=null;
+  var lastWidth=0, resizeTimer=null, resizeObs=null, resizePoll=null, onResize=null,
+      pointerInChart=false;
+  var fromDate=null, toDate=null;
+
+  // Stylesheet ships as a string: MyGeotab drops this file's <head>.
+  var STYLE_ID='ts-styles';
+  var CSS = [
+    '#ts-root{--surface-1:#fcfcfb;--page:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-3:#898781;',
+    '  --grid:#e1e0d9;--axis:#c3c2b7;--hairline:rgba(11,11,11,.10);--accent:#2a78d6;',
+    '  --good:#0ca30c;--warning:#fab219;--critical:#d03b3b;',
+    '  font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--ink-1);',
+    '  background:var(--page);padding:18px 20px 28px;width:100%;}',
+    '#ts-root, #ts-root *{box-sizing:border-box;}',
+    '.ts-h1{font-size:19px;font-weight:650;margin:0;letter-spacing:-.01em;}',
+    '.ts-scope{font-size:12.5px;color:var(--ink-3);margin:3px 0 0;}',
+    '.ts-topbar{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:12px;}',
+    '.ts-dates{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}',
+    '.ts-presets{display:inline-flex;border:1px solid var(--axis);border-radius:7px;overflow:hidden;background:var(--surface-1);}',
+    '.ts-presets button{border:0;background:transparent;color:var(--ink-2);font:inherit;font-size:12.5px;',
+    '  font-weight:600;padding:6px 11px;cursor:pointer;border-right:1px solid var(--grid);}',
+    '.ts-presets button:last-child{border-right:0;}',
+    '.ts-presets button[aria-pressed="true"]{background:var(--accent);color:#fff;}',
+    '.ts-datefield{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;',
+    '  color:var(--ink-3);display:inline-flex;align-items:center;gap:5px;}',
+    '.ts-datefield input{font:inherit;font-size:12.5px;font-weight:600;text-transform:none;',
+    '  letter-spacing:0;color:var(--ink-1);border:1px solid var(--axis);border-radius:6px;',
+    '  padding:5px 7px;background:var(--surface-1);}',
+    '',
+    '.ts-note{font-size:12.5px;border-radius:7px;padding:9px 12px;margin:12px 0 0;display:none;',
+    '  border:1px solid var(--hairline);background:var(--surface-1);color:var(--ink-2);}',
+    '.ts-note.on{display:block;}',
+    '.ts-note b{color:var(--ink-1);}',
+    '.ts-note--warn{background:#fdf6e3;border-color:#efdca8;color:#7a5300;}',
+    '.ts-note--stop{background:#fbece8;border-color:#f0cfc7;color:#9b2626;}',
+    '',
+    // Hero: this is the thing on screen in a team meeting, so it gets real size.
+    '.ts-hero{margin:14px 0 0;border-radius:11px;padding:18px 22px;display:none;',
+    '  background:linear-gradient(100deg,#fbece8,#fdf6e3);border:1px solid #f0cfc7;',
+    '  align-items:center;gap:22px;flex-wrap:wrap;}',
+    '.ts-hero.on{display:flex;}',
+    '.ts-hero-label{font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:#9b2626;}',
+    '.ts-hero-name{font-size:31px;font-weight:680;letter-spacing:-.02em;line-height:1.1;margin:5px 0 0;}',
+    '.ts-hero-meta{font-size:13px;color:var(--ink-2);margin:5px 0 0;}',
+    '.ts-hero-speed{margin-left:auto;text-align:right;}',
+    '.ts-hero-mph{font-size:52px;font-weight:680;line-height:1;letter-spacing:-.03em;color:#9b2626;}',
+    '.ts-hero-unit{font-size:13px;color:var(--ink-2);margin:2px 0 0;}',
+    '',
+    '.ts-kpis{display:flex;flex-wrap:wrap;gap:12px;margin:12px 0 0;}',
+    '.ts-kpi{flex:1 1 190px;min-width:0;background:var(--surface-1);border:1px solid var(--hairline);',
+    '  border-radius:9px;padding:13px 15px 14px;}',
+    '.ts-kpi-label{font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;',
+    '  color:var(--ink-3);display:flex;align-items:center;gap:5px;}',
+    '.ts-kpi-value{font-size:29px;font-weight:640;line-height:1.12;margin:7px 0 0;letter-spacing:-.02em;}',
+    '.ts-kpi-sub{font-size:12px;color:var(--ink-2);margin:4px 0 0;line-height:1.4;}',
+    '.ts-dot{width:8px;height:8px;border-radius:50%;display:inline-block;flex:none;}',
+    '.ts-action{font-size:12.5px;color:var(--ink-2);background:var(--surface-1);border:1px solid var(--hairline);',
+    '  border-left:3px solid var(--accent);border-radius:7px;padding:9px 13px;margin:12px 0 0;}',
+    '',
+    '.ts-chartcard{background:var(--surface-1);border:1px solid var(--hairline);border-radius:9px;',
+    '  margin:14px 0 0;padding:14px 4px 6px;overflow:visible;}',
+    '.ts-legend{display:flex;flex-wrap:wrap;gap:16px;padding:0 14px 4px;font-size:12px;color:var(--ink-2);}',
+    '.ts-legend span{display:inline-flex;align-items:center;gap:6px;}',
+    '.ts-swatch{width:12px;height:12px;border-radius:3px;flex:none;opacity:.5;}',
+    '.ts-swatch.dot{border-radius:50%;opacity:1;width:11px;height:11px;}',
+    '#ts-chart{min-width:380px;}',
+    '',
+    '.ts-foot{font-size:12px;color:var(--ink-3);margin:10px 2px 0;line-height:1.55;}',
+    '.ts-foot b{color:var(--ink-2);font-weight:600;}',
+    '',
+    '.ts-tablehead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:20px 0 0;}',
+    '.ts-tabletitle{font-size:14px;font-weight:650;}',
+    '.ts-tools{display:flex;gap:8px;}',
+    '.ts-tools button{font:inherit;font-size:12.5px;font-weight:600;color:var(--ink-2);',
+    '  background:var(--surface-1);border:1px solid var(--axis);border-radius:6px;padding:5px 11px;cursor:pointer;}',
+    '.ts-tablewrap{margin:9px 0 0;border:1px solid var(--hairline);border-radius:9px;',
+    '  background:var(--surface-1);display:none;}',
+    '.ts-tablewrap.on{display:block;}',
+    'table.ts-t{border-collapse:collapse;width:100%;font-size:12.5px;font-variant-numeric:tabular-nums;}',
+    'table.ts-t th{position:sticky;top:0;background:var(--surface-1);text-align:left;font-size:10.5px;',
+    '  letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);padding:9px 12px;',
+    '  border-bottom:1px solid var(--grid);white-space:nowrap;z-index:1;}',
+    'table.ts-t td{padding:8px 12px;border-bottom:1px solid var(--grid);color:var(--ink-2);white-space:nowrap;}',
+    'table.ts-t tr:last-child td{border-bottom:0;}',
+    'table.ts-t tr.clickable{cursor:pointer;}',
+    'table.ts-t tr.clickable:hover td{background:#f2f5fa;}',
+    'table.ts-t td.who{color:var(--ink-1);font-weight:600;}',
+    'table.ts-t td.num{text-align:right;}',
+    '.ts-band{display:inline-flex;align-items:center;gap:6px;font-weight:600;}',
+    '.ts-band.term{color:#9b2626;} .ts-band.final{color:#7a5300;} .ts-band.ok{color:#0a6b18;}',
+    '@media (max-width:700px){',
+    '  #ts-root{padding:14px 12px 22px;}',
+    '  .ts-hero-mph{font-size:40px;} .ts-hero-name{font-size:25px;}',
+    '  table.ts-t th, table.ts-t td{padding:7px 8px;white-space:normal;}',
+    '}'
+  ].join('\n');
+  function injectStyles(){
+    if(document.getElementById(STYLE_ID)) return;
+    var s=document.createElement('style'); s.id=STYLE_ID; s.textContent=CSS;
+    document.head.appendChild(s);
+  }
+
+  // ── helpers ──────────────────────────────────────────────────────────────
+  function el(id){ return document.getElementById(id); }
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+  function mph(kmh){ return kmh*KMH_TO_MPH; }
+  function f1(v){ return (Math.round(v*10)/10).toLocaleString(); }
+  function f0(v){ return Math.round(v).toLocaleString(); }
+  function bandOf(m){ return m>=TERM_MPH ? 'term' : (m>=FINAL_MPH ? 'final' : 'ok'); }
+  function bandName(b){ return b==='term'?'Termination':b==='final'?'Final warning':'Under policy'; }
+  function bandColor(b){ return b==='term'?C.critical:b==='final'?C.warning:C.good; }
+  function ymd(d){
+    return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+  }
+  function parseYmd(s){ var p=String(s).split('-'); return new Date(+p[0], +p[1]-1, +p[2]); }
+  function dayLabel(d){
+    return d.toLocaleDateString(undefined,{weekday:'short', month:'short', day:'numeric'});
+  }
+  function note(id,cls,html){ var n=el(id); n.className='ts-note on'+(cls?' '+cls:''); n.innerHTML=html; }
+  function clearNotes(){ ['ts-stop','ts-warn'].forEach(function(i){
+    var n=el(i); n.className='ts-note'; n.innerHTML=''; }); }
+  function fail(html){
+    el('ts-hero').className='ts-hero'; el('ts-kpis').innerHTML='';
+    el('ts-legend').innerHTML=''; el('ts-foot').innerHTML='';
+    if(chart){ chart.destroy(); chart=null; }
+    el('ts-chart').innerHTML=''; el('ts-tablewrap').innerHTML='';
+    note('ts-stop','ts-note--stop',html);
+  }
+  function hash01(s){
+    var h=2166136261; s=String(s);
+    for(var i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,16777619); }
+    return ((h>>>0)%100000)/100000;
+  }
+
+  function resolveRule(rules){
+    var byId={};
+    (rules||[]).forEach(function(r){ if(r&&r.id) byId[r.id]=r; });
+    for(var i=0;i<SPEED_RULE_IDS.length;i++){ if(byId[SPEED_RULE_IDS[i]]) return byId[SPEED_RULE_IDS[i]]; }
+    var named=(rules||[]).filter(function(r){ return SPEED_RULE_NAME.test(r&&r.name||''); });
+    return named.length?named[0]:null;
+  }
+
+  // ── Hero + KPIs ──────────────────────────────────────────────────────────
+  function renderHero(top, rangeLabel){
+    var h=el('ts-hero');
+    if(!top){ h.className='ts-hero'; return; }
+    h.className='ts-hero on';
+    h.innerHTML =
+      '<div><div class="ts-hero-label">Speed demon &middot; '+esc(rangeLabel)+'</div>'+
+      '<div class="ts-hero-name">'+esc(top.name)+'</div>'+
+      '<div class="ts-hero-meta">'+esc(top.office||'no office')+' &middot; '+esc(top.peakVeh)+
+      ' &middot; '+esc(top.peakDayLabel)+' &middot; '+top.events+' speeding event'+
+      (top.events===1?'':'s')+' in range</div></div>'+
+      '<div class="ts-hero-speed"><div class="ts-hero-mph">'+f0(top.peak)+'</div>'+
+      '<div class="ts-hero-unit">mph peak &middot; '+esc(bandName(bandOf(top.peak)))+'</div></div>';
+  }
+
+  function kpi(label,color,value,sub){
+    return '<div class="ts-kpi"><div class="ts-kpi-label">'+
+      (color?'<span class="ts-dot" style="background:'+color+'"></span>':'')+esc(label)+
+      '</div><div class="ts-kpi-value">'+value+'</div><div class="ts-kpi-sub">'+sub+'</div></div>';
+  }
+
+  function renderKpis(rows){
+    var term=rows.filter(function(r){ return r.peak>=TERM_MPH; });
+    var fin =rows.filter(function(r){ return r.peak>=FINAL_MPH && r.peak<TERM_MPH; });
+    var alert=rows.filter(function(r){ return r.peak>=ALERT_MPH; });
+    var events=rows.reduce(function(s,r){ return s+r.events; },0);
+    el('ts-kpis').innerHTML =
+      kpi('Termination threshold', C.critical, String(term.length),
+          'drivers at '+TERM_MPH+'+ mph') +
+      kpi('Final warning', C.warning, String(fin.length),
+          'drivers '+FINAL_MPH+'–'+(TERM_MPH-1)+' mph &middot; '+alert.length+' tripped the '+ALERT_MPH+' alert') +
+      kpi('Speeding events', null, f0(events),
+          'across '+rows.length+' drivers who drove in range') +
+      kpi('Drivers over policy', null, String(term.length+fin.length),
+          'of '+rows.length+' &middot; '+Math.round((term.length+fin.length)/Math.max(rows.length,1)*100)+'% of those driving');
+  }
+
+  // ── Chart ────────────────────────────────────────────────────────────────
+  function renderChart(rows){
+    var show = rows.slice(0, TOP_N);
+    var n = show.length;
+    if(!n){ el('ts-chart').innerHTML=''; return; }
+
+    var host=el('ts-chart');
+    var avail=Math.max(380, host.clientWidth || host.parentNode.clientWidth || 900);
+    lastWidth=host.parentNode.clientWidth;
+    var narrow = avail < 620;
+    var GUTTER = narrow ? 130 : 190;
+    var LANE = narrow ? 26 : 30;
+    var H = n*LANE + 96;
+
+    // The axis never starts at zero — nobody's peak is near zero, so a
+    // zero-based scale spends its width on speeds no vehicle reaches. It also
+    // can't just start at a fixed 40: the chart shows the fastest N drivers, who
+    // cluster near the top, and a fixed floor left two thirds of the plot as an
+    // empty green field. So the floor tracks the slowest driver shown, while
+    // still keeping ~15 mph of "under policy" visible for context.
+    var slowest = show[show.length-1].peak;
+    var lo = Math.max(30, Math.floor(Math.min(FINAL_MPH - 15, slowest - 4)/5)*5);
+    var hi = Math.max(TERM_MPH + 6, Math.ceil((show[0].peak + 4)/5)*5);
+    var ticks = Math.min(8, Math.max(4, Math.round((hi-lo)/5)));
+
+    var pts = show.map(function(r,i){
+      return {x: Math.max(lo, r.peak), y: n-i, r: r};
+    });
+
+    var zones = [
+      {x:lo, x2:FINAL_MPH, fillColor:C.good, opacity:0.07, borderWidth:0,
+       label:{text:'UNDER POLICY', orientation:'horizontal', position:'top', offsetY:-6,
+         textAnchor:'start', offsetX:7, borderWidth:0,
+         style:{background:'transparent', color:'#0a6b18', fontSize:'10.5px', fontWeight:700}}},
+      {x:FINAL_MPH, x2:TERM_MPH, fillColor:C.warning, opacity:0.13, borderWidth:0,
+       label:{text:'FINAL WARNING', orientation:'horizontal', position:'top', offsetY:-6,
+         textAnchor:'start', offsetX:7, borderWidth:0,
+         style:{background:'transparent', color:'#7a5300', fontSize:'10.5px', fontWeight:700}}},
+      {x:TERM_MPH, x2:hi, fillColor:C.critical, opacity:0.11, borderWidth:0,
+       label:{text:'TERMINATION', orientation:'horizontal', position:'top', offsetY:-6,
+         textAnchor:'start', offsetX:7, borderWidth:0,
+         style:{background:'transparent', color:'#9b2626', fontSize:'10.5px', fontWeight:700}}},
+      {x:ALERT_MPH, strokeDashArray:4, borderColor:C.ink2, borderWidth:1.5}
+    ];
+
+    var anns=[];
+    show.forEach(function(r,i){
+      var y=n-i;
+      anns.push({y:y, borderColor:'transparent', label:{
+        text:r.name, position:'left', textAnchor:'start', offsetX:-GUTTER, offsetY:-1,
+        borderWidth:0, style:{background:'transparent', color:C.ink1,
+          fontSize:narrow?'11.5px':'12.5px', fontWeight:700}}});
+      anns.push({y:y, borderColor:'transparent', label:{
+        text:(r.office||'—')+' · '+r.events+' ev', position:'left', textAnchor:'start',
+        offsetX:-GUTTER, offsetY:12, borderWidth:0,
+        style:{background:'transparent', color:C.ink3, fontSize:'10px', fontWeight:600}}});
+    });
+
+    if(chart){ chart.destroy(); }
+    chart = new ApexCharts(host, {
+      chart:{type:'scatter', height:H, width:avail, toolbar:{show:false}, fontFamily:'inherit',
+        animations:{enabled:false},
+        events:{ dataPointSelection:function(e,ctx,cfg){
+          var p=cfg.w.config.series[cfg.seriesIndex].data[cfg.dataPointIndex];
+          if(p && p.r) goToTrips(p.r);
+        }}},
+      series:[{name:'Peak speed', data:pts}],
+      colors:[C.ink2],
+      markers:{size:7, strokeWidth:2, strokeColors:C.surface, fillOpacity:0.85,
+        hover:{sizeOffset:3}},
+      xaxis:{min:lo, max:hi, tickAmount:ticks,
+        title:{text:'Peak speed reached (mph)', style:{fontSize:'12px',fontWeight:600,color:C.ink2}},
+        axisBorder:{color:C.axis}, axisTicks:{color:C.axis},
+        labels:{style:{colors:C.ink3, fontSize:'11.5px'},
+          formatter:function(v){ return Math.round(v); }}},
+      yaxis:{min:0.4, max:n+0.6, labels:{show:false}, axisTicks:{show:false}, axisBorder:{show:false}},
+      annotations:{xaxis:zones, yaxis:anns},
+      legend:{show:false},
+      grid:{borderColor:C.grid, xaxis:{lines:{show:true}}, yaxis:{lines:{show:false}},
+        padding:{left:GUTTER, right:18, top:8}},
+      tooltip:{custom:function(o){
+        var p=o.w.config.series[o.seriesIndex].data[o.dataPointIndex], r=p.r;
+        var b=bandOf(r.peak);
+        return '<div style="padding:8px 11px;font-size:12px;line-height:1.5">'+
+          '<b>'+esc(r.name)+'</b> &middot; '+esc(r.office||'no office')+'<br>'+
+          '<b>'+f1(r.peak)+' mph</b> peak <span style="color:#898781">in '+esc(r.peakVeh)+
+          ' on '+esc(r.peakDayLabel)+'</span><br>'+
+          r.events+' speeding event'+(r.events===1?'':'s')+' &middot; '+f0(r.miles)+' mi driven<br>'+
+          '<span style="color:'+bandColor(b)+';font-weight:600">'+bandName(b)+'</span>'+
+          '<br><span style="color:#898781;font-size:11px">click for that day’s trips</span></div>';
+      }}
+    });
+    chart.render();
+
+    el('ts-legend').innerHTML =
+      '<span><i class="ts-swatch" style="background:'+C.good+'"></i>Under '+FINAL_MPH+'</span>'+
+      '<span><i class="ts-swatch" style="background:'+C.warning+'"></i>'+FINAL_MPH+'–'+(TERM_MPH-1)+' &middot; final warning</span>'+
+      '<span><i class="ts-swatch" style="background:'+C.critical+'"></i>'+TERM_MPH+'+ &middot; termination</span>'+
+      '<span><i class="ts-swatch dot" style="background:'+C.ink2+'"></i>Driver peak</span>'+
+      '<span style="color:#898781">dashed line = '+ALERT_MPH+' mph alert</span>';
+  }
+
+  // ── Table + drill-through ────────────────────────────────────────────────
+  function goToTrips(r){
+    if(!(stateRef && typeof stateRef.gotoPage==='function')) return;
+    try {
+      stateRef.gotoPage('tripsHistory', {
+        dateRange:{interval:'custom', startDate:r.peakDayStart, endDate:r.peakDayEnd},
+        entityType:'Driver',
+        devices:[r.peakDeviceId],
+        selectedEntities:[r.driverId]
+      });
+    } catch(e){}
+  }
+
+  function renderTable(rows){
+    var head='<table class="ts-t"><thead><tr><th>Driver</th><th>Office</th>'+
+      '<th style="text-align:right">Peak mph</th><th style="text-align:right">Events</th>'+
+      '<th style="text-align:right">Miles</th><th>Peak on</th><th>Vehicle</th><th>Band</th>'+
+      '</tr></thead><tbody>';
+    var body=rows.map(function(r){
+      var b=bandOf(r.peak);
+      return '<tr class="clickable" data-i="'+rows.indexOf(r)+'">'+
+        '<td class="who">'+esc(r.name)+'</td><td>'+esc(r.office||'—')+'</td>'+
+        '<td class="num"><b>'+f1(r.peak)+'</b></td>'+
+        '<td class="num">'+r.events+'</td>'+
+        '<td class="num">'+f0(r.miles)+'</td>'+
+        '<td>'+esc(r.peakDayLabel)+'</td><td>'+esc(r.peakVeh)+'</td>'+
+        '<td><span class="ts-band '+b+'"><span class="ts-dot" style="background:'+
+        bandColor(b)+'"></span>'+bandName(b)+'</span></td></tr>';
+    }).join('');
+    var w=el('ts-tablewrap');
+    w.innerHTML=head+body+'</tbody></table>';
+    w.querySelectorAll('tr.clickable').forEach(function(tr){
+      tr.addEventListener('click', function(){ goToTrips(rows[+tr.getAttribute('data-i')]); });
+    });
+  }
+
+  function exportCsv(){
+    if(!lastRows.length) return;
+    var lines=[['Driver','Office','Peak mph','Speeding events','Miles','Peak on','Vehicle','Band','From','To'].join(',')];
+    lastRows.forEach(function(r){
+      lines.push([r.name, r.office||'', f1(r.peak), r.events, Math.round(r.miles),
+        r.peakDayLabel, r.peakVeh, bandName(bandOf(r.peak)), ymd(fromDate), ymd(toDate)]
+        .map(function(v){ return '"'+String(v).replace(/"/g,'""')+'"'; }).join(','));
+    });
+    try{
+      var blob=new Blob([lines.join('\n')],{type:'text/csv;charset=utf-8;'});
+      var a=document.createElement('a');
+      a.href=URL.createObjectURL(blob);
+      a.download='top-speed-'+ymd(fromDate)+'_'+ymd(toDate)+'.csv';
+      document.body.appendChild(a); a.click();
+      setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); },0);
+    }catch(e){
+      note('ts-warn',null,'Could not start the download. Use <b>Show table</b> and copy the rows.');
+    }
+  }
+
+  // ── Load ─────────────────────────────────────────────────────────────────
+  function load(api){
+    apiRef=api; clearNotes();
+    var startISO=new Date(fromDate.getFullYear(),fromDate.getMonth(),fromDate.getDate()).toISOString();
+    var endLocal=new Date(toDate.getFullYear(),toDate.getMonth(),toDate.getDate()+1);
+    var endISO=endLocal.toISOString();
+    var single = ymd(fromDate)===ymd(toDate);
+    var rangeLabel = single ? dayLabel(fromDate) : dayLabel(fromDate)+' – '+dayLabel(toDate);
+    el('ts-scope').textContent='Loading '+rangeLabel+'…';
+
+    api.multiCall([
+      ['Get',{typeName:'Rule'}],
+      ['Get',{typeName:'Device', resultsLimit:50000}],
+      ['Get',{typeName:'User', search:{isDriver:true}}],
+      ['Get',{typeName:'Trip', resultsLimit:TRIP_LIMIT, search:{fromDate:startISO, toDate:endISO}}]
+    ], function(res){
+      var rules=res[0]||[], devices=res[1]||[], users=res[2]||[], trips=res[3]||[];
+      var rule=resolveRule(rules);
+      if(!rule){
+        fail('Could not find a speeding rule in this database. Looked for <b>'+
+             SPEED_RULE_IDS.join('</b>, <b>')+'</b> and a rule named &ldquo;Speeding&rdquo;.');
+        return;
+      }
+      if(trips.length>=TRIP_LIMIT){
+        note('ts-warn','ts-note--warn','Trip results hit the '+TRIP_LIMIT.toLocaleString()+
+          ' row limit — some driving in this range is missing. Try a shorter range.');
+      }
+
+      api.call('Get',{typeName:'ExceptionEvent', resultsLimit:EVENT_LIMIT,
+        search:{fromDate:startISO, toDate:endISO, ruleSearch:{id:rule.id}}}, function(events){
+        events=events||[];
+
+        var vehName={}, office={};
+        devices.forEach(function(d){
+          vehName[d.id]=d.name||d.id;
+          (d.groups||[]).forEach(function(g){ if(LEAF[g.id]) office[d.id]=LEAF[g.id]; });
+        });
+        var uname={};
+        users.forEach(function(u){
+          var full=((u.firstName||'')+' '+(u.lastName||'')).trim();
+          uname[u.id]=full||u.name||u.id;
+        });
+        var drvId=function(x){
+          var d=x&&x.driver;
+          return (d && typeof d==='object' && d.id) ? d.id : null;
+        };
+
+        // Peak speed + miles per driver, from trips.
+        var by={}, noDriverTrips=0, noDriverMiles=0;
+        trips.forEach(function(t){
+          var id=drvId(t);
+          var mi=(t.distance||0)*KMH_TO_MPH;
+          if(!id){ noDriverTrips++; noDriverMiles+=mi; return; }
+          var rec = by[id] || (by[id]={driverId:id, name:uname[id]||id, office:null,
+            peak:0, events:0, miles:0, peakVeh:'—', peakDeviceId:null,
+            peakDayLabel:'—', peakDayStart:null, peakDayEnd:null});
+          rec.miles += mi;
+          var did=(t.device||{}).id;
+          if(did && !rec.office && office[did]) rec.office=office[did];
+          var m = mph(t.maximumSpeed||0);
+          if(m > rec.peak){
+            rec.peak=m;
+            rec.peakVeh=vehName[did]||did||'—';
+            rec.peakDeviceId=did;
+            var when=new Date(t.start||t.stop||startISO);
+            rec.peakDayLabel=dayLabel(when);
+            var s=new Date(when.getFullYear(),when.getMonth(),when.getDate());
+            rec.peakDayStart=s.toISOString();
+            rec.peakDayEnd=new Date(s.getFullYear(),s.getMonth(),s.getDate()+1).toISOString();
+          }
+        });
+
+        var noDriverEvents=0;
+        events.forEach(function(e){
+          var id=drvId(e);
+          if(!id){ noDriverEvents++; return; }
+          if(by[id]) by[id].events++;
+        });
+
+        var rows=Object.keys(by).map(function(k){ return by[k]; })
+                       .filter(function(r){ return r.peak>0; })
+                       .sort(function(a,b){ return b.peak-a.peak; });
+        if(!rows.length){
+          fail('No driver-attributed driving in '+esc(rangeLabel)+'. '+
+               (noDriverTrips ? noDriverTrips+' trip(s) ran with no driver assigned in Geotab.'
+                              : 'There were no trips at all in this range.'));
+          return;
+        }
+
+        lastRows=rows; lastChart=rows;
+        el('ts-scope').innerHTML = rangeLabel+' &middot; '+rows.length+' drivers &middot; rule: '+
+          esc(rule.name)+' &middot; your data scope';
+
+        renderHero(rows[0], rangeLabel);
+        renderKpis(rows);
+        renderChart(rows);
+        renderTable(rows);
+
+        var foot=[POLICY_NOTE];
+        if(rows.length>TOP_N){
+          foot.push('Chart shows the fastest <b>'+TOP_N+'</b> of '+rows.length+
+            ' drivers. The rest are in the table.');
+        }
+        if(noDriverTrips){
+          foot.push('<b>'+noDriverTrips+' trip'+(noDriverTrips===1?'':'s')+' ('+f0(noDriverMiles)+
+            ' mi) had no driver assigned</b> and are not counted anywhere on this page. '+
+            'Whoever drove them does not appear here.');
+        }
+        if(noDriverEvents){
+          foot.push(noDriverEvents+' speeding event'+(noDriverEvents===1?'':'s')+
+            ' could not be attributed to a driver.');
+        }
+        foot.push('Peak speed is the highest single reading in a trip, so one GPS spike counts '+
+          'the same as a sustained run. Treat it as a prompt to look, not as proof.');
+        el('ts-foot').innerHTML=foot.join('<br>');
+      }, function(err){ fail('Error loading speeding events: '+esc(err)); });
+    }, function(err){ fail('Error loading data: '+esc(err)); });
+  }
+
+  // ── Date controls ────────────────────────────────────────────────────────
+  var PRESETS=[
+    {k:'today', label:'Today', days:0},
+    {k:'yest',  label:'Yesterday', days:-1},
+    {k:'7',     label:'Last 7 days', days:6},
+    {k:'30',    label:'Last 30 days', days:29}
+  ];
+  function setRange(from,to,activeKey){
+    fromDate=from; toDate=to;
+    el('ts-from').value=ymd(from);
+    el('ts-to').value=ymd(to);
+    el('ts-presets').querySelectorAll('button').forEach(function(b){
+      b.setAttribute('aria-pressed', String(b.getAttribute('data-k')===activeKey));
+    });
+  }
+  function applyPreset(p){
+    var now=new Date(), t=new Date(now.getFullYear(),now.getMonth(),now.getDate());
+    if(p.k==='today') setRange(t,t,p.k);
+    else if(p.k==='yest'){ var y=new Date(t.getFullYear(),t.getMonth(),t.getDate()-1); setRange(y,y,p.k); }
+    else setRange(new Date(t.getFullYear(),t.getMonth(),t.getDate()-p.days), t, p.k);
+  }
+  function buildDates(){
+    el('ts-presets').innerHTML=PRESETS.map(function(p){
+      return '<button type="button" data-k="'+p.k+'">'+p.label+'</button>';
+    }).join('');
+    el('ts-presets').querySelectorAll('button').forEach(function(b){
+      b.addEventListener('click', function(){
+        var p=PRESETS.filter(function(x){ return x.k===b.getAttribute('data-k'); })[0];
+        applyPreset(p);
+        if(apiRef) load(apiRef);
+      });
+    });
+    function onManual(){
+      var f=parseYmd(el('ts-from').value), t=parseYmd(el('ts-to').value);
+      if(isNaN(f)||isNaN(t)) return;
+      if(f>t){ var tmp=f; f=t; t=tmp; }
+      setRange(f,t,null);
+      if(apiRef) load(apiRef);
+    }
+    el('ts-from').addEventListener('change', onManual);
+    el('ts-to').addEventListener('change', onManual);
+    applyPreset(PRESETS[2]);          // default: last 7 days
+  }
+
+  // ── Resize (same approach as the speeding dashboard) ─────────────────────
+  function watchResize(){
+    var card=el('ts-chart').parentNode;
+    lastWidth=card.clientWidth;
+    onResize=function(){
+      var w=card.clientWidth;
+      if(!lastChart||!w||Math.abs(w-lastWidth)<16) return;
+      clearTimeout(resizeTimer);
+      function attempt(){
+        if(pointerInChart){ resizeTimer=setTimeout(attempt,250); return; }
+        if(lastChart) renderChart(lastChart);
+      }
+      resizeTimer=setTimeout(attempt,140);
+    };
+    if(typeof ResizeObserver==='function'){
+      resizeObs=new ResizeObserver(onResize); resizeObs.observe(card);
+    }
+    window.addEventListener('resize', onResize);
+    card.addEventListener('mouseenter', function(){ pointerInChart=true; });
+    card.addEventListener('mouseleave', function(){ pointerInChart=false; onResize(); });
+    startPoll();
+  }
+  function startPoll(){ if(!resizePoll && onResize) resizePoll=setInterval(onResize,400); }
+  function stopPoll(){ if(resizePoll){ clearInterval(resizePoll); resizePoll=null; } }
+
+  function wireTools(){
+    var t=el('ts-toggle');
+    t.addEventListener('click', function(){
+      var on=el('ts-tablewrap').classList.toggle('on');
+      t.textContent = on ? 'Hide table' : 'Show table';
+    });
+    el('ts-csv').addEventListener('click', exportCsv);
+  }
+
+  return {
+    initialize:function(api,state,cb){
+      injectStyles(); buildDates(); wireTools(); watchResize(); cb();
+    },
+    focus:function(api,state){ stateRef=state; startPoll(); load(api); },
+    blur:function(){ stopPoll(); }
+  };
+};
+</script>
+</body>
+</html>
