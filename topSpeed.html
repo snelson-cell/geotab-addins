@@ -12,6 +12,7 @@
       <div class="ts-scope" id="ts-scope">Loading…</div>
     </div>
     <div class="ts-dates">
+      <label class="ts-datefield">Office <select id="ts-office"></select></label>
       <div class="ts-presets" id="ts-presets" role="group" aria-label="Quick ranges"></div>
       <label class="ts-datefield">From <input type="date" id="ts-from"></label>
       <label class="ts-datefield">To <input type="date" id="ts-to"></label>
@@ -75,6 +76,7 @@ geotab.addin.topSpeed = function () {
   var lastWidth=0, resizeTimer=null, resizeObs=null, resizePoll=null, onResize=null,
       pointerInChart=false;
   var fromDate=null, toDate=null;
+  var allRows=[], officeFilter='', ctx={};
 
   // Stylesheet ships as a string: MyGeotab drops this file's <head>.
   var STYLE_ID='ts-styles';
@@ -96,9 +98,11 @@ geotab.addin.topSpeed = function () {
     '.ts-presets button[aria-pressed="true"]{background:var(--accent);color:#fff;}',
     '.ts-datefield{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;',
     '  color:var(--ink-3);display:inline-flex;align-items:center;gap:5px;}',
-    '.ts-datefield input{font:inherit;font-size:12.5px;font-weight:600;text-transform:none;',
-    '  letter-spacing:0;color:var(--ink-1);border:1px solid var(--axis);border-radius:6px;',
-    '  padding:5px 7px;background:var(--surface-1);}',
+    '.ts-datefield input, .ts-datefield select{font:inherit;font-size:12.5px;font-weight:600;',
+    '  text-transform:none;letter-spacing:0;color:var(--ink-1);border:1px solid var(--axis);',
+    '  border-radius:6px;padding:5px 7px;background:var(--surface-1);}',
+    '.ts-datefield select{max-width:200px;}',
+    '.ts-datefield select.on{border-color:var(--accent);color:var(--accent);}',
     '',
     '.ts-note{font-size:12.5px;border-radius:7px;padding:9px 12px;margin:12px 0 0;display:none;',
     '  border:1px solid var(--hairline);background:var(--surface-1);color:var(--ink-2);}',
@@ -498,34 +502,98 @@ geotab.addin.topSpeed = function () {
           return;
         }
 
-        lastRows=rows; lastChart=rows;
-        el('ts-scope').innerHTML = rangeLabel+' &middot; '+rows.length+' drivers &middot; rule: '+
-          esc(rule.name)+' &middot; your data scope';
-
-        renderHero(rows[0], rangeLabel);
-        renderKpis(rows);
-        renderChart(rows);
-        renderTable(rows);
-
-        var foot=[POLICY_NOTE];
-        if(rows.length>TOP_N){
-          foot.push('Chart shows the fastest <b>'+TOP_N+'</b> of '+rows.length+
-            ' drivers. The rest are in the table.');
-        }
-        if(noDriverTrips){
-          foot.push('<b>'+noDriverTrips+' trip'+(noDriverTrips===1?'':'s')+' ('+f0(noDriverMiles)+
-            ' mi) had no driver assigned</b> and are not counted anywhere on this page. '+
-            'Whoever drove them does not appear here.');
-        }
-        if(noDriverEvents){
-          foot.push(noDriverEvents+' speeding event'+(noDriverEvents===1?'':'s')+
-            ' could not be attributed to a driver.');
-        }
-        foot.push('Peak speed is the highest single reading in a trip, so one GPS spike counts '+
-          'the same as a sustained run. Treat it as a prompt to look, not as proof.');
-        el('ts-foot').innerHTML=foot.join('<br>');
+        // Keep the unfiltered result and re-render from it, so changing office
+        // is instant rather than another round trip to Geotab.
+        allRows = rows;
+        ctx = {rangeLabel:rangeLabel, ruleName:rule.name,
+               noDriverTrips:noDriverTrips, noDriverMiles:noDriverMiles,
+               noDriverEvents:noDriverEvents};
+        buildOfficeOptions(rows);
+        applyFilter();
       }, function(err){ fail('Error loading speeding events: '+esc(err)); });
     }, function(err){ fail('Error loading data: '+esc(err)); });
+  }
+
+  // ── Office filter ────────────────────────────────────────────────────────
+  var NO_OFFICE='__none__';
+  function buildOfficeOptions(rows){
+    var counts={}, none=0;
+    rows.forEach(function(r){
+      if(r.office) counts[r.office]=(counts[r.office]||0)+1; else none++;
+    });
+    var names=Object.keys(counts).sort();
+    var sel=el('ts-office');
+    var opts=['<option value="">All offices ('+rows.length+')</option>'];
+    names.forEach(function(o){
+      opts.push('<option value="'+esc(o)+'">'+esc(o)+' ('+counts[o]+')</option>');
+    });
+    // Drivers whose vehicle sits in no office group would otherwise be
+    // unreachable once a filter is applied, so give them their own bucket.
+    if(none) opts.push('<option value="'+NO_OFFICE+'">No office ('+none+')</option>');
+    sel.innerHTML=opts.join('');
+    // Keep the manager's selection across date changes when it still exists.
+    var keep = officeFilter && (officeFilter===NO_OFFICE ? none : counts[officeFilter]);
+    if(!keep) officeFilter='';
+    sel.value=officeFilter;
+    sel.className = officeFilter ? 'on' : '';
+  }
+
+  function applyFilter(){
+    var rows = !officeFilter ? allRows
+      : allRows.filter(function(r){
+          return officeFilter===NO_OFFICE ? !r.office : r.office===officeFilter;
+        });
+    var where = officeFilter ? (officeFilter===NO_OFFICE ? 'no office' : officeFilter) : null;
+
+    if(!rows.length){
+      fail('No driver-attributed driving for <b>'+esc(where||'this range')+'</b> in '+
+           esc(ctx.rangeLabel)+'.');
+      return;
+    }
+    clearNotes();
+    lastRows=rows; lastChart=rows;
+
+    el('ts-scope').innerHTML = ctx.rangeLabel+' &middot; '+
+      (where ? '<b>'+esc(where)+'</b> &middot; ' : '')+
+      rows.length+' driver'+(rows.length===1?'':'s')+' &middot; rule: '+esc(ctx.ruleName)+
+      ' &middot; your data scope';
+
+    renderHero(rows[0], ctx.rangeLabel + (where ? ' · ' + where : ''));
+    renderKpis(rows);
+    renderChart(rows);
+    renderTable(rows);
+
+    var foot=[POLICY_NOTE];
+    if(where){
+      foot.push('Filtered to <b>'+esc(where)+'</b>. '+
+        allRows.length+' drivers drove across all offices in this range.');
+    }
+    if(rows.length>TOP_N){
+      foot.push('Chart shows the fastest <b>'+TOP_N+'</b> of '+rows.length+
+        ' drivers. The rest are in the table.');
+    }
+    if(ctx.noDriverTrips){
+      foot.push('<b>'+ctx.noDriverTrips+' trip'+(ctx.noDriverTrips===1?'':'s')+' ('+
+        f0(ctx.noDriverMiles)+' mi) had no driver assigned</b> and are not counted anywhere '+
+        'on this page. Whoever drove them does not appear here.'+
+        (where ? ' (Fleet-wide figure — it is not filtered by office, because an '+
+                 'unassigned trip has no driver to place in one.)' : ''));
+    }
+    if(ctx.noDriverEvents){
+      foot.push(ctx.noDriverEvents+' speeding event'+(ctx.noDriverEvents===1?'':'s')+
+        ' could not be attributed to a driver.');
+    }
+    foot.push('Peak speed is the highest single reading in a trip, so one GPS spike counts '+
+      'the same as a sustained run. Treat it as a prompt to look, not as proof.');
+    el('ts-foot').innerHTML=foot.join('<br>');
+  }
+
+  function wireOffice(){
+    el('ts-office').addEventListener('change', function(e){
+      officeFilter = e.target.value;
+      e.target.className = officeFilter ? 'on' : '';
+      if(allRows.length) applyFilter();     // no refetch — filter the data we hold
+    });
   }
 
   // ── Date controls ────────────────────────────────────────────────────────
@@ -608,7 +676,7 @@ geotab.addin.topSpeed = function () {
 
   return {
     initialize:function(api,state,cb){
-      injectStyles(); buildDates(); wireTools(); watchResize(); cb();
+      injectStyles(); buildDates(); wireOffice(); wireTools(); watchResize(); cb();
     },
     focus:function(api,state){ stateRef=state; startPoll(); load(api); },
     blur:function(){ stopPoll(); }
