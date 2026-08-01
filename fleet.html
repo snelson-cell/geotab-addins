@@ -306,23 +306,31 @@ geotab.addin.fleetRegister = function () {
       return (x<y?-1:x>y?1:0)*sortDir;
     });
 
-    var t={ total:rows.length, geotab:0, awaiting:0, service:0, camera:0 };
-    rows.forEach(function(r){
+    // KPIs describe what is on screen, not the whole fleet — otherwise
+    // picking a location changes the table but leaves the headline numbers
+    // describing something the viewer can no longer see.
+    var t={ total:list.length, geotab:0, awaiting:0, service:0, camera:0 };
+    list.forEach(function(r){
       if(r.inGeotab) t.geotab++; else t.awaiting++;
       if(r.status==='In service') t.service++;
       if(r.camera) t.camera++;
     });
-    var own={}; rows.forEach(function(r){ if(r.own) own[r.own]=(own[r.own]||0)+1; });
+    var own={}; list.forEach(function(r){ if(r.own) own[r.own]=(own[r.own]||0)+1; });
+    var narrowed = list.length !== rows.length;
+    var where = el('fr-loc').value || (narrowed ? 'this selection' : '');
 
     el('fr-scope').textContent = 'Showing ' + f0(list.length) + ' of ' + f0(rows.length) +
       ' vehicles · Geotab live' + (entLabel ? ' + ' + entLabel : '');
 
     el('fr-kpis').innerHTML=[
-      kpi('Vehicles', f0(rows.length), f0(t.geotab)+' in Geotab, '+f0(t.awaiting)+' awaiting install'),
+      kpi(narrowed ? 'Vehicles — '+where : 'Vehicles', f0(t.total),
+          f0(t.geotab)+' in Geotab, '+f0(t.awaiting)+' awaiting install'),
       kpi('Owned', f0(own['Owned']||0), f0(own['Leased']||0)+' leased'),
       kpi('Rental', f0(own['Rental']||0), f0(own['Unconfirmed']||0)+' unconfirmed'),
-      kpi('In service', f0(t.service), 'reporting to Geotab now'),
-      kpi('Cameras', f0(t.camera), 'GO Focus Plus fitted')
+      kpi('In service', f0(t.service),
+          t.total ? Math.round(100*t.service/t.total)+'% of these vehicles' : '—'),
+      kpi('Cameras', f0(t.camera),
+          t.total ? Math.round(100*t.camera/t.total)+'% fitted' : 'GO Focus Plus')
     ].join('');
 
     var cols=[['rank','Truck #'],['model','Model'],['year','Year'],['vin','VIN'],
