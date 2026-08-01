@@ -30,14 +30,11 @@
 geotab.addin.fleetRegister = function () {
   'use strict';
 
-  // The Enterprise Fleet Management export is the only thing here not read
-  // live from Geotab. It is what Mira owns or leases, and it is how a vehicle
-  // that has not reached Geotab yet still appears on this page. Regenerate it
-  // monthly with Archive/GeoTab/build_enterprise_json.py and commit — the
-  // export lags new deliveries, which is why an unmatched vehicle is shown as
-  // "Unconfirmed" rather than guessed to be a rental.
-  var ENT_URL = 'https://snelson-cell.github.io/geotab-addins/data/enterprise-fleet.json';
-
+  // Everything on this page is read live from Geotab in the signed-in user's
+  // session. Ownership is NOT derived here — it is a custom property written
+  // by Archive/GeoTab/backfill_ownership.py from the Enterprise monthly
+  // export. That keeps the Enterprise data (VINs, plates) inside Geotab
+  // behind auth, instead of on this repo's public GitHub Pages site.
   // Custom properties created by Archive/GeoTab/setup_fleet_properties.py.
   // Matched by NAME at runtime, never by hardcoded id — the ids differ per
   // database, and a wrong id fails silently as an always-blank column.
@@ -53,21 +50,10 @@ geotab.addin.fleetRegister = function () {
     'Cincinnati':1, 'Cleveland':1, 'Chicago':1, 'Indianapolis':1, 'Orlando':1,
     'Northern Indy':1, 'American Fork':1, 'Grand Rapids':1, 'Louisville':1 };
 
-  // Enterprise records a garage CITY; Geotab records an office GROUP. Left
-  // unmapped the filter shows both — "Brecksville" and "Cleveland" as two
-  // separate places. Normalise the city onto the Geotab group name.
-  var CITY_TO_OFFICE = {
-    'Norcross':'ATL North', 'Riverdale':'ATL South', 'Ann Arbor':'Detroit',
-    'Brecksville':'Cleveland', 'Elgin':'Chicago', 'Merrillville':'Northern Indy',
-    'Lindon':'American Fork', 'Crestwood':'Louisville', 'Sharonville':'Cincinnati'
-  };
-  function officeOfCity(city){
-    if(!city) return '';
-    return CITY_TO_OFFICE[city] || (OFFICES[city] ? city : city);
-  }
-
+  // Default order puts working vehicles first — sorting by truck number alone
+  // buried them under 356 uncommissioned boxes still named after their serial.
   var STATUS_RANK = { 'In service':'1', 'No recent contact':'2',
-                      'Awaiting install':'3', 'Not commissioned':'4' };
+                      'Not commissioned':'3' };
 
   var C = { ink:'#0b0b0b', sub:'#52514e', line:'#e1e0d9',
             good:'#0ca30c', watch:'#fab219', bad:'#d03b3b', accent:'#185FA5' };
@@ -133,25 +119,9 @@ geotab.addin.fleetRegister = function () {
   function note(id,msg){ var n=el(id); if(!n) return;
     if(msg){ n.innerHTML=msg; n.className='fr-note on'; } else { n.className='fr-note'; n.textContent=''; } }
 
-  var apiRef=null, stateRef=null, rows=[], entLabel='', sortKey='rank', sortDir=1;
+  var apiRef=null, stateRef=null, rows=[], sortKey='rank', sortDir=1;
 
   function load(){
-    var ent=null, geo=null;
-    function done(){
-      if(ent===null || geo===null) return;
-      try { build(geo, ent); }
-      catch(e){ note('fr-stop','Could not build the register: '+esc(e && e.message || e)); }
-    }
-    // The Enterprise snapshot is a nice-to-have: if it cannot be fetched the
-    // page still works off Geotab alone, it just cannot show vehicles that
-    // have not reached Geotab yet. Fail soft, and say so.
-    try {
-      fetch(ENT_URL, {cache:'no-cache'}).then(function(r){
-        return r.ok ? r.json() : null;
-      }).then(function(j){ ent=j||false; done(); })
-        .catch(function(){ ent=false; done(); });
-    } catch(e){ ent=false; }
-
     apiRef.multiCall([
       ['Get', { typeName:'Device' }],
       ['Get', { typeName:'Camera' }],
@@ -159,11 +129,15 @@ geotab.addin.fleetRegister = function () {
       ['Get', { typeName:'DeviceStatusInfo' }],
       ['Get', { typeName:'User', search:{ isDriver:true } }],
       ['Get', { typeName:'Property' }]
-    ], function(res){ geo=res; done(); },
-       function(err){ note('fr-stop','Geotab call failed: '+esc(err && err.message || err)); });
+    ], function(res){
+      try { build(res); }
+      catch(e){ note('fr-stop','Could not build the register: '+esc(e && e.message || e)); }
+    }, function(err){
+      note('fr-stop','Geotab call failed: '+esc(err && err.message || err));
+    });
   }
 
-  function build(geo, ent){
+  function build(geo){
     var devices=geo[0]||[], cameras=geo[1]||[], groups=geo[2]||[],
         status=geo[3]||[], users=geo[4]||[], props=geo[5]||[];
 
@@ -182,12 +156,6 @@ geotab.addin.fleetRegister = function () {
     var stByDev={};
     status.forEach(function(s){ var d=(s.device||{}).id; if(d) stByDev[d]=s; });
 
-    var entByVin={};
-    if(ent && ent.vehicles){
-      entLabel=ent.label||'';
-      ent.vehicles.forEach(function(v){ if(v.vin) entByVin[v.vin.toUpperCase()]=v; });
-    }
-
     function cprops(d){
       var o={};
       (d.customProperties||[]).forEach(function(c){
@@ -203,7 +171,6 @@ geotab.addin.fleetRegister = function () {
       var vin=(d.vehicleIdentificationNumber||'').trim().toUpperCase();
       if(vin) seen[vin]=true;
       var cp=cprops(d);
-      var e=vin?entByVin[vin]:null;
       var st=stByDev[d.id];
       var office=null;
       (d.groups||[]).forEach(function(g){
@@ -214,37 +181,23 @@ geotab.addin.fleetRegister = function () {
       var drv=st && st.driver && st.driver.id ? drvName[st.driver.id] : '';
       rows.push({
         truck: d.name||'', vin: vin, id: d.id, serial: serial,
-        model: ((d.vinInfoMake||'')+' '+(d.vinInfoModel||'')).trim() ||
-               (e?e.model:'') , year: (d.vinInfoYear||'') || (e?e.year:''),
-        office: office || (e?officeOfCity(e.city):'') || '',
-        own: cp['Ownership'] || (e?e.own:'') || (vin?'Unconfirmed':''),
-        plate: (d.licensePlate||'').trim() || (e?e.plate:'') || '',
-        plateState: (d.licenseState||'').trim() || (e?e.state:'') || '',
+        model: ((d.vinInfoMake||'')+' '+(d.vinInfoModel||'')).trim(),
+        year: d.vinInfoYear||'',
+        office: office||'',
+        own: cp['Ownership'] || (vin?'Unconfirmed':''),
+        plate: (d.licensePlate||'').trim(),
+        plateState: (d.licenseState||'').trim(),
         camera: !!(serial && camSerial[serial]),
         driver: drv,
         lastSeen: st ? st.dateTime : '',
         comms: st ? !!st.isDeviceCommunicating : false,
-        inGeotab: true, vinned: !!vin, cp: cp,
-        odo: e?e.odo:'', delivered: e?e.delivered:''
-      });
-    });
-
-    // Owned/leased vehicles that have not reached Geotab at all
-    Object.keys(entByVin).forEach(function(vin){
-      if(seen[vin]) return;
-      var e=entByVin[vin];
-      rows.push({
-        truck:'', vin:vin, id:null, serial:'', model:e.model, year:e.year,
-        office:officeOfCity(e.city)||'', own:e.own, plate:e.plate||'', plateState:e.state||'',
-        camera:false, driver:'', lastSeen:'', comms:false,
-        inGeotab:false, vinned:true, cp:{}, odo:e.odo, delivered:e.delivered
+        vinned: !!vin, cp: cp
       });
     });
 
     rows.forEach(function(r){
-      r.status = !r.inGeotab ? 'Awaiting install'
-               : !r.vinned   ? 'Not commissioned'
-               : r.comms     ? 'In service' : 'No recent contact';
+      r.status = !r.vinned ? 'Not commissioned'
+               : r.comms   ? 'In service' : 'No recent contact';
       // Default order puts working vehicles first. Sorting by truck number
       // alone buried them under 346 uncommissioned boxes still named after
       // their own serial, which is the least useful thing to open on.
@@ -255,8 +208,6 @@ geotab.addin.fleetRegister = function () {
     if(missing.length){
       note('fr-warn','These custom properties are missing from Geotab, so their columns stay blank: <b>'+
         esc(missing.join(', '))+'</b>. Run <code>setup_fleet_properties.py --apply</code>.');
-    } else if(ent===false){
-      note('fr-warn','The Enterprise snapshot could not be loaded, so vehicles that have not reached Geotab yet are not listed.');
     } else { note('fr-warn',''); }
     render();
   }
@@ -309,9 +260,9 @@ geotab.addin.fleetRegister = function () {
     // KPIs describe what is on screen, not the whole fleet — otherwise
     // picking a location changes the table but leaves the headline numbers
     // describing something the viewer can no longer see.
-    var t={ total:list.length, geotab:0, awaiting:0, service:0, camera:0 };
+    var t={ total:list.length, vinned:0, service:0, camera:0 };
     list.forEach(function(r){
-      if(r.inGeotab) t.geotab++; else t.awaiting++;
+      if(r.vinned) t.vinned++;
       if(r.status==='In service') t.service++;
       if(r.camera) t.camera++;
     });
@@ -320,11 +271,11 @@ geotab.addin.fleetRegister = function () {
     var where = el('fr-loc').value || (narrowed ? 'this selection' : '');
 
     el('fr-scope').textContent = 'Showing ' + f0(list.length) + ' of ' + f0(rows.length) +
-      ' vehicles · Geotab live' + (entLabel ? ' + ' + entLabel : '');
+      ' vehicles · live from Geotab';
 
     el('fr-kpis').innerHTML=[
       kpi(narrowed ? 'Vehicles — '+where : 'Vehicles', f0(t.total),
-          f0(t.geotab)+' in Geotab, '+f0(t.awaiting)+' awaiting install'),
+          f0(t.vinned)+' commissioned, '+f0(t.total-t.vinned)+' not yet'),
       kpi('Owned', f0(own['Owned']||0), f0(own['Leased']||0)+' leased'),
       kpi('Rental', f0(own['Rental']||0), f0(own['Unconfirmed']||0)+' unconfirmed'),
       kpi('In service', f0(t.service),
@@ -384,10 +335,12 @@ geotab.addin.fleetRegister = function () {
     });
 
     var foot=[];
-    foot.push('<b>Awaiting install</b> = on the Enterprise export but not in Geotab yet. ' +
-      '<b>Not commissioned</b> = a GO9 registered in Geotab that has never reported a VIN.');
+    foot.push('<b>Not commissioned</b> = a GO9 registered in Geotab that has never ' +
+      'reported a VIN — it is not plugged into a vehicle. Vehicles that have not reached ' +
+      'Geotab at all are not on this page; <a class="fr-link" data-p="rollout">GO9 &amp; ' +
+      'Camera Rollout</a> tracks those by location.');
     foot.push('<b>Unconfirmed</b> ownership means the VIN is in Geotab but not on the ' +
-      (entLabel||'Enterprise')+' export and the vehicle is not named as a rental — almost ' +
+      'Enterprise export and the vehicle is not named as a rental — almost ' +
       'always a new delivery the monthly export has not caught up with. It is deliberately ' +
       'not guessed either way.');
     foot.push('Blank compliance columns are not "no" — they are "nobody has recorded it yet". ' +
@@ -406,14 +359,14 @@ geotab.addin.fleetRegister = function () {
     var list=filtered();
     var head=['Truck #','Model','Year','VIN','Ownership','Location','Status','Driver',
       'Plate','Plate State','Plate Type','Reg Expiration','Camera']
-      .concat(BOOL_PROPS).concat(['Check-Out Form Link','Odometer','Delivered']);
+      .concat(BOOL_PROPS).concat(['Check-Out Form Link']);
     var lines=[head.join(',')];
     list.forEach(function(r){
       var v=[r.truck,r.model,r.year,r.vin,r.own,r.office,r.status,r.driver,
         r.plate,r.plateState,r.cp['Plate Type']||'',r.cp['Reg Expiration']||'',
         r.camera?'TRUE':'FALSE']
         .concat(BOOL_PROPS.map(function(p){ return r.cp[p]==null?'':String(r.cp[p]).toUpperCase(); }))
-        .concat([r.cp['Check-Out Form Link']||'', r.odo||'', r.delivered||'']);
+        .concat([r.cp['Check-Out Form Link']||'']);
       lines.push(v.map(function(x){
         var s=String(x==null?'':x);
         return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s; }).join(','));
