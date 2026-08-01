@@ -230,7 +230,7 @@ geotab.addin.topSpeed = function () {
       ' &middot; '+esc(top.peakDayLabel)+' &middot; '+top.events+' speeding event'+
       (top.events===1?'':'s')+' in range</div></div>'+
       '<div class="ts-hero-speed"><div class="ts-hero-mph">'+f0(top.peak)+'</div>'+
-      '<div class="ts-hero-unit">mph peak &middot; '+esc(bandName(bandOf(top.peak)))+'</div></div>';
+      '<div class="ts-hero-unit">mph on a flagged trip &middot; '+esc(bandName(bandOf(top.peak)))+'</div></div>';
   }
 
   function kpi(label,color,value,sub){
@@ -326,7 +326,7 @@ geotab.addin.topSpeed = function () {
       markers:{size:7, strokeWidth:2, strokeColors:C.surface, fillOpacity:0.85,
         hover:{sizeOffset:3}},
       xaxis:{min:lo, max:hi, tickAmount:ticks,
-        title:{text:'Peak speed reached (mph)', style:{fontSize:'12px',fontWeight:600,color:C.ink2}},
+        title:{text:'Peak speed on a trip that was flagged for speeding (mph)', style:{fontSize:'12px',fontWeight:600,color:C.ink2}},
         axisBorder:{color:C.axis}, axisTicks:{color:C.axis},
         labels:{style:{colors:C.ink3, fontSize:'11.5px'},
           formatter:function(v){ return Math.round(v); }}},
@@ -340,9 +340,11 @@ geotab.addin.topSpeed = function () {
         var b=bandOf(r.peak);
         return '<div style="padding:8px 11px;font-size:12px;line-height:1.5">'+
           '<b>'+esc(r.name)+'</b> &middot; '+esc(r.office||'no office')+'<br>'+
-          '<b>'+f1(r.peak)+' mph</b> peak <span style="color:#898781">in '+esc(r.peakVeh)+
+          '<b>'+f1(r.peak)+' mph</b> <span style="color:#898781">in '+esc(r.peakVeh)+
           ' on '+esc(r.peakDayLabel)+'</span><br>'+
-          r.events+' speeding event'+(r.events===1?'':'s')+' &middot; '+f0(r.miles)+' mi driven<br>'+
+          '<span style="color:#898781">that trip was flagged '+r.peakTripEvents+
+          ' time'+(r.peakTripEvents===1?'':'s')+'</span><br>'+
+          r.events+' speeding event'+(r.events===1?'':'s')+' in range &middot; '+f0(r.miles)+' mi driven<br>'+
           '<span style="color:'+bandColor(b)+';font-weight:600">'+bandName(b)+'</span>'+
           '<br><span style="color:#898781;font-size:11px">click for that day’s trips</span></div>';
       }}
@@ -353,7 +355,7 @@ geotab.addin.topSpeed = function () {
       '<span><i class="ts-swatch" style="background:'+C.good+'"></i>Under '+FINAL_MPH+'</span>'+
       '<span><i class="ts-swatch" style="background:'+C.warning+'"></i>'+FINAL_MPH+'–'+(TERM_MPH-1)+' &middot; final warning</span>'+
       '<span><i class="ts-swatch" style="background:'+C.critical+'"></i>'+TERM_MPH+'+ &middot; termination</span>'+
-      '<span><i class="ts-swatch dot" style="background:'+C.ink2+'"></i>Driver peak</span>'+
+      '<span><i class="ts-swatch dot" style="background:'+C.ink2+'"></i>Peak on a flagged trip</span>'+
       '<span style="color:#898781">dashed line = '+ALERT_MPH+' mph alert</span>';
   }
 
@@ -460,21 +462,63 @@ geotab.addin.topSpeed = function () {
           return (d && typeof d==='object' && d.id) ? d.id : null;
         };
 
-        // Peak speed + miles per driver, from trips.
+        // Tie each speeding event to the trip it happened on, by device and time
+        // containment. Without this the headline speed came from moments that
+        // were never flagged — the dashboard was crowning a "speed demon" at
+        // 80 mph with zero speeding events, which is just motorway driving.
+        var byDev={};
+        trips.forEach(function(t){
+          var d=(t.device||{}).id;
+          if(d && t.start && t.stop) (byDev[d] || (byDev[d]=[])).push(t);
+          t.__ev = 0;
+        });
+        Object.keys(byDev).forEach(function(d){
+          byDev[d].sort(function(a,b){ return a.start < b.start ? -1 : a.start > b.start ? 1 : 0; });
+        });
+        function tripAt(deviceId, when){
+          var arr=byDev[deviceId];
+          if(!arr) return null;
+          var lo=0, hi=arr.length-1;
+          while(lo<=hi){                       // binary search on start time
+            var mid=(lo+hi)>>1, t=arr[mid];
+            if(when < t.start) hi=mid-1;
+            else if(when > t.stop) lo=mid+1;
+            else return t;
+          }
+          return null;
+        }
+        var unmatchedEvents=0, eventTripDriver={};
+        events.forEach(function(e){
+          var d=(e.device||{}).id, when=e.activeFrom;
+          var t = (d && when) ? tripAt(d, when) : null;
+          if(!t){ unmatchedEvents++; return; }
+          t.__ev++;
+          // Attribute the event via the trip's driver where the event itself has
+          // none — the trip knows who was behind the wheel even when the event
+          // record doesn't, so this recovers attribution rather than losing it.
+          var who = drvId(t) || drvId(e);
+          if(who) eventTripDriver[who] = (eventTripDriver[who]||0) + 1;
+          else unmatchedEvents++;
+        });
+
+        // Peak speed + miles per driver. Peak only counts trips that actually
+        // carried a speeding event.
         var by={}, noDriverTrips=0, noDriverMiles=0;
         trips.forEach(function(t){
           var id=drvId(t);
           var mi=(t.distance||0)*KMH_TO_MPH;
           if(!id){ noDriverTrips++; noDriverMiles+=mi; return; }
           var rec = by[id] || (by[id]={driverId:id, name:uname[id]||id, office:null,
-            peak:0, events:0, miles:0, peakVeh:'—', peakDeviceId:null,
-            peakDayLabel:'—', peakDayStart:null, peakDayEnd:null});
+            peak:0, events:0, miles:0, peakVeh:'—', peakDeviceId:null, peakTripEvents:0,
+            peakDayLabel:'—', peakDayStart:null, peakDayEnd:null, unflaggedPeak:0});
           rec.miles += mi;
           var did=(t.device||{}).id;
           if(did && !rec.office && office[did]) rec.office=office[did];
           var m = mph(t.maximumSpeed||0);
-          if(m > rec.peak){
+          if(m > rec.unflaggedPeak) rec.unflaggedPeak = m;   // kept only to disclose
+          if(t.__ev > 0 && m > rec.peak){
             rec.peak=m;
+            rec.peakTripEvents=t.__ev;
             rec.peakVeh=vehName[did]||did||'—';
             rec.peakDeviceId=did;
             var when=new Date(t.start||t.stop||startISO);
@@ -484,21 +528,22 @@ geotab.addin.topSpeed = function () {
             rec.peakDayEnd=new Date(s.getFullYear(),s.getMonth(),s.getDate()+1).toISOString();
           }
         });
-
-        var noDriverEvents=0;
-        events.forEach(function(e){
-          var id=drvId(e);
-          if(!id){ noDriverEvents++; return; }
-          if(by[id]) by[id].events++;
+        Object.keys(eventTripDriver).forEach(function(id){
+          if(by[id]) by[id].events = eventTripDriver[id];
         });
 
-        var rows=Object.keys(by).map(function(k){ return by[k]; })
-                       .filter(function(r){ return r.peak>0; })
-                       .sort(function(a,b){ return b.peak-a.peak; });
+        var all=Object.keys(by).map(function(k){ return by[k]; });
+        var rows=all.filter(function(r){ return r.peak>0; })
+                    .sort(function(a,b){ return b.peak-a.peak; });
+        // Drivers who drove but were never flagged. Not ranked — but named in
+        // the footer, because a fast run the rule missed still matters.
+        var unflagged=all.filter(function(r){ return r.peak===0 && r.unflaggedPeak>0; })
+                         .sort(function(a,b){ return b.unflaggedPeak-a.unflaggedPeak; });
         if(!rows.length){
-          fail('No driver-attributed driving in '+esc(rangeLabel)+'. '+
-               (noDriverTrips ? noDriverTrips+' trip(s) ran with no driver assigned in Geotab.'
-                              : 'There were no trips at all in this range.'));
+          fail('No speeding events were recorded for any driver in '+esc(rangeLabel)+'. '+
+               (unflagged.length ? unflagged.length+' driver(s) drove, topping out at '+
+                 f1(unflagged[0].unflaggedPeak)+' mph, but nothing tripped the rule.'
+               : 'There was no driver-attributed driving at all.'));
           return;
         }
 
@@ -507,7 +552,7 @@ geotab.addin.topSpeed = function () {
         allRows = rows;
         ctx = {rangeLabel:rangeLabel, ruleName:rule.name,
                noDriverTrips:noDriverTrips, noDriverMiles:noDriverMiles,
-               noDriverEvents:noDriverEvents};
+               noDriverEvents:unmatchedEvents, unflagged:unflagged};
         buildOfficeOptions(rows);
         applyFilter();
       }, function(err){ fail('Error loading speeding events: '+esc(err)); });
@@ -583,8 +628,17 @@ geotab.addin.topSpeed = function () {
       foot.push(ctx.noDriverEvents+' speeding event'+(ctx.noDriverEvents===1?'':'s')+
         ' could not be attributed to a driver.');
     }
-    foot.push('Peak speed is the highest single reading in a trip, so one GPS spike counts '+
-      'the same as a sustained run. Treat it as a prompt to look, not as proof.');
+    if(ctx.unflagged && ctx.unflagged.length){
+      var top3=ctx.unflagged.slice(0,3).map(function(u){
+        return esc(u.name)+' ('+f1(u.unflaggedPeak)+')'; }).join(', ');
+      foot.push('<b>'+ctx.unflagged.length+' driver'+(ctx.unflagged.length===1?'':'s')+
+        ' drove but were never flagged</b>, so they are not ranked here. Fastest of them: '+
+        top3+'. The posted-speed rule cannot fire where Geotab has no limit data for the '+
+        'road, so a high number here is worth a look even without an event.');
+    }
+    foot.push('A driver is only ranked if a speeding event was actually recorded, and the '+
+      'speed shown is their highest reading on a trip that carried one. It is still a '+
+      'single instant, so treat it as a prompt to look, not as proof.');
     el('ts-foot').innerHTML=foot.join('<br>');
   }
 

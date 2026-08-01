@@ -54,6 +54,14 @@ GitHub Pages rebuilds in ~30–60 s at the same URL. In MyGeotab, hard-refresh
 - **Speeding-risk tiers (fleet-wide, fixed):** Safe `<10`, Watch `10–39`,
   High risk `≥40` events/1,000 mi (fleet median / 80th percentile, derived
   2026-07-30). Status colors: high `#d03b3b`, watch `#fab219`, safe `#0ca30c`.
+- **A speed is only reportable if the rule actually flagged it.** `topSpeed.html`
+  matches each speeding `ExceptionEvent` to the trip containing it (same device,
+  `activeFrom` inside `start`–`stop`) and ranks a driver on their fastest
+  *flagged* trip. Without this the headline was a driver at 80 mph with zero
+  speeding events — motorway driving, not an offence. Drivers who drove but were
+  never flagged are excluded from the ranking and **named in the footer**: the
+  posted-speed rule cannot fire where Geotab has no limit data for the road, so
+  a fast unflagged run still deserves a look.
 - **Prefer written policy to derived statistics when it exists.** `topSpeed.html`
   bands come from Megan Warner's escalations in the `#*-accidents-incidents`
   Slack channels, not from percentiles: **80+** is a final warning (termination
