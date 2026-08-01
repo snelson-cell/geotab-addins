@@ -13,6 +13,7 @@ that user's role (an office OM sees their office; an exec sees the whole fleet).
 |---|---|---|
 | [`fleetFunnel.html`](fleetFunnel.html) | Fleet by Type | Funnel of the fleet by vehicle model (VIN-decoded) |
 | [`topSpeed.html`](topSpeed.html) | Top Speed by Driver | Peak speed per driver for a chosen day or range, against the written speeding policy, with speeding-event counts and a "speed demon" callout. Built for 1:1s and team meetings |
+| [`fleet.html`](fleet.html) | Fleet Register | Every vehicle Mira owns, leases or rents — ownership, location, driver, plate, camera and the compliance fields that used to live in the branch spreadsheets |
 | [`rollout.html`](rollout.html) | GO9 & Camera Rollout | Per-location install progress: shipped → assigned → installed (VIN reporting) → camera fitted, so you can see which locations have done what |
 | [`violin.html`](violin.html) | Speeding Distribution | KPI summary + per-vehicle speeding rate (events/1,000 mi) distributed by office, over Safe/Watch/High-risk zones, with a per-vehicle table |
 
@@ -87,6 +88,25 @@ GitHub Pages rebuilds in ~30–60 s at the same URL. In MyGeotab, hard-refresh
   measures ΔE 2.8 under protanopia (validated, target ≥8) — no hex choice fixes
   that, because red and green *are* the confusion axis. Large labelled regions
   don't depend on hue discrimination. Dot fill carries driver-assigned instead.
+- **The branch spreadsheets move into Geotab custom properties, not a file.**
+  `PropertySet`/`Property` are supported but ship empty; `setup_fleet_properties.py`
+  creates the *Mira Compliance* set. Geotab allows only **Boolean and String**
+  property types — no Date, List or Number — so the checkboxes are Booleans and
+  everything else is text. Properties are matched **by name at runtime, never by
+  hardcoded id**: ids differ per database and a wrong one fails silently as a
+  permanently blank column. `Remove` needs the whole entity; passing `{id}` alone
+  returns a null-reference error.
+- **Ownership comes from the Enterprise export, but absence from it proves
+  nothing.** The export is a monthly snapshot and new deliveries lag it, so a VIN
+  it doesn't list is only a rental if the device is *also* named "Rental" —
+  otherwise it is `Unconfirmed`. Guessing cost 17 owned Mavericks and Colorados
+  their identity in the first pass. The two signals agree on the rest: 48 of the
+  unmatched vehicles say "Rental" in their name and no owned or leased one does.
+- **Enterprise records a garage city, Geotab records an office group.** Left
+  unmapped the location filter lists both — "Brecksville" *and* "Cleveland" as
+  separate places. `CITY_TO_OFFICE` normalises onto the Geotab name. Offices are
+  an **allow-list**: Geotab keeps adding system groups, and a block-list lets each
+  new one leak in as a fake location.
 - **A GO9 with no VIN is not installed.** `rollout.html` treats a decoded VIN
   as the proof an install actually happened — a device can be registered,
   named and grouped and still be sitting in a box. Of 506 GO9s, 506 are

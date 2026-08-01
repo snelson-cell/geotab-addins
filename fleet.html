@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+</head>
+<body>
+<div id="fr-root">
+  <div class="fr-topbar">
+    <div>
+      <h2 class="fr-h1">Fleet register</h2>
+      <div class="fr-scope" id="fr-scope">Loading&hellip;</div>
+    </div>
+    <div class="fr-tools">
+      <label class="fr-field">Location <select id="fr-loc"></select></label>
+      <label class="fr-field">Ownership <select id="fr-own"></select></label>
+      <label class="fr-field">Status <select id="fr-status"></select></label>
+      <input type="search" id="fr-q" placeholder="Truck #, VIN, driver, plate&hellip;">
+      <button type="button" id="fr-csv">Export CSV</button>
+    </div>
+  </div>
+
+  <div class="fr-note" id="fr-stop"></div>
+  <div class="fr-note" id="fr-warn"></div>
+  <div class="fr-kpis" id="fr-kpis"></div>
+  <div class="fr-tablewrap" id="fr-tablewrap"></div>
+  <div class="fr-foot" id="fr-foot"></div>
+</div>
+
+<script>
+geotab.addin.fleetRegister = function () {
+  'use strict';
+
+  // The Enterprise Fleet Management export is the only thing here not read
+  // live from Geotab. It is what Mira owns or leases, and it is how a vehicle
+  // that has not reached Geotab yet still appears on this page. Regenerate it
+  // monthly with Archive/GeoTab/build_enterprise_json.py and commit — the
+  // export lags new deliveries, which is why an unmatched vehicle is shown as
+  // "Unconfirmed" rather than guessed to be a rental.
+  var ENT_URL = 'https://snelson-cell.github.io/geotab-addins/data/enterprise-fleet.json';
+
+  // Custom properties created by Archive/GeoTab/setup_fleet_properties.py.
+  // Matched by NAME at runtime, never by hardcoded id — the ids differ per
+  // database, and a wrong id fails silently as an always-blank column.
+  var BOOL_PROPS = ['Insurance Card', 'Registration', 'Vehicle Check-Out Form',
+                    'Accident Form', 'Wrapped', 'Toll Transponder'];
+  var TEXT_PROPS = ['Ownership', 'Plate Type', 'Reg Expiration', 'Camera IMEI',
+                    'Check-Out Form Link', 'Dealership'];
+
+  // The 14 real office groups. An allow-list, not a block-list: Geotab keeps
+  // adding system groups (Asset Purpose, powertrain, fuel type…) and a
+  // block-list silently lets each new one leak in as a fake "location".
+  var OFFICES = { 'ATL North':1, 'ATL South':1, 'Detroit':1, 'Tampa':1, 'Columbus':1,
+    'Cincinnati':1, 'Cleveland':1, 'Chicago':1, 'Indianapolis':1, 'Orlando':1,
+    'Northern Indy':1, 'American Fork':1, 'Grand Rapids':1, 'Louisville':1 };
+
+  // Enterprise records a garage CITY; Geotab records an office GROUP. Left
+  // unmapped the filter shows both — "Brecksville" and "Cleveland" as two
+  // separate places. Normalise the city onto the Geotab group name.
+  var CITY_TO_OFFICE = {
+    'Norcross':'ATL North', 'Riverdale':'ATL South', 'Ann Arbor':'Detroit',
+    'Brecksville':'Cleveland', 'Elgin':'Chicago', 'Merrillville':'Northern Indy',
+    'Lindon':'American Fork', 'Crestwood':'Louisville', 'Sharonville':'Cincinnati'
+  };
+  function officeOfCity(city){
+    if(!city) return '';
+    return CITY_TO_OFFICE[city] || (OFFICES[city] ? city : city);
+  }
+
+  var STATUS_RANK = { 'In service':'1', 'No recent contact':'2',
+                      'Awaiting install':'3', 'Not commissioned':'4' };
+
+  var C = { ink:'#0b0b0b', sub:'#52514e', line:'#e1e0d9',
+            good:'#0ca30c', watch:'#fab219', bad:'#d03b3b', accent:'#185FA5' };
+
+  var STYLE_ID = 'fr-styles';
+  var CSS = [
+    '#fr-root, #fr-root *{box-sizing:border-box;}',
+    '#fr-root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;',
+    '  color:' + C.ink + ';padding:18px 20px 28px;max-width:100%;overflow-x:hidden;}',
+    '.fr-topbar{display:flex;flex-wrap:wrap;gap:14px;align-items:flex-start;justify-content:space-between;}',
+    '.fr-h1{font-size:20px;font-weight:600;margin:0 0 3px;}',
+    '.fr-scope{font-size:13px;color:' + C.sub + ';}',
+    '.fr-tools{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}',
+    '.fr-field{font-size:12px;color:' + C.sub + ';display:flex;align-items:center;gap:5px;}',
+    '#fr-root select,#fr-root input[type=search]{font-size:13px;padding:5px 8px;border:1px solid #c9c8c0;',
+    '  border-radius:6px;background:#fff;color:' + C.ink + ';}',
+    '#fr-root input[type=search]{min-width:190px;}',
+    '#fr-root button{font-size:13px;padding:6px 11px;border:1px solid #c9c8c0;border-radius:6px;',
+    '  background:#fff;color:' + C.ink + ';cursor:pointer;}',
+    '#fr-root button:hover{background:#f4f3ee;}',
+    '.fr-note{display:none;margin:12px 0 0;padding:10px 12px;border-radius:8px;font-size:13px;line-height:1.5;}',
+    '.fr-note.on{display:block;}',
+    '#fr-stop{background:#fdecec;border:1px solid #f0b9b9;color:#7a1f1f;}',
+    '#fr-warn{background:#fdf6e3;border:1px solid #ecd9a0;color:#6b5312;}',
+    '.fr-kpis{display:flex;flex-wrap:wrap;gap:12px;margin:16px 0 14px;}',
+    '.fr-kpi{flex:1 1 150px;border:1px solid ' + C.line + ';border-radius:10px;padding:11px 13px;background:#fff;}',
+    '.fr-kpi-l{font-size:12px;color:' + C.sub + ';margin-bottom:3px;}',
+    '.fr-kpi-v{font-size:23px;font-weight:600;font-variant-numeric:tabular-nums;}',
+    '.fr-kpi-s{font-size:12px;color:' + C.sub + ';margin-top:2px;}',
+    '.fr-tablewrap{border:1px solid ' + C.line + ';border-radius:10px;background:#fff;overflow-x:auto;}',
+    'table.fr-t{width:100%;border-collapse:collapse;font-size:13px;min-width:1080px;}',
+    'table.fr-t th,table.fr-t td{padding:7px 10px;text-align:left;border-bottom:1px solid #eeede7;white-space:nowrap;}',
+    'table.fr-t th{position:sticky;top:0;background:#faf9f5;font-weight:600;font-size:12px;color:' + C.sub + ';z-index:1;cursor:pointer;}',
+    'table.fr-t th:hover{background:#f2f1ea;}',
+    'table.fr-t tr:last-child td{border-bottom:none;}',
+    'table.fr-t td.c{text-align:center;}',
+    'table.fr-t tr:hover td{background:#fbfaf6;}',
+    '.fr-tag{display:inline-block;padding:1px 7px;border-radius:20px;font-size:11px;font-weight:600;}',
+    '.fr-own-Owned{background:#e7f3e7;color:#1c5e1c;}',
+    '.fr-own-Leased{background:#e6f1fb;color:#0c447c;}',
+    '.fr-own-Rental{background:#faeede;color:#854f0b;}',
+    '.fr-own-Unconfirmed{background:#f1efe8;color:#5f5e5a;}',
+    '.fr-st{font-size:12px;}',
+    '.fr-st b{font-weight:600;}',
+    '.fr-yes{color:' + C.good + ';font-weight:600;}',
+    '.fr-no{color:' + C.bad + ';}',
+    '.fr-na{color:#b4b2a9;}',
+    '.fr-link{color:' + C.accent + ';cursor:pointer;text-decoration:none;}',
+    '.fr-link:hover{text-decoration:underline;}',
+    '.fr-foot{font-size:12px;color:' + C.sub + ';line-height:1.6;margin:12px 2px 0;}',
+    '@media (max-width:700px){ #fr-root{padding:14px 12px 22px;} }'
+  ].join('\n');
+  function injectStyles(){
+    if(document.getElementById(STYLE_ID)) return;
+    var s=document.createElement('style'); s.id=STYLE_ID; s.textContent=CSS;
+    document.head.appendChild(s);
+  }
+
+  function el(id){ return document.getElementById(id); }
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+  function f0(v){ return Math.round(v).toLocaleString(); }
+  function note(id,msg){ var n=el(id); if(!n) return;
+    if(msg){ n.innerHTML=msg; n.className='fr-note on'; } else { n.className='fr-note'; n.textContent=''; } }
+
+  var apiRef=null, stateRef=null, rows=[], entLabel='', sortKey='rank', sortDir=1;
+
+  function load(){
+    var ent=null, geo=null;
+    function done(){
+      if(ent===null || geo===null) return;
+      try { build(geo, ent); }
+      catch(e){ note('fr-stop','Could not build the register: '+esc(e && e.message || e)); }
+    }
+    // The Enterprise snapshot is a nice-to-have: if it cannot be fetched the
+    // page still works off Geotab alone, it just cannot show vehicles that
+    // have not reached Geotab yet. Fail soft, and say so.
+    try {
+      fetch(ENT_URL, {cache:'no-cache'}).then(function(r){
+        return r.ok ? r.json() : null;
+      }).then(function(j){ ent=j||false; done(); })
+        .catch(function(){ ent=false; done(); });
+    } catch(e){ ent=false; }
+
+    apiRef.multiCall([
+      ['Get', { typeName:'Device' }],
+      ['Get', { typeName:'Camera' }],
+      ['Get', { typeName:'Group' }],
+      ['Get', { typeName:'DeviceStatusInfo' }],
+      ['Get', { typeName:'User', search:{ isDriver:true } }],
+      ['Get', { typeName:'Property' }]
+    ], function(res){ geo=res; done(); },
+       function(err){ note('fr-stop','Geotab call failed: '+esc(err && err.message || err)); });
+  }
+
+  function build(geo, ent){
+    var devices=geo[0]||[], cameras=geo[1]||[], groups=geo[2]||[],
+        status=geo[3]||[], users=geo[4]||[], props=geo[5]||[];
+
+    var gname={}; groups.forEach(function(g){ if(g&&g.id) gname[g.id]=g.name; });
+    var propById={}, propByName={};
+    props.forEach(function(p){ if(p&&p.id){ propById[p.id]=p.name; propByName[p.name]=p.id; } });
+    var missing=BOOL_PROPS.concat(TEXT_PROPS).filter(function(n){ return !propByName[n]; });
+
+    var camSerial={};
+    cameras.forEach(function(c){ var s=(c&&c.deviceSerialNumber||'').trim(); if(s) camSerial[s]=c; });
+
+    var drvName={};
+    users.forEach(function(u){ if(u&&u.id)
+      drvName[u.id]=((u.firstName||'')+' '+(u.lastName||'')).trim(); });
+
+    var stByDev={};
+    status.forEach(function(s){ var d=(s.device||{}).id; if(d) stByDev[d]=s; });
+
+    var entByVin={};
+    if(ent && ent.vehicles){
+      entLabel=ent.label||'';
+      ent.vehicles.forEach(function(v){ if(v.vin) entByVin[v.vin.toUpperCase()]=v; });
+    }
+
+    function cprops(d){
+      var o={};
+      (d.customProperties||[]).forEach(function(c){
+        var nm=propById[(c.property||{}).id];
+        if(nm) o[nm]=c.value;
+      });
+      return o;
+    }
+
+    rows=[];
+    var seen={};
+    devices.forEach(function(d){
+      var vin=(d.vehicleIdentificationNumber||'').trim().toUpperCase();
+      if(vin) seen[vin]=true;
+      var cp=cprops(d);
+      var e=vin?entByVin[vin]:null;
+      var st=stByDev[d.id];
+      var office=null;
+      (d.groups||[]).forEach(function(g){
+        var n=gname[g.id];
+        if(n && OFFICES[n] && !office) office=n;
+      });
+      var serial=(d.serialNumber||'').trim();
+      var drv=st && st.driver && st.driver.id ? drvName[st.driver.id] : '';
+      rows.push({
+        truck: d.name||'', vin: vin, id: d.id, serial: serial,
+        model: ((d.vinInfoMake||'')+' '+(d.vinInfoModel||'')).trim() ||
+               (e?e.model:'') , year: (d.vinInfoYear||'') || (e?e.year:''),
+        office: office || (e?officeOfCity(e.city):'') || '',
+        own: cp['Ownership'] || (e?e.own:'') || (vin?'Unconfirmed':''),
+        plate: (d.licensePlate||'').trim() || (e?e.plate:'') || '',
+        plateState: (d.licenseState||'').trim() || (e?e.state:'') || '',
+        camera: !!(serial && camSerial[serial]),
+        driver: drv,
+        lastSeen: st ? st.dateTime : '',
+        comms: st ? !!st.isDeviceCommunicating : false,
+        inGeotab: true, vinned: !!vin, cp: cp,
+        odo: e?e.odo:'', delivered: e?e.delivered:''
+      });
+    });
+
+    // Owned/leased vehicles that have not reached Geotab at all
+    Object.keys(entByVin).forEach(function(vin){
+      if(seen[vin]) return;
+      var e=entByVin[vin];
+      rows.push({
+        truck:'', vin:vin, id:null, serial:'', model:e.model, year:e.year,
+        office:officeOfCity(e.city)||'', own:e.own, plate:e.plate||'', plateState:e.state||'',
+        camera:false, driver:'', lastSeen:'', comms:false,
+        inGeotab:false, vinned:true, cp:{}, odo:e.odo, delivered:e.delivered
+      });
+    });
+
+    rows.forEach(function(r){
+      r.status = !r.inGeotab ? 'Awaiting install'
+               : !r.vinned   ? 'Not commissioned'
+               : r.comms     ? 'In service' : 'No recent contact';
+      // Default order puts working vehicles first. Sorting by truck number
+      // alone buried them under 346 uncommissioned boxes still named after
+      // their own serial, which is the least useful thing to open on.
+      r.rank = STATUS_RANK[r.status] + ' ' + (r.truck || '\uffff');
+    });
+
+    buildFilters();
+    if(missing.length){
+      note('fr-warn','These custom properties are missing from Geotab, so their columns stay blank: <b>'+
+        esc(missing.join(', '))+'</b>. Run <code>setup_fleet_properties.py --apply</code>.');
+    } else if(ent===false){
+      note('fr-warn','The Enterprise snapshot could not be loaded, so vehicles that have not reached Geotab yet are not listed.');
+    } else { note('fr-warn',''); }
+    render();
+  }
+
+  function opts(sel, list, all){
+    var cur=sel.value;
+    sel.innerHTML='<option value="">'+all+'</option>'+list.map(function(v){
+      return '<option'+(v===cur?' selected':'')+'>'+esc(v)+'</option>'; }).join('');
+  }
+  function uniq(key){
+    var s={}; rows.forEach(function(r){ if(r[key]) s[r[key]]=1; });
+    return Object.keys(s).sort();
+  }
+  function buildFilters(){
+    opts(el('fr-loc'), uniq('office'), 'All locations');
+    opts(el('fr-own'), uniq('own'), 'All ownership');
+    opts(el('fr-status'), uniq('status'), 'All statuses');
+  }
+
+  function filtered(){
+    var lo=el('fr-loc').value, ow=el('fr-own').value, st=el('fr-status').value,
+        q=(el('fr-q').value||'').trim().toLowerCase();
+    return rows.filter(function(r){
+      if(lo && r.office!==lo) return false;
+      if(ow && r.own!==ow) return false;
+      if(st && r.status!==st) return false;
+      if(q){
+        var hay=(r.truck+' '+r.vin+' '+r.driver+' '+r.plate+' '+r.model).toLowerCase();
+        if(hay.indexOf(q)<0) return false;
+      }
+      return true;
+    });
+  }
+
+  function cell(v){
+    if(v===true || v==='true' || v==='True') return '<span class="fr-yes">&#10003;</span>';
+    if(v===false || v==='false' || v==='False') return '<span class="fr-no">&#10007;</span>';
+    return '<span class="fr-na">&ndash;</span>';
+  }
+
+  function render(){
+    var list=filtered().slice();
+    var k=sortKey;
+    list.sort(function(a,b){
+      var x=a[k], y=b[k];
+      if(k==='truck'){ x=x||'￿'; y=y||'￿'; }
+      return (x<y?-1:x>y?1:0)*sortDir;
+    });
+
+    var t={ total:rows.length, geotab:0, awaiting:0, service:0, camera:0 };
+    rows.forEach(function(r){
+      if(r.inGeotab) t.geotab++; else t.awaiting++;
+      if(r.status==='In service') t.service++;
+      if(r.camera) t.camera++;
+    });
+    var own={}; rows.forEach(function(r){ if(r.own) own[r.own]=(own[r.own]||0)+1; });
+
+    el('fr-scope').textContent = 'Showing ' + f0(list.length) + ' of ' + f0(rows.length) +
+      ' vehicles · Geotab live' + (entLabel ? ' + ' + entLabel : '');
+
+    el('fr-kpis').innerHTML=[
+      kpi('Vehicles', f0(rows.length), f0(t.geotab)+' in Geotab, '+f0(t.awaiting)+' awaiting install'),
+      kpi('Owned', f0(own['Owned']||0), f0(own['Leased']||0)+' leased'),
+      kpi('Rental', f0(own['Rental']||0), f0(own['Unconfirmed']||0)+' unconfirmed'),
+      kpi('In service', f0(t.service), 'reporting to Geotab now'),
+      kpi('Cameras', f0(t.camera), 'GO Focus Plus fitted')
+    ].join('');
+
+    var cols=[['rank','Truck #'],['model','Model'],['year','Year'],['vin','VIN'],
+      ['own','Ownership'],['office','Location'],['status','Status'],
+      ['driver','Driver'],['plate','Plate'],['Plate Type','Plate type'],
+      ['Reg Expiration','Reg. exp'],['camera','Camera']];
+    var h=['<table class="fr-t"><thead><tr>'];
+    cols.forEach(function(c){ h.push('<th data-k="'+esc(c[0])+'">'+esc(c[1])+
+      (sortKey===c[0]?(sortDir>0?' ↑':' ↓'):'')+'</th>'); });
+    BOOL_PROPS.forEach(function(p){ h.push('<th class="c" data-k="'+esc(p)+'">'+
+      esc(p.replace('Vehicle Check-Out Form','Check-out').replace(' Card','')
+           .replace('Toll Transponder','Toll'))+'</th>'); });
+    h.push('<th>Form</th></tr></thead><tbody>');
+
+    list.forEach(function(r){
+      h.push('<tr>');
+      h.push('<td>'+(r.id?'<a class="fr-link" data-d="'+esc(r.id)+'">':'')+
+             esc(r.truck||'&mdash;')+(r.id?'</a>':'')+'</td>');
+      h.push('<td>'+esc(r.model||'')+'</td><td>'+esc(r.year||'')+'</td>');
+      h.push('<td title="'+esc(r.vin)+'">'+esc(r.vin?r.vin.slice(-6):'')+'</td>');
+      h.push('<td><span class="fr-tag fr-own-'+esc(r.own||'Unconfirmed')+'">'+esc(r.own||'?')+'</span></td>');
+      h.push('<td>'+esc(r.office||'')+'</td>');
+      h.push('<td class="fr-st">'+esc(r.status)+'</td>');
+      h.push('<td>'+esc(r.driver||'')+'</td>');
+      h.push('<td>'+esc(r.plate||'')+(r.plateState?' <span class="fr-na">'+esc(r.plateState)+'</span>':'')+'</td>');
+      h.push('<td>'+esc(r.cp['Plate Type']||'')+'</td>');
+      h.push('<td>'+esc(r.cp['Reg Expiration']||'')+'</td>');
+      h.push('<td class="c">'+cell(r.camera)+'</td>');
+      BOOL_PROPS.forEach(function(p){ h.push('<td class="c">'+cell(r.cp[p])+'</td>'); });
+      var lnk=r.cp['Check-Out Form Link'];
+      h.push('<td>'+(lnk?'<a class="fr-link" href="'+esc(lnk)+'" target="_blank" rel="noopener">open</a>':
+        '<span class="fr-na">&ndash;</span>')+'</td>');
+      h.push('</tr>');
+    });
+    h.push('</tbody></table>');
+    var wrap=el('fr-tablewrap');
+    wrap.innerHTML=h.join('');
+
+    Array.prototype.forEach.call(wrap.querySelectorAll('th[data-k]'), function(th){
+      th.onclick=function(){
+        var k=th.getAttribute('data-k');
+        if(sortKey===k) sortDir=-sortDir; else { sortKey=k; sortDir=1; }
+        render();
+      };
+    });
+    Array.prototype.forEach.call(wrap.querySelectorAll('a[data-d]'), function(a){
+      a.onclick=function(){
+        if(!(stateRef && stateRef.gotoPage)) return;
+        try { stateRef.gotoPage('device', { id: a.getAttribute('data-d') }); } catch(e){}
+      };
+    });
+
+    var foot=[];
+    foot.push('<b>Awaiting install</b> = on the Enterprise export but not in Geotab yet. ' +
+      '<b>Not commissioned</b> = a GO9 registered in Geotab that has never reported a VIN.');
+    foot.push('<b>Unconfirmed</b> ownership means the VIN is in Geotab but not on the ' +
+      (entLabel||'Enterprise')+' export and the vehicle is not named as a rental — almost ' +
+      'always a new delivery the monthly export has not caught up with. It is deliberately ' +
+      'not guessed either way.');
+    foot.push('Blank compliance columns are not "no" — they are "nobody has recorded it yet". ' +
+      'They live on the vehicle in Geotab (Mira Compliance property set), so a form or an ' +
+      'import can fill them without touching this page.');
+    el('fr-foot').innerHTML=foot.join('<br>');
+  }
+
+  function kpi(label,val,sub){
+    return '<div class="fr-kpi"><div class="fr-kpi-l">'+esc(label)+'</div>'+
+           '<div class="fr-kpi-v">'+esc(val)+'</div>'+
+           '<div class="fr-kpi-s">'+esc(sub)+'</div></div>';
+  }
+
+  function exportCsv(){
+    var list=filtered();
+    var head=['Truck #','Model','Year','VIN','Ownership','Location','Status','Driver',
+      'Plate','Plate State','Plate Type','Reg Expiration','Camera']
+      .concat(BOOL_PROPS).concat(['Check-Out Form Link','Odometer','Delivered']);
+    var lines=[head.join(',')];
+    list.forEach(function(r){
+      var v=[r.truck,r.model,r.year,r.vin,r.own,r.office,r.status,r.driver,
+        r.plate,r.plateState,r.cp['Plate Type']||'',r.cp['Reg Expiration']||'',
+        r.camera?'TRUE':'FALSE']
+        .concat(BOOL_PROPS.map(function(p){ return r.cp[p]==null?'':String(r.cp[p]).toUpperCase(); }))
+        .concat([r.cp['Check-Out Form Link']||'', r.odo||'', r.delivered||'']);
+      lines.push(v.map(function(x){
+        var s=String(x==null?'':x);
+        return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s; }).join(','));
+    });
+    var blob=new Blob([lines.join('\n')],{type:'text/csv;charset=utf-8;'});
+    var a=document.createElement('a');
+    a.href=URL.createObjectURL(blob); a.download='fleet-register.csv';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  }
+
+  return {
+    initialize: function(api, state, cb){
+      apiRef=api; stateRef=state;
+      injectStyles();
+      ['fr-loc','fr-own','fr-status'].forEach(function(id){
+        var e=el(id); if(e) e.onchange=render; });
+      var q=el('fr-q'); if(q) q.oninput=render;
+      var c=el('fr-csv'); if(c) c.onclick=exportCsv;
+      cb();
+    },
+    focus: function(api, state){ apiRef=api; stateRef=state; load(); },
+    blur: function(){}
+  };
+};
+</script>
+</body>
+</html>
