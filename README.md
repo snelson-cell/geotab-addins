@@ -103,6 +103,16 @@ GitHub Pages rebuilds in ~30–60 s at the same URL. In MyGeotab, hard-refresh
   reads it through the authenticated session like everything else. The cost is
   that vehicles not yet in Geotab cannot appear in `fleet.html`;
   `rollout.html` covers that gap per location using counts only.
+- **Ownership is Owned / Rental / Unconfirmed — there is no "Leased".**
+  Enterprise splits out 29 "Leased Vehicle" rows, but they are TRAC leases:
+  Mira carries the residual, so operationally they are owned and the split is
+  noise on a register. `backfill_ownership.py` collapses it.
+- **Writing a custom property means sending ONLY the ones that have values.**
+  Geotab materialises every defined property on every device with no `value`
+  key at all. Send those valueless entries back in a `Set` and the whole write
+  blanks — including the property you were setting. The first backfill only
+  worked because the array was still empty; the second silently nulled 11
+  vehicles. Filter `c.get("value") not in (None, "")` before appending.
 - **Ownership comes from the Enterprise export, but absence from it proves
   nothing.** The export is a monthly snapshot and new deliveries lag it, so a VIN
   it doesn't list is only a rental if the device is *also* named "Rental" —

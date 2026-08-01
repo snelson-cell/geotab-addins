@@ -92,8 +92,10 @@ geotab.addin.fleetRegister = function () {
     'table.fr-t td.c{text-align:center;}',
     'table.fr-t tr:hover td{background:#fbfaf6;}',
     '.fr-tag{display:inline-block;padding:1px 7px;border-radius:20px;font-size:11px;font-weight:600;}',
+    // Owned / Rental / Unconfirmed only. Enterprise splits out "Leased", but
+    // those are TRAC leases — Mira carries the residual, so on a fleet
+    // register the distinction is noise. backfill_ownership.py collapses it.
     '.fr-own-Owned{background:#e7f3e7;color:#1c5e1c;}',
-    '.fr-own-Leased{background:#e6f1fb;color:#0c447c;}',
     '.fr-own-Rental{background:#faeede;color:#854f0b;}',
     '.fr-own-Unconfirmed{background:#f1efe8;color:#5f5e5a;}',
     '.fr-st{font-size:12px;}',
@@ -276,7 +278,8 @@ geotab.addin.fleetRegister = function () {
     el('fr-kpis').innerHTML=[
       kpi(narrowed ? 'Vehicles — '+where : 'Vehicles', f0(t.total),
           f0(t.vinned)+' commissioned, '+f0(t.total-t.vinned)+' not yet'),
-      kpi('Owned', f0(own['Owned']||0), f0(own['Leased']||0)+' leased'),
+      kpi('Owned', f0(own['Owned']||0),
+          t.total ? Math.round(100*(own['Owned']||0)/t.total)+'% of these vehicles' : '—'),
       kpi('Rental', f0(own['Rental']||0), f0(own['Unconfirmed']||0)+' unconfirmed'),
       kpi('In service', f0(t.service),
           t.total ? Math.round(100*t.service/t.total)+'% of these vehicles' : '—'),
