@@ -13,6 +13,7 @@ that user's role (an office OM sees their office; an exec sees the whole fleet).
 |---|---|---|
 | [`fleetFunnel.html`](fleetFunnel.html) | Fleet by Type | Funnel of the fleet by vehicle model (VIN-decoded) |
 | [`topSpeed.html`](topSpeed.html) | Top Speed by Driver | Peak speed per driver for a chosen day or range, against the written speeding policy, with speeding-event counts and a "speed demon" callout. Built for 1:1s and team meetings |
+| [`rollout.html`](rollout.html) | GO9 & Camera Rollout | Per-location install progress: shipped → assigned → installed (VIN reporting) → camera fitted, so you can see which locations have done what |
 | [`violin.html`](violin.html) | Speeding Distribution | KPI summary + per-vehicle speeding rate (events/1,000 mi) distributed by office, over Safe/Watch/High-risk zones, with a per-vehicle table |
 
 Install config: [`config/mira-fleet-charts.config.json`](config/mira-fleet-charts.config.json) ·
@@ -86,6 +87,25 @@ GitHub Pages rebuilds in ~30–60 s at the same URL. In MyGeotab, hard-refresh
   measures ΔE 2.8 under protanopia (validated, target ≥8) — no hex choice fixes
   that, because red and green *are* the confusion axis. Large labelled regions
   don't depend on hue discrimination. Dot fill carries driver-assigned instead.
+- **A GO9 with no VIN is not installed.** `rollout.html` treats a decoded VIN
+  as the proof an install actually happened — a device can be registered,
+  named and grouped and still be sitting in a box. Of 506 GO9s, 506 are
+  registered but only 150 report a VIN. 346 are still *named after their own
+  serial number*, which is the cleanest "never commissioned" signal there is.
+  Cameras are their own entity (`Get Camera`, all `GO Focus Plus`) and join to
+  the GO9 by **`deviceSerialNumber`, not by device id**.
+- **Shipment counts are the one thing Geotab does not know.** The `ORDERED`
+  table at the top of `rollout.html` is hand-maintained from ops and must be
+  updated after each shipment. The add-in cross-checks its total against the
+  live GO9 count and raises a banner when they disagree, so it complains
+  rather than quietly showing a wrong "remaining" column.
+- **On a horizontal bar chart the category axis is still `xaxis.categories`.**
+  Omitting it doesn't just lose the labels — Apex falls back to a numeric axis
+  and auto-ranges it, which collapses the plot into a fraction of its width.
+- **Zero can mean "no access", not "nothing done".** Role scoping means an
+  office user sees only their own devices, so `rollout.html` only claims a
+  fleet-wide view when it can see ≥90% of the fleet; otherwise it hides
+  locations it cannot see instead of showing them as zero.
 - **Axis maxima come from a round step, not from rounding the data max.**
   Dividing a rounded max by a tick count is what produced ticks like
   `0/23/45/68/90`. See `axisScale()`.
