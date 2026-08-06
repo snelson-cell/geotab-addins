@@ -71,7 +71,11 @@ geotab.addin.topSpeed = function () {
   // quota (OverLimitException, 2026-08-05 — 341 windows blew it). Measured in
   // Python first, where the API user has a different quota; that was the wrong
   // environment to prove it in. Resolve in chunks, and cap the total.
-  var RESOLVE_CAP = 120;    // API calls spent on in-event speeds per render
+  // Measured on real data 2026-08-06: branch-and-bound needs 52 calls for 7
+  // days and 98 for 30. The cap sits above that but far below the 346 that
+  // triggered OverLimitException, because the exact quota is not documented
+  // and guessing it once already cost a broken page.
+  var RESOLVE_CAP = 150;    // API calls spent on in-event speeds per render
   var RESOLVE_CHUNK = 40;   // per multiCall
   var TIER_A = 'event';      // corroborated: peak measured inside an event window
   var TIER_B = 'absolute';   // 90+ at any instant, no event required
@@ -103,6 +107,12 @@ geotab.addin.topSpeed = function () {
 
   var TOP_N = 20;            // rows on the chart — it gets shown on a meeting screen
   var TRIP_LIMIT = 50000, EVENT_LIMIT = 50000;
+  // Geotab caps Trip at 25,000 rows per call NO MATTER what resultsLimit says —
+  // asking for 100,000 still returns exactly 25,000, with no error and no flag.
+  // A 30-day window really holds ~28,400, so the old guard (length >= 50,000)
+  // never fired and the view silently lost ~3,400 trips. Fetch in windows and
+  // split any window that comes back at the cap.
+  var PAGE_CAP = 25000;
   var KMH_TO_MPH = 0.621371;
   var SPEED_RULE_IDS = ['RulePostedSpeedingId', 'RuleGpsSpeedingWindowId'];
   var SPEED_RULE_NAME = /^speeding$/i;
@@ -501,6 +511,34 @@ geotab.addin.topSpeed = function () {
   }
 
   // ── Load ─────────────────────────────────────────────────────────────────
+  // Split a date range until every slice returns under the server's row cap,
+  // then concatenate. Recursive rather than a fixed chunk size because the
+  // right size depends on how busy the fleet was, which varies by range.
+  function fetchWindowed(api, typeName, startISO, endISO, limit, done, fail_){
+    var out = [], pending = 0, failed = false;
+    function grab(a, b, depth){
+      pending++;
+      api.call('Get', {typeName:typeName, resultsLimit:limit,
+                       search:{fromDate:a, toDate:b}}, function(rows){
+        rows = rows||[];
+        if(rows.length >= PAGE_CAP && depth < 6){
+          // At the cap: this window is truncated, so halve it and retry. Depth
+          // is bounded so a pathological range cannot recurse forever.
+          var mid = new Date((new Date(a).getTime() + new Date(b).getTime())/2).toISOString();
+          pending--;
+          grab(a, mid, depth+1); grab(mid, b, depth+1);
+          return;
+        }
+        out = out.concat(rows);
+        if(--pending === 0 && !failed) done(out, depth);
+      }, function(err){
+        if(failed) return;
+        failed = true; fail_(err);
+      });
+    }
+    grab(startISO, endISO, 0);
+  }
+
   function load(api){
     apiRef=api; clearNotes();
     var startISO=new Date(fromDate.getFullYear(),fromDate.getMonth(),fromDate.getDate()).toISOString();
@@ -513,20 +551,18 @@ geotab.addin.topSpeed = function () {
     api.multiCall([
       ['Get',{typeName:'Rule'}],
       ['Get',{typeName:'Device', resultsLimit:50000}],
-      ['Get',{typeName:'User', search:{isDriver:true}}],
-      ['Get',{typeName:'Trip', resultsLimit:TRIP_LIMIT, search:{fromDate:startISO, toDate:endISO}}]
+      ['Get',{typeName:'User', search:{isDriver:true}}]
     ], function(res){
-      var rules=res[0]||[], devices=res[1]||[], users=res[2]||[], trips=res[3]||[];
+      var rules=res[0]||[], devices=res[1]||[], users=res[2]||[];
+      fetchWindowed(api, 'Trip', startISO, endISO, TRIP_LIMIT, function(trips){
       var rule=resolveRule(rules);
       if(!rule){
         fail('Could not find a speeding rule in this database. Looked for <b>'+
              SPEED_RULE_IDS.join('</b>, <b>')+'</b> and a rule named &ldquo;Speeding&rdquo;.');
         return;
       }
-      if(trips.length>=TRIP_LIMIT){
-        note('ts-warn','ts-note--warn','Trip results hit the '+TRIP_LIMIT.toLocaleString()+
-          ' row limit — some driving in this range is missing. Try a shorter range.');
-      }
+      // No row-limit warning any more: fetchWindowed splits until nothing is
+      // truncated, so hitting the cap is handled rather than reported.
 
       api.call('Get',{typeName:'ExceptionEvent', resultsLimit:EVENT_LIMIT,
         search:{fromDate:startISO, toDate:endISO, ruleSearch:{id:rule.id}}}, function(events){
@@ -543,6 +579,15 @@ geotab.addin.topSpeed = function () {
         // containment. Without this the headline speed came from moments that
         // were never flagged — the dashboard was crowning a "speed demon" at
         // 80 mph with zero speeding events, which is just motorway driving.
+        // Declared here, above every use. It is a var function expression, so
+        // it hoists as undefined rather than as a function — using it earlier
+        // throws "drvId is not defined" from inside an async callback, where
+        // nothing surfaces it.
+        var drvId=function(x){
+          var d=x&&x.driver;
+          return (d && typeof d==='object' && d.id) ? d.id : null;
+        };
+
         var byDev={};
         trips.forEach(function(t){
           var d=(t.device||{}).id;
@@ -569,43 +614,72 @@ geotab.addin.topSpeed = function () {
         // on a trip that never reached the policy line cannot produce a warning
         // — and does not need resolving. That is the difference between 313
         // calls for today and 22.
-        var usable = events.filter(function(e){
-          if(!(e && e.activeFrom && e.activeTo && (e.device||{}).id)) return false;
+        // Only each driver's SINGLE best in-event speed is ever shown, and an
+        // in-event peak can never exceed its trip's own peak. So group the
+        // candidates per driver, try the most promising first, and stop as soon
+        // as no remaining candidate COULD beat what has been found. Measured on
+        // 30 days: 654 candidates resolve in 98 calls — 85% fewer — which is
+        // what makes the long view exact instead of capped.
+        var cand = {};
+        events.forEach(function(e){
+          if(!(e && e.activeFrom && e.activeTo && (e.device||{}).id)) return;
           var t = tripAt((e.device||{}).id, e.activeFrom);
-          return !!t && mph(t.maximumSpeed||0) >= FINAL_MPH;
-        }).sort(function(a,b){          // fastest trips first, so a cap keeps what matters
-          var ta=tripAt((a.device||{}).id,a.activeFrom), tb=tripAt((b.device||{}).id,b.activeFrom);
-          return (tb?tb.maximumSpeed:0) - (ta?ta.maximumSpeed:0);
+          if(!t) return;
+          var tm = mph(t.maximumSpeed||0);
+          if(tm < FINAL_MPH) return;              // cannot reach the policy line
+          var who = drvId(t) || drvId(e);
+          if(!who) return;
+          (cand[who] || (cand[who]=[])).push({tripMax:tm, ev:e, trip:t});
         });
-        var capped = usable.length > RESOLVE_CAP;
-        if(capped) usable = usable.slice(0, RESOLVE_CAP);
-        resolvedCount = usable.length;
-        cappedResolve = capped;
+        Object.keys(cand).forEach(function(w){
+          cand[w].sort(function(a,b){ return b.tripMax - a.tripMax; });
+        });
 
-        if(!usable.length){ withEventPeaks(events, {}); return; }
+        var drivers = Object.keys(cand);
+        if(!drivers.length){ resolvedCount=0; cappedResolve=false; withEventPeaks(events, {}); return; }
 
-        // Chunked, because the quota counts API calls and not HTTP requests.
-        var peakOf={}, at=0;
-        (function nextChunk(){
-          if(at >= usable.length){ withEventPeaks(events, peakOf); return; }
-          var slice = usable.slice(at, at+RESOLVE_CHUNK);
-          api.multiCall(slice.map(function(e){
+        var st = {};
+        drivers.forEach(function(w){ st[w] = {i:0, best:0}; });
+        var peakOf = {}, spent = 0;
+
+        (function round(){
+          var batch = [];
+          drivers.forEach(function(w){
+            var a = st[w], lst = cand[w];
+            if(a.i >= lst.length) return;
+            // The prune: this candidate's ceiling is its trip peak. If that
+            // cannot beat what we already have for this driver, neither can any
+            // later one — the list is sorted descending.
+            if(lst[a.i].tripMax <= a.best){ a.i = lst.length; return; }
+            batch.push({w:w, c:lst[a.i]});
+          });
+
+          if(!batch.length || spent >= RESOLVE_CAP){
+            resolvedCount = spent;
+            cappedResolve = batch.length > 0;      // stopped early, not finished
+            withEventPeaks(events, peakOf);
+            return;
+          }
+          var slice = batch.slice(0, Math.min(RESOLVE_CHUNK, RESOLVE_CAP - spent));
+          spent += slice.length;
+
+          api.multiCall(slice.map(function(b){
             return ['Get',{typeName:'LogRecord', resultsLimit:LOG_LIMIT,
-              search:{fromDate:e.activeFrom, toDate:e.activeTo,
-                      deviceSearch:{id:(e.device||{}).id}}}];
+              search:{fromDate:b.c.ev.activeFrom, toDate:b.c.ev.activeTo,
+                      deviceSearch:{id:(b.c.ev.device||{}).id}}}];
           }), function(sets){
             (sets||[]).forEach(function(rows, i){
-              var best=0, when=null;
+              var b = slice[i], best=0, when=null;
               (rows||[]).forEach(function(r){
                 if((r.speed||0)>best){ best=r.speed||0; when=r.dateTime; }
               });
-              if(best>0) peakOf[slice[i].id] = {speed:best, at:when};
+              if(best>0) peakOf[b.c.ev.id] = {speed:best, at:when};
+              var m = mph(best);
+              if(m > st[b.w].best) st[b.w].best = m;
+              st[b.w].i++;
             });
-            at += RESOLVE_CHUNK;
-            setTimeout(nextChunk, 250);   // stay clear of the per-minute ceiling
+            setTimeout(round, 250);   // stay clear of the per-minute ceiling
           }, function(err){
-            // Over-quota is worth naming precisely: it is the one failure a
-            // manager can fix by waiting, and it looks like a broken page.
             var over = err && (err.isOverLimitException ||
                        /quota|OverLimit/i.test(err.message||String(err)));
             fail(over
@@ -629,10 +703,6 @@ geotab.addin.topSpeed = function () {
           var full=((u.firstName||'')+' '+(u.lastName||'')).trim();
           uname[u.id]=full||u.name||u.id;
         });
-        var drvId=function(x){
-          var d=x&&x.driver;
-          return (d && typeof d==='object' && d.id) ? d.id : null;
-        };
         var unmatchedEvents=0, eventTripDriver={}, bestEvent={};
         events.forEach(function(e){
           var d=(e.device||{}).id, when=e.activeFrom;
@@ -799,6 +869,7 @@ geotab.addin.topSpeed = function () {
         }   // finish
         }   // withEventPeaks
       }, function(err){ fail('Error loading speeding events: '+esc(err)); });
+      }, function(err){ fail('Error loading trips: '+esc(err)); });
     }, function(err){ fail('Error loading data: '+esc(err)); });
   }
 
