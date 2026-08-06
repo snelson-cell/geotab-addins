@@ -50,6 +50,36 @@ git add <file> && git commit -m "…" && git push
 GitHub Pages rebuilds in ~30–60 s at the same URL. In MyGeotab, hard-refresh
 (Cmd+Shift+R) the add-in — no config change needed.
 
+### Verifying a deploy
+
+**Compare the hash of the served file to the local one. Nothing else counts.**
+
+```bash
+curl -s "https://snelson-cell.github.io/geotab-addins/topSpeed.html" -o /tmp/live.html
+shasum -a 256 topSpeed.html /tmp/live.html   # the two digests must match
+```
+
+That is immune to CDN caching, build lag, and quirks in the status APIs, and it
+answers the only question worth asking: is what is being served the same as what
+was written.
+
+Two ways of checking that both produced **wrong answers, in opposite
+directions**, on 2026-08-06:
+
+- **Grepping the fetched file for a string you just added.** A cached response
+  serves the old file with a 200, so the string is absent and the deploy looks
+  broken; worse, a string that already existed in the previous build makes a
+  stale response look current. This wrongly reported a good deploy as live
+  before it had built.
+- **`gh api repos/<o>/<r>/pages/builds`.** That is the **legacy** Pages build
+  API. This repo deploys through the `pages-build-deployment` Actions workflow,
+  which the legacy endpoint does not report — so it showed a phantom gap and a
+  perfectly healthy deploy looked like it had never happened. Use
+  `gh api repos/<o>/<r>/deployments` if you want the API, or the repo's
+  Deployments page, which is what finally settled it.
+
+Do not tell anyone a change is live on the strength of a string match.
+
 ## Design conventions
 
 - **Chart library:** ApexCharts (CDN). Keep it consistent across add-ins.
