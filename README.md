@@ -15,7 +15,7 @@ that user's role (an office OM sees their office; an exec sees the whole fleet).
 | [`topSpeed.html`](topSpeed.html) | Top Speed by Driver | Peak speed per driver for a chosen day or range, against the written speeding policy, with speeding-event counts and a "speed demon" callout. Built for 1:1s and team meetings |
 | [`fleet.html`](fleet.html) | Fleet Register | Every vehicle in Geotab — ownership, location, driver, plate, camera and the compliance fields that used to live in the branch spreadsheets. KPI cards follow the active filters |
 | [`rollout.html`](rollout.html) | GO9 & Camera Rollout | Per-location install progress: shipped → assigned → installed (VIN reporting) → camera fitted, so you can see which locations have done what |
-| [`violin.html`](violin.html) | Speeding Distribution | KPI summary + per-vehicle speeding rate (events/1,000 mi) distributed by office, over Safe/Watch/High-risk zones, with a per-vehicle table |
+| [`violin.html`](violin.html) | Speeding Distribution | KPI summary + per-vehicle speeding rate (events/1,000 mi) distributed by office, over Safe/Watch/High-risk zones, with a per-vehicle table. 7/30/60/90-day windows and an office filter for branch managers |
 
 Install config: [`config/mira-fleet-charts.config.json`](config/mira-fleet-charts.config.json) ·
 Step-by-step: [`INSTALL.md`](INSTALL.md)
@@ -86,6 +86,32 @@ Do not tell anyone a change is live on the strength of a string match.
 - **Speeding-risk tiers (fleet-wide, fixed):** Safe `<10`, Watch `10–39`,
   High risk `≥40` events/1,000 mi (fleet median / 80th percentile, derived
   2026-07-30). Status colors: high `#d03b3b`, watch `#fab219`, safe `#0ca30c`.
+  ⚠️ **These were derived from truncated data** — see the 25,000-row cap below.
+  The true 30-day fleet median is `5.6` and p80 `27.8`, not the `8.1`/`35.8`
+  they came from, so both bands sit more leniently than intended. `checkDrift()`
+  does not fire (the bands still separate: 66% Safe / 21% Watch / 14% High), so
+  this is a deliberate policy call to make, not a bug to fix.
+- **A rate needs exposure, not just a sample.** Miles are the *denominator*, so
+  a vehicle with few miles swings wildly on one event: at 250 mi one extra event
+  moves it 4 points, at 100 mi it moves it 10. `MIN_MILES` (50) is a hard floor
+  for rating at all; `THIN_MILES` (250) is a softer one that names the affected
+  vehicles in the footer. This matters most on the 7-day window — 72 of 189
+  vehicles on 2026-08-06 — which is exactly the window someone is most tempted
+  to act on. Roughly 20% of vehicles land in a different tier at 7d vs 30d.
+- **Windows are 7 / 30 / 60 / 90 days**, but the database only began collecting
+  in June 2026, so 60d and 90d currently return the same ~57 days of data, and
+  the prior-window trend is usually unavailable. When it is, the card says *why*
+  ("only 109 of these 191 vehicles were driving in the prior 7 days") rather
+  than a bare dash — on a fleet still being installed that absence is itself
+  information.
+- **The office filter is a re-render, never a refetch.** `load()` fetches the
+  whole fleet once and stores it in `DATA`; `render()` applies `officeFilter`.
+  Switching office costs zero API calls. Two things stay fleet-wide while
+  filtered, on purpose: the dashed **fleet median** line (otherwise it collapses
+  onto the office's own median and stops being a comparison), and `checkDrift()`
+  (one small office sitting in one band says nothing about the policy bands).
+  The "Worst office" card becomes **"Rank among offices"**, which is the
+  question a branch manager actually has.
 - **A speed is only reportable if the rule actually flagged it.** `topSpeed.html`
   matches each speeding `ExceptionEvent` to the trip containing it (same device,
   `activeFrom` inside `start`–`stop`) and ranks a driver on their fastest
@@ -179,6 +205,21 @@ Do not tell anyone a change is live on the strength of a string match.
 - **Nothing is hidden without saying so.** Offices under the size cutoff,
   vehicles under the mileage floor, and outliers pinned at the axis edge are all
   named in the footer. A hidden office reads as an office with no problem.
+- **Geotab caps a `Get` at 25,000 rows and tells you nothing.** `resultsLimit`
+  is an upper bound you request, not the cap you get: ask for 50,000 or 100,000
+  and a busy range still returns **exactly 25,000**, with no error, no flag and
+  no continuation token. Any guard written as `rows.length >= resultsLimit` can
+  therefore never fire. Fetch date ranges through a windowed helper that splits
+  a window whenever it comes back at 25,000 (`fetchWindowed()` in both
+  `violin.html` and `topSpeed.html`), and bound the recursion.
+  This is not a cosmetic loss. In `violin.html` the rate is
+  `events ÷ (miles ÷ 1000)`, so missing **trips** means missing **denominator**:
+  measured on 2026-08-06 the 30-day view lost 3,660 trips, which hid 53 vehicles
+  under the 50-mile floor (all but five of N Indiana, and all 23 of ATL North —
+  an office with a *perfect* record showed as "hidden, 1 vehicle"), overstated
+  106 rates by up to 147%, and put 10 vehicles in the wrong tier. The 60- and
+  90-day views were worse. The tell that something is wrong: a **shorter**
+  window rating **more** vehicles than a longer one.
 - **Never hardcode a rule id as the only lookup.** A rule deleted in MyGeotab
   takes its historical exception events with it, and the Get call then returns
   `[]` rather than an error — which renders a plausible-looking chart of all

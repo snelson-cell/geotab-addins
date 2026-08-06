@@ -11,7 +11,13 @@
       <h2 class="sv-h1">Fleet speeding risk</h2>
       <div class="sv-scope" id="sv-scope">Loading…</div>
     </div>
-    <div class="sv-periods" id="sv-periods" role="group" aria-label="Time range"></div>
+    <div class="sv-controls">
+      <label class="sv-officepick">
+        <span>Office</span>
+        <select id="sv-office" aria-label="Filter to one office"><option value="">All offices</option></select>
+      </label>
+      <div class="sv-periods" id="sv-periods" role="group" aria-label="Time range"></div>
+    </div>
   </div>
 
   <div class="sv-note" id="sv-stop"></div>
@@ -63,11 +69,25 @@ geotab.addin.speedingViolin = function () {
     '.sv-h1{font-size:19px;font-weight:650;margin:0;letter-spacing:-.01em;}',
     '.sv-scope{font-size:12.5px;color:var(--ink-3);margin:3px 0 0;}',
     '.sv-topbar{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:12px;}',
+    '.sv-controls{display:flex;flex-wrap:wrap;align-items:center;gap:10px;}',
+    '.sv-officepick{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:var(--ink-3);}',
+    '.sv-officepick select{font:inherit;font-size:12.5px;font-weight:600;color:var(--ink-1);',
+    '  background:var(--surface-1);border:1px solid var(--axis);border-radius:7px;padding:6px 9px;cursor:pointer;}',
+    '.sv-officepick.on select{border-color:var(--accent);color:var(--accent);}',
     '.sv-periods{display:inline-flex;border:1px solid var(--axis);border-radius:7px;overflow:hidden;background:var(--surface-1);}',
     '.sv-periods button{border:0;background:transparent;color:var(--ink-2);font:inherit;font-size:12.5px;',
     '  font-weight:600;padding:6px 12px;cursor:pointer;border-right:1px solid var(--grid);}',
     '.sv-periods button:last-child{border-right:0;}',
     '.sv-periods button[aria-pressed="true"]{background:var(--accent);color:#fff;}',
+    '',
+    // While a new window is loading, the OLD window is still fully rendered and
+    // only the small scope line says "Loading…". Someone who clicks 7d and
+    // glances at the chart reads 30-day numbers as 7-day numbers. Fade the data
+    // out so it plainly is not the answer yet, and block clicks on dots whose
+    // drill-through would be about to change underneath them.
+    '#sv-root.busy .sv-kpis, #sv-root.busy .sv-action, #sv-root.busy .sv-chartcard,',
+    '#sv-root.busy .sv-foot, #sv-root.busy .sv-tablewrap{opacity:.3;pointer-events:none;',
+    '  transition:opacity .12s ease;}',
     '',
     '.sv-note{font-size:12.5px;border-radius:7px;padding:9px 12px;margin:12px 0 0;display:none;',
     '  border:1px solid var(--hairline);background:var(--surface-1);color:var(--ink-2);}',
@@ -160,11 +180,25 @@ geotab.addin.speedingViolin = function () {
   }
 
   // ── Configuration ────────────────────────────────────────────────────────
-  var PERIODS = [30, 60, 90];
+  var PERIODS = [7, 30, 60, 90];
   var MIN_MILES = 50;        // below this in-window = too little exposure to rate
   var MIN_OFFICE_N = 3;      // below this an office can't show a distribution…
   var LOW_SAMPLE_N = 10;     // …and below this it's shown but flagged as thin
+  var THIN_MILES = 250;      // rated, but on so little distance the rate is jumpy
   var EVENT_LIMIT = 50000, TRIP_LIMIT = 50000;
+
+  // Geotab caps a Get at 25,000 rows NO MATTER what resultsLimit says — asking
+  // for 50,000 still returns exactly 25,000, with no error and no flag. The old
+  // guard tested `length >= TRIP_LIMIT` (50,000), so it could never fire, and
+  // every window of 30 days or more was silently truncated. Because miles are
+  // the DENOMINATOR of the rate, lost trips do not just shrink the sample: they
+  // inflate every surviving vehicle's rate, and push low-mileage vehicles under
+  // the MIN_MILES floor so they disappear from the chart altogether. Measured
+  // on 2026-08-06, the 30-day view lost 3,660 trips, hid 53 vehicles (all of
+  // N Indiana bar five, and all 23 ATL North vehicles), overstated 106 rates
+  // and put 10 vehicles in the wrong tier. Fetch in windows instead and split
+  // any window that comes back at the cap.
+  var PAGE_CAP = 25000;
 
   // Tier boundaries are POLICY, not a description of the data: they are fixed so
   // "High" means the same thing to every viewer regardless of data scope, and
@@ -202,6 +236,9 @@ geotab.addin.speedingViolin = function () {
   var MARK = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAADAElEQVR42u2bT0gUURzHZxUVKkWwf9ih//egdhCCCOnQIQ8dOhQRXexSkLeOZf+I8rCXKBIiypqJJImCMAorgmKjiArqEP0DM6Ky3ZkyzbLvT97UMMy4Orszz53fW/iIh1l/v/d5u2+ev98bLW1an0G+SL6B9+AuyIAWUKOV6KWbdhX+3npwDPSBtyJmsXkPaPgxDMYi4BNoB3VhB473zgB7QH9EOVpRCnAYAJtDDL5FzHSUucUiwCGjX7RTkxz8vphyilUA0ZkuIAHXHIkxn9gFELsmGPyWmHORIiAHGn0GXw8+chBAHPcR0C4hD2kCbPftEb9Xi9smGwHEJpeAdZJykCog4xKwl6OAGy4BJkcBWZeAXo4CHioBSoASoARMBwE5xgLyFPwFYwHvKPglxgL6KHgbYwEdFHwh+M1UQLOTwFWGAl7qplXhJLASjDITsNFbkTnJSMAVv4JkHXjGQMAbMC+oKtsIXiVYwAewtFBTYgG4nUAB2YKD/5eQkU/h4lZhrNwFUPN3t27alWGakzVUvAQXaNtYRgL6xQ53KzVYS9WldhbKJYJFgusSBdwHi0UeTl71WpyvIgqapRBws8kYim5wa3vGKLk0OAzuiObFqAfZXwFvPl/APXAUrG4yrFTYmW0WK2e5L4JPwYYpDNyuxRvOgD8Juw12g4ZCsz4LPEjwRug5mB0089XiAFLSt8KPQK3f7B9g9M9Qp3fwy8AQIwG0vq1xCzjLsCCSXdEzOB58rqTewHQoiekUfAfjouhBCt7FWECvJnZKXAW8puCDjAXkKPhP1R1WApQAJUAJUAJi55ZLQDdHASdcAg5xFLDN83wQKwEUc45LwExJh7WkCejyqUhluAigytNyHwHzJXwKpAjYP0FVui3pAq7pplUVLCBfgWvOJ1XA5bQRPPj/zwlblaIxkxgB38Xzv5Puz68yLDqfsDOGNSFSASPgHLWui+g805GdUxGW7McF/PDpsE6VX+AreCJK7K2BB5HCiWgA28Fp8Fic+hgpQd65vxUvJqe9nnm8AAAAAElFTkSuQmCC';
 
   var chart = null, days = 30, apiRef = null, stateRef = null, lastRows = [];
+  // Everything load() fetched, held filter-independent so switching office is a
+  // re-render and not a second round trip to the API.
+  var DATA = null, officeFilter = '';
   // resizeObs must be held in a variable: an unreferenced ResizeObserver is
   // eligible for garbage collection and silently stops firing.
   var lastChart = null, lastWidth = 0, resizeTimer = null, resizeObs = null,
@@ -219,6 +256,10 @@ geotab.addin.speedingViolin = function () {
   }
   function median(sorted){ return quantile(sorted, 0.5); }
   function fmt(v){ return (Math.round(v*10)/10).toLocaleString(); }
+  function ord(n){
+    var t = n % 100;
+    return n + (t>=11 && t<=13 ? 'th' : ({1:'st',2:'nd',3:'rd'}[n%10] || 'th'));
+  }
   // Snap a derived threshold to a value a human would actually choose.
   var NICE = [1,2,3,5,8,10,15,20,25,30,40,50,75,100,150,200,250,400,500,750,1000];
   function niceNear(v){
@@ -265,6 +306,10 @@ geotab.addin.speedingViolin = function () {
     el('sv-legend').innerHTML=''; el('sv-foot').innerHTML='';
     if(chart){ chart.destroy(); chart=null; }
     el('sv-chart').innerHTML='';
+    // Clear busy too, or a failed load leaves the whole page dimmed and the
+    // error message reads as though it is still loading.
+    el('sv-root').classList.remove('busy');
+    el('sv-scope').textContent = '';
     note('sv-stop','sv-note--stop', html);
   }
 
@@ -276,16 +321,20 @@ geotab.addin.speedingViolin = function () {
       '<div class="sv-kpi-sub">'+sub+'</div></div>';
   }
 
-  function renderKpis(stats){
-    var cards = [];
+  // stats describes what is on screen; fleet always describes the whole fleet,
+  // so a manager filtered to one office still sees the benchmark they are being
+  // measured against rather than a card comparing their office to itself.
+  function renderKpis(stats, fleet){
+    var cards = [], one = officeFilter;
 
-    // 1. Where the fleet sits, against the policy target.
+    // 1. Where you sit, against the policy target.
     var medTier = tierOf(stats.median);
-    cards.push(kpi('Fleet median',
+    cards.push(kpi(one ? esc(one)+' median' : 'Fleet median',
       medTier==='high'?C.critical:medTier==='mod'?C.warning:C.good,
       fmt(stats.median),
       false,
-      'events per 1,000 mi &middot; <span class="muted">target under '+LO+'</span>'));
+      'events per 1,000 mi &middot; <span class="muted">target under '+LO+
+      (one ? ' &middot; fleet '+fmt(fleet.median) : '')+'</span>'));
 
     // 2. The number that drives action.
     cards.push(kpi('High risk', C.critical,
@@ -294,23 +343,37 @@ geotab.addin.speedingViolin = function () {
       'vehicles at or above '+HI+' &middot; <span class="muted">'+
       Math.round(stats.counts.high/Math.max(stats.n,1)*100)+'% of '+stats.n+'</span>'));
 
-    // 3. Where to look first.
-    var cmp = stats.bestMedian > 0
-      ? fmt(stats.worstMedian/stats.bestMedian)+'&times; '+esc(stats.bestOffice)
-      : esc(stats.bestOffice)+' at '+fmt(stats.bestMedian);
-    cards.push(kpi('Worst office', null, esc(stats.worstOffice), true,
-      'median '+fmt(stats.worstMedian)+' &middot; <span class="muted">vs '+cmp+'</span>'));
+    // 3. Where to look first — or, filtered, the one thing a branch manager
+    //    actually wants to know: am I the problem, or is someone else?
+    if(one){
+      var pos = fleet.offices.indexOf(one) + 1, tot = fleet.offices.length;
+      cards.push(kpi('Rank among offices', null,
+        pos ? ord(pos)+' of '+tot : '&mdash;', true,
+        pos ? (pos===1 ? '<span class="muted">highest median in the fleet</span>'
+                       : 'behind '+esc(fleet.offices[0])+' at '+fmt(fleet.worstMedian)+
+                         ' &middot; <span class="muted">1st = highest rate</span>')
+            : '<span class="muted">too few vehicles to rank</span>'));
+    } else {
+      var cmp = fleet.bestMedian > 0
+        ? fmt(fleet.worstMedian/fleet.bestMedian)+'&times; '+esc(fleet.bestOffice)
+        : esc(fleet.bestOffice)+' at '+fmt(fleet.bestMedian);
+      cards.push(kpi('Worst office', null, esc(fleet.worstOffice), true,
+        'median '+fmt(fleet.worstMedian)+' &middot; <span class="muted">vs '+cmp+'</span>'));
+    }
 
     // 4. Direction of travel — suppressed rather than guessed when the previous
     //    window is too thin to compare, which is common in a young database.
-    if(stats.trend){
+    if(stats.trend && stats.trend.ok){
       var t = stats.trend, up = t.delta > 0;
       cards.push(kpi('vs prior '+days+'d', up?C.critical:C.good,
         (up?'&#9650; +':'&#9660; ')+Math.round(Math.abs(t.delta))+'%', false,
         (up?'worsening':'improving')+' &middot; <span class="muted">was '+fmt(t.prevMedian)+'</span>'));
     } else {
       cards.push(kpi('vs prior '+days+'d', null, '&mdash;', true,
-        '<span class="muted">not enough history in the previous window to compare</span>'));
+        '<span class="muted">'+(stats.trend
+          ? 'only '+stats.trend.have+' of these '+stats.trend.of+' vehicles were driving in the prior '+
+            days+' days, so the two windows are not comparable'
+          : 'not enough history in the previous window to compare')+'</span>'));
     }
     el('sv-kpis').innerHTML = cards.join('');
     el('sv-action').style.display = '';
@@ -318,7 +381,11 @@ geotab.addin.speedingViolin = function () {
   }
 
   // ── Tier 2 ───────────────────────────────────────────────────────────────
-  function renderChart(byOffice, offices, stats){
+  // fleetMedian is passed separately from stats: stats describes what is on
+  // screen, but the dashed benchmark line must stay the whole fleet's median
+  // even when one office is filtered in — otherwise it collapses onto that
+  // office's own median and stops being a comparison at all.
+  function renderChart(byOffice, offices, stats, fleetMedian){
     var n = offices.length;
     // Lane height and the label gutter scale with the space actually available,
     // so the plot stays legible from a phone-width pane up to a wide monitor.
@@ -400,7 +467,7 @@ geotab.addin.speedingViolin = function () {
     // The empirical benchmark, drawn on top of the policy zones. Left unlabelled
     // in-plot — near the low end it lands on the axis ticks — and named in the
     // legend instead.
-    zones.push({x:stats.median, strokeDashArray:5, borderColor:C.accent, borderWidth:1.5});
+    zones.push({x:fleetMedian, strokeDashArray:5, borderColor:C.accent, borderWidth:1.5});
 
     // Office labels live in a left gutter, outside the plot: as in-plot
     // annotations they collided with the marks and the tooltip.
@@ -484,7 +551,7 @@ geotab.addin.speedingViolin = function () {
       '<span><i class="sv-swatch filled"></i>Vehicle &mdash; driver assigned</span>'+
       '<span><i class="sv-swatch hollow"></i>Vehicle &mdash; no driver assigned</span>'+
       '<span><img class="sv-swatch med" src="'+MARK+'" alt="">Office median</span>'+
-      '<span><i class="sv-swatch dash"></i>Fleet median '+fmt(stats.median)+'</span>';
+      '<span><i class="sv-swatch dash"></i>Fleet median '+fmt(fleetMedian)+'</span>';
 
     return {over:over, visMax:visMax, clamped:clamp};
   }
@@ -551,7 +618,11 @@ geotab.addin.speedingViolin = function () {
       var blob = new Blob([lines.join('\n')], {type:'text/csv;charset=utf-8;'});
       var a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = 'speeding-rate-'+days+'d.csv';
+      // lastRows already honours the office filter, so name the file for it —
+      // otherwise two exports sitting in Downloads are indistinguishable.
+      a.download = 'speeding-rate-'+
+        (officeFilter ? officeFilter.toLowerCase().replace(/[^a-z0-9]+/g,'-')+'-' : '')+
+        days+'d.csv';
       document.body.appendChild(a); a.click();
       setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 0);
     } catch(e){
@@ -595,10 +666,51 @@ geotab.addin.speedingViolin = function () {
     return c;
   }
 
+  // Split a date range until every slice comes back under the server's row cap,
+  // then concatenate. Recursive rather than a fixed chunk size because the right
+  // size depends on how busy the fleet was, which varies by range and by office.
+  function fetchWindowed(api, typeName, a0, b0, limit, extra, done, fail_){
+    var out = [], pending = 0, failed = false, splits = 0;
+    function grab(a, b, depth){
+      var search = {fromDate:a, toDate:b};
+      Object.keys(extra||{}).forEach(function(k){ search[k] = extra[k]; });
+      pending++;
+      api.call('Get', {typeName:typeName, resultsLimit:limit, search:search}, function(rows){
+        rows = rows || [];
+        if(rows.length >= PAGE_CAP && depth < 6){
+          // At the cap, so this window is truncated: halve it and retry. Depth is
+          // bounded so a pathological range cannot recurse forever.
+          var mid = new Date((new Date(a).getTime() + new Date(b).getTime())/2).toISOString();
+          splits++; pending--;
+          grab(a, mid, depth+1); grab(mid, b, depth+1);
+          return;
+        }
+        out = out.concat(rows);
+        if(--pending === 0 && !failed) done(out, splits);
+      }, function(err){
+        if(failed) return;
+        failed = true; fail_(err);
+      });
+    }
+    grab(a0, b0, 0);
+  }
+
+  function fetchAll(api, jobs, done, fail_){
+    var out = new Array(jobs.length), splits = 0, left = jobs.length, failed = false;
+    jobs.forEach(function(j, i){
+      fetchWindowed(api, j.type, j.from, j.to, j.limit, j.extra, function(rows, s){
+        out[i] = rows; splits += s;
+        if(--left === 0 && !failed) done(out, splits);
+      }, function(err){ if(!failed){ failed = true; fail_(err); } });
+    });
+  }
+
+  // ── Load: fetch only, and stash the result filter-independently ──────────
   function load(api){
     apiRef = api;
     clearNotes();
     el('sv-scope').textContent = 'Loading ' + days + ' days of events and distance…';
+    el('sv-root').classList.add('busy');
 
     var to = new Date();
     var from = new Date(to.getTime() - days*24*3600*1000);
@@ -609,12 +721,9 @@ geotab.addin.speedingViolin = function () {
       ['Get', {typeName:'Rule'}],
       ['Get', {typeName:'Device', resultsLimit:50000}],
       ['Get', {typeName:'DeviceStatusInfo'}],
-      ['Get', {typeName:'User', search:{isDriver:true}}],
-      ['Get', {typeName:'Trip', resultsLimit:TRIP_LIMIT, search:{fromDate:fromISO, toDate:toISO}}],
-      ['Get', {typeName:'Trip', resultsLimit:TRIP_LIMIT, search:{fromDate:prevISO, toDate:fromISO}}]
+      ['Get', {typeName:'User', search:{isDriver:true}}]
     ], function(res){
-      var rules = res[0]||[], devices = res[1]||[], status = res[2]||[], users = res[3]||[],
-          trips = res[4]||[], prevTrips = res[5]||[];
+      var rules = res[0]||[], devices = res[1]||[], status = res[2]||[], users = res[3]||[];
 
       var rule = resolveRule(rules);
       if(!rule){
@@ -623,22 +732,15 @@ geotab.addin.speedingViolin = function () {
              'Check Rules in MyGeotab.');
         return;
       }
-      if(trips.length >= TRIP_LIMIT){
-        note('sv-warn','sv-note--warn','Trip results hit the '+TRIP_LIMIT.toLocaleString()+
-          ' row limit, so distances may be understated and rates overstated.');
-      }
 
-      api.multiCall([
-        ['Get', {typeName:'ExceptionEvent', resultsLimit:EVENT_LIMIT,
-          search:{fromDate:fromISO, toDate:toISO, ruleSearch:{id:rule.id}}}],
-        ['Get', {typeName:'ExceptionEvent', resultsLimit:EVENT_LIMIT,
-          search:{fromDate:prevISO, toDate:fromISO, ruleSearch:{id:rule.id}}}]
-      ], function(evres){
-        var events = evres[0]||[], prevEvents = evres[1]||[];
-        if(events.length >= EVENT_LIMIT){
-          note('sv-warn','sv-note--warn','Exception results hit the '+EVENT_LIMIT.toLocaleString()+
-            ' row limit, so rates may be understated.');
-        }
+      var ruleSearch = {ruleSearch:{id:rule.id}};
+      fetchAll(api, [
+        {type:'Trip',           from:fromISO, to:toISO,   limit:TRIP_LIMIT},
+        {type:'Trip',           from:prevISO, to:fromISO, limit:TRIP_LIMIT},
+        {type:'ExceptionEvent', from:fromISO, to:toISO,   limit:EVENT_LIMIT, extra:ruleSearch},
+        {type:'ExceptionEvent', from:prevISO, to:fromISO, limit:EVENT_LIMIT, extra:ruleSearch}
+      ], function(sets, splits){
+        var trips = sets[0], prevTrips = sets[1], events = sets[2], prevEvents = sets[3];
 
         var office={}, vehName={};
         devices.forEach(function(d){
@@ -660,19 +762,17 @@ geotab.addin.speedingViolin = function () {
         });
 
         var miles = milesByDevice(trips), spd = countByDevice(events);
-        var prevMiles = milesByDevice(prevTrips), prevSpd = countByDevice(prevEvents);
 
-        var rows = [], eligible = 0;
+        var rows = [];
         Object.keys(office).forEach(function(id){
           var mi = miles[id]||0;
           if(mi < MIN_MILES) return;
-          eligible++;
           rows.push({id:id, veh:vehName[id]||id, office:office[id], drv:driver[id]||'',
                      miles:mi, rate:Math.round((spd[id]||0)/(mi/1000)*10)/10});
         });
 
         // An all-zero chart is indistinguishable from a genuinely clean fleet.
-        if(eligible && !events.length){
+        if(rows.length && !events.length){
           fail('The <b>'+esc(rule.name)+'</b> rule ('+esc(rule.id)+') returned no events in the last '+
                days+' days, so every rate would be 0. The rule may be disabled or renamed &mdash; '+
                'check Rules in MyGeotab before trusting this chart.');
@@ -684,106 +784,198 @@ geotab.addin.speedingViolin = function () {
           return;
         }
 
-        var byOffice = {}, dropped = [];
-        rows.forEach(function(r){ (byOffice[r.office] = byOffice[r.office]||[]).push(r); });
-        Object.keys(byOffice).forEach(function(o){
-          if(byOffice[o].length < MIN_OFFICE_N){
-            dropped.push({office:o, n:byOffice[o].length});
-            delete byOffice[o];
-          }
-        });
-        var shownRows = [];
-        Object.keys(byOffice).forEach(function(o){ shownRows = shownRows.concat(byOffice[o]); });
-        var offices = Object.keys(byOffice).sort(function(a,b){
-          return median(asc(byOffice[b].map(function(r){return r.rate;})))
-               - median(asc(byOffice[a].map(function(r){return r.rate;})));
-        });
-
-        var all = asc(shownRows.map(function(r){return r.rate;}));
-        var counts = {high:0, mod:0, low:0};
-        shownRows.forEach(function(r){ counts[tierOf(r.rate)]++; });
-
-        var stats = {
-          n: shownRows.length, median: median(all), p80: quantile(all,0.8),
-          p95: quantile(all,0.95), max: all[all.length-1], counts: counts,
-          worstOffice: offices[0],
-          worstMedian: median(asc(byOffice[offices[0]].map(function(r){return r.rate;}))),
-          bestOffice: offices[offices.length-1],
-          bestMedian: median(asc(byOffice[offices[offices.length-1]].map(function(r){return r.rate;}))),
-          trend: null
-        };
-
-        // Trend, only where the previous window can actually support one.
-        var prevRates = [], prevTotal = 0, curTotal = 0;
-        Object.keys(office).forEach(function(id){
-          var pm = prevMiles[id]||0;
-          prevTotal += pm; curTotal += (miles[id]||0);
-          if(pm >= MIN_MILES) prevRates.push(Math.round((prevSpd[id]||0)/(pm/1000)*10)/10);
-        });
-        if(prevRates.length >= rows.length*0.6 && prevTotal >= curTotal*0.4 && prevRates.length >= 8){
-          var pmed = median(asc(prevRates));
-          if(pmed > 0){
-            stats.trend = {prevMedian:pmed, delta:(stats.median-pmed)/pmed*100};
-          }
-        }
-
-        lastRows = shownRows.slice().sort(function(a,b){ return b.rate - a.rate; });
-
-        el('sv-scope').innerHTML =
-          stats.n+' vehicles &middot; '+offices.length+' offices &middot; previous '+days+
-          ' days &middot; your data scope &middot; rule: '+esc(rule.name);
-
-        renderKpis(stats);
-        lastChart = {byOffice:byOffice, offices:offices, stats:stats};
-        var meta = renderChart(byOffice, offices, stats);
-        renderTable(lastRows);
-
-        // Footer: outliers named rather than left to stretch the axis, and every
-        // exclusion disclosed. A hidden office reads as an office with no problem.
-        var foot = [];
-        if(meta.over.length){
-          var names = meta.over.slice().sort(function(a,b){return b.rate-a.rate;})
-            .map(function(r){ return esc(r.veh)+' ('+fmt(r.rate)+')'; });
-          foot.push('<b>'+meta.over.length+' vehicle'+(meta.over.length>1?'s':'')+
-            ' above '+meta.visMax+'</b>, pinned at the axis edge: '+names.join(', ')+'.');
-        }
-        var thin = offices.filter(function(o){ return byOffice[o].length < LOW_SAMPLE_N; });
-        if(thin.length){
-          foot.push('<b>Thin sample:</b> '+thin.map(esc).join(', ')+
-            ' have fewer than '+LOW_SAMPLE_N+' vehicles, so their medians move easily.');
-        }
-        var hiddenVeh = rows.length - shownRows.length;
-        if(dropped.length){
-          foot.push('<b>'+dropped.length+' office'+(dropped.length>1?'s':'')+' hidden</b> ('+hiddenVeh+
-            ' vehicle'+(hiddenVeh===1?'':'s')+') with fewer than '+MIN_OFFICE_N+' vehicles: '+
-            dropped.map(function(d){ return esc(d.office)+' ('+d.n+')'; }).join(', ')+'.');
-        }
-        var noMiles = Object.keys(office).length - eligible;
-        if(noMiles > 0){
-          foot.push(noMiles+' vehicle'+(noMiles===1?'':'s')+' in scope drove under '+MIN_MILES+
-            ' mi in the window and cannot be rated.');
-        }
-        var unassigned = shownRows.filter(function(r){ return !r.drv; }).length;
-        if(unassigned){
-          foot.push('<b>'+unassigned+' of '+stats.n+' vehicles have no driver assigned</b> in Geotab '+
-            '(hollow dots), so their events cannot be attributed to a person.');
-        }
-        el('sv-foot').innerHTML = foot.join('<br>');
-
-        var drift = checkDrift(stats);
-        if(drift){
-          note('sv-warn','sv-note--warn',
-            '<b>Tier thresholds look stale.</b> '+Math.round(drift.share*100)+
-            '% of vehicles now fall in a single tier, so the bands no longer separate anything. '+
-            'They were derived on '+TIERS_DERIVED_ON+'; this window’s median is '+fmt(stats.median)+
-            ' and p80 is '+fmt(stats.p80)+', suggesting <b>LO='+drift.lo+', HI='+drift.hi+'</b>. '+
-            'Update <code>LO</code>/<code>HI</code> in violin.html and the tier note in README.md.');
-        }
-      }, function(err){ fail('Error loading speeding events: '+esc(err)); });
+        DATA = {rule:rule, office:office, rows:rows,
+                miles:miles, prevMiles:milesByDevice(prevTrips), prevSpd:countByDevice(prevEvents),
+                nDevices:Object.keys(office).length, splits:splits};
+        render();
+      }, function(err){ fail('Error loading trips and events: '+esc(err)); });
     }, function(err){ fail('Error loading data: '+esc(err)); });
   }
 
+  // ── Render: everything below here reads DATA and honours officeFilter ────
+  function group(rows){
+    var by = {}, dropped = [];
+    rows.forEach(function(r){ (by[r.office] = by[r.office]||[]).push(r); });
+    Object.keys(by).forEach(function(o){
+      if(by[o].length < MIN_OFFICE_N){ dropped.push({office:o, n:by[o].length}); delete by[o]; }
+    });
+    var offices = Object.keys(by).sort(function(a,b){
+      return median(asc(by[b].map(function(r){return r.rate;})))
+           - median(asc(by[a].map(function(r){return r.rate;})));
+    });
+    var shown = [];
+    offices.forEach(function(o){ shown = shown.concat(by[o]); });
+    return {by:by, offices:offices, shown:shown, dropped:dropped};
+  }
+
+  function statsOf(rows){
+    var all = asc(rows.map(function(r){return r.rate;}));
+    var counts = {high:0, mod:0, low:0};
+    rows.forEach(function(r){ counts[tierOf(r.rate)]++; });
+    return {n:rows.length, median:median(all), p80:quantile(all,0.8), p95:quantile(all,0.95),
+            max:all[all.length-1], counts:counts, trend:null};
+  }
+
+  // Trend over the device ids that make up the current view, so a filtered
+  // office is compared against its own previous window rather than the fleet's.
+  function trendFor(ids, curMedian){
+    var prevRates = [], prevTotal = 0, curTotal = 0;
+    ids.forEach(function(id){
+      var pm = DATA.prevMiles[id]||0;
+      prevTotal += pm; curTotal += (DATA.miles[id]||0);
+      if(pm >= MIN_MILES) prevRates.push(Math.round((DATA.prevSpd[id]||0)/(pm/1000)*10)/10);
+    });
+    // Report WHY rather than returning a bare null. On a fleet still being
+    // installed the usual reason is simply that many of today's vehicles were
+    // not reporting yet, and saying so tells the manager something true instead
+    // of leaving a dash they have to interpret.
+    var bad = {ok:false, have:prevRates.length, of:ids.length};
+    if(prevRates.length < ids.length*0.6 || prevTotal < curTotal*0.4 || prevRates.length < 8) return bad;
+    var pmed = median(asc(prevRates));
+    if(!(pmed > 0)) return bad;
+    return {ok:true, prevMedian:pmed, delta:(curMedian-pmed)/pmed*100};
+  }
+
+  function render(){
+    if(!DATA) return;
+    clearNotes();
+    el('sv-root').classList.remove('busy');
+
+    // The whole fleet is grouped first, unconditionally: a filtered manager
+    // still needs the fleet median to sit against and a rank to sit in.
+    var G = group(DATA.rows);
+    var fleet = statsOf(G.shown);
+    fleet.offices = G.offices;
+    fleet.worstOffice = G.offices[0];
+    fleet.worstMedian = median(asc((G.by[G.offices[0]]||[]).map(function(r){return r.rate;})));
+    fleet.bestOffice = G.offices[G.offices.length-1];
+    fleet.bestMedian = median(asc((G.by[fleet.bestOffice]||[]).map(function(r){return r.rate;})));
+
+    syncOfficePicker(G.offices);
+
+    // A filter that no longer matches anything — the office fell under
+    // MIN_OFFICE_N in this window — must say so rather than render an empty
+    // chart that reads as "no problems here".
+    var stale = officeFilter && !G.by[officeFilter];
+    if(stale){
+      note('sv-warn','sv-note--warn','<b>'+esc(officeFilter)+'</b> has fewer than '+MIN_OFFICE_N+
+        ' rateable vehicles in this window, so it cannot show a distribution. Showing all offices.');
+      officeFilter = '';
+      syncOfficePicker(G.offices);
+    }
+
+    var byOffice, offices;
+    if(officeFilter){
+      byOffice = {}; byOffice[officeFilter] = G.by[officeFilter];
+      offices = [officeFilter];
+    } else {
+      byOffice = G.by; offices = G.offices;
+    }
+    var viewRows = [];
+    offices.forEach(function(o){ viewRows = viewRows.concat(byOffice[o]); });
+
+    var stats = statsOf(viewRows);
+    stats.trend = trendFor(viewRows.map(function(r){ return r.id; }), stats.median);
+
+    lastRows = viewRows.slice().sort(function(a,b){ return b.rate - a.rate; });
+
+    el('sv-scope').innerHTML =
+      stats.n+' vehicles &middot; '+
+      (officeFilter ? esc(officeFilter)+' only' : offices.length+' offices')+
+      ' &middot; previous '+days+' days &middot; your data scope &middot; rule: '+esc(DATA.rule.name);
+
+    renderKpis(stats, fleet);
+    lastChart = {byOffice:byOffice, offices:offices, stats:stats, fleetMedian:fleet.median};
+    var meta = renderChart(byOffice, offices, stats, fleet.median);
+    renderTable(lastRows);
+
+    // Footer: outliers named rather than left to stretch the axis, and every
+    // exclusion disclosed. A hidden office reads as an office with no problem.
+    var foot = [];
+    if(meta.over.length){
+      var names = meta.over.slice().sort(function(a,b){return b.rate-a.rate;})
+        .map(function(r){ return esc(r.veh)+' ('+fmt(r.rate)+')'; });
+      foot.push('<b>'+meta.over.length+' vehicle'+(meta.over.length>1?'s':'')+
+        ' above '+meta.visMax+'</b>, pinned at the axis edge: '+names.join(', ')+'.');
+    }
+    var thin = offices.filter(function(o){ return byOffice[o].length < LOW_SAMPLE_N; });
+    if(thin.length){
+      foot.push('<b>Thin sample:</b> '+thin.map(esc).join(', ')+
+        ' have fewer than '+LOW_SAMPLE_N+' vehicles, so their medians move easily.');
+    }
+    // Exposure, not sample size: a rate with miles in the denominator swings on
+    // a single event when the denominator is small. At 250 mi one extra event
+    // moves a vehicle 4 points; at 100 mi it moves it 10. This bites hardest on
+    // the 7-day view, which is exactly when someone is most tempted to act on it.
+    var thinMi = viewRows.filter(function(r){ return r.miles < THIN_MILES; }).length;
+    if(thinMi){
+      foot.push('<b>'+thinMi+' of '+stats.n+' vehicles drove under '+THIN_MILES+' mi</b> in this '+
+        days+'-day window, so one extra event moves them '+
+        Math.round(1000/THIN_MILES)+'+ points. Prefer a longer window before coaching on those.');
+    }
+    if(!officeFilter && G.dropped.length){
+      var hiddenVeh = DATA.rows.length - G.shown.length;
+      foot.push('<b>'+G.dropped.length+' office'+(G.dropped.length>1?'s':'')+' hidden</b> ('+hiddenVeh+
+        ' vehicle'+(hiddenVeh===1?'':'s')+') with fewer than '+MIN_OFFICE_N+' vehicles: '+
+        G.dropped.map(function(d){ return esc(d.office)+' ('+d.n+')'; }).join(', ')+'.');
+    }
+    var scopeN = officeFilter
+      ? Object.keys(DATA.office).filter(function(id){ return DATA.office[id]===officeFilter; }).length
+      : DATA.nDevices;
+    var noMiles = scopeN - (officeFilter
+      ? DATA.rows.filter(function(r){ return r.office===officeFilter; }).length
+      : DATA.rows.length);
+    if(noMiles > 0){
+      foot.push(noMiles+' vehicle'+(noMiles===1?'':'s')+' in scope drove under '+MIN_MILES+
+        ' mi in the window and cannot be rated.');
+    }
+    var unassigned = viewRows.filter(function(r){ return !r.drv; }).length;
+    if(unassigned){
+      foot.push('<b>'+unassigned+' of '+stats.n+' vehicles have no driver assigned</b> in Geotab '+
+        '(hollow dots), so their events cannot be attributed to a person.');
+    }
+    el('sv-foot').innerHTML = foot.join('<br>');
+
+    // Drift is a question about the POLICY thresholds, so it is always judged on
+    // the whole fleet — one small office sitting entirely in one band says
+    // nothing about whether the bands still discriminate.
+    var drift = checkDrift(fleet);
+    if(drift && !stale){
+      note('sv-warn','sv-note--warn',
+        '<b>Tier thresholds look stale.</b> '+Math.round(drift.share*100)+
+        '% of vehicles now fall in a single tier, so the bands no longer separate anything. '+
+        'They were derived on '+TIERS_DERIVED_ON+'; this window’s median is '+fmt(fleet.median)+
+        ' and p80 is '+fmt(fleet.p80)+', suggesting <b>LO='+drift.lo+', HI='+drift.hi+'</b>. '+
+        'Update <code>LO</code>/<code>HI</code> in violin.html and the tier note in README.md.');
+    }
+  }
+
   // ── Chrome ───────────────────────────────────────────────────────────────
+  // Options are rebuilt from whatever offices this window can actually show, so
+  // the list never offers a choice that would render an empty chart. Sorted
+  // alphabetically rather than by rate: a manager is looking up their own
+  // office by name, not scanning a ranking.
+  function syncOfficePicker(offices){
+    var sel = el('sv-office');
+    if(!sel) return;
+    var want = offices.slice().sort();
+    var have = Array.prototype.slice.call(sel.options, 1).map(function(o){ return o.value; });
+    if(have.join(' ') !== want.join(' ')){
+      sel.innerHTML = '<option value="">All offices</option>' +
+        want.map(function(o){ return '<option value="'+esc(o)+'">'+esc(o)+'</option>'; }).join('');
+    }
+    sel.value = officeFilter;
+    sel.parentNode.className = 'sv-officepick' + (officeFilter ? ' on' : '');
+  }
+
+  function wireOfficePicker(){
+    el('sv-office').addEventListener('change', function(e){
+      officeFilter = e.target.value || '';
+      // No refetch: load() already holds every office, so this is pure re-render.
+      render();
+    });
+  }
+
   function buildPeriods(){
     var host = el('sv-periods');
     host.innerHTML = PERIODS.map(function(d){
@@ -823,7 +1015,8 @@ geotab.addin.speedingViolin = function () {
       // destroys the element the tooltip is anchored to. Wait for mouseleave.
       function attempt(){
         if(pointerInChart){ resizeTimer = setTimeout(attempt, 250); return; }
-        if(lastChart) renderChart(lastChart.byOffice, lastChart.offices, lastChart.stats);
+        if(lastChart) renderChart(lastChart.byOffice, lastChart.offices, lastChart.stats,
+                                  lastChart.fleetMedian);
       }
       resizeTimer = setTimeout(attempt, 140);
     };
@@ -863,7 +1056,7 @@ geotab.addin.speedingViolin = function () {
 
   return {
     initialize: function(api, state, cb){
-      injectStyles(); buildPeriods(); wireTools(); watchResize(); cb();
+      injectStyles(); buildPeriods(); wireOfficePicker(); wireTools(); watchResize(); cb();
     },
     focus: function(api, state){ stateRef = state; startPoll(); load(api); },
     // MyGeotab calls blur() when the user navigates away — stop polling rather
