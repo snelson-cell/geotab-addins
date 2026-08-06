@@ -53,9 +53,46 @@ geotab.addin.topSpeed = function () {
   //   91+   immediate termination                              (2026-06-25)
   // The policy tightened over time (on 2026-05-15 termination was stated as 85+),
   // so these track the most recent wording. Update here if it changes again.
-  var FINAL_MPH = 80, ALERT_MPH = 85.1, TERM_MPH = 91;
-  var POLICY_NOTE = 'Policy: ' + FINAL_MPH + '+ mph is a final warning, ' + TERM_MPH +
-                    '+ is immediate termination. Alerts fire at ' + ALERT_MPH + '.';
+  // Set with Samson 2026-08-05. 81 rather than the written 80 is a deliberate
+  // 1 mph buffer: Geotab stores speed as whole km/h, so readings land on 0.62
+  // mph steps and 129 km/h displays as 80.2 — the buffer keeps a rounding
+  // artefact from becoming a written warning.
+  var FINAL_MPH = 81, ALERT_MPH = 85.1, TERM_MPH = 90;
+  var POLICY_NOTE = 'Policy: ' + FINAL_MPH + '+ mph inside a flagged speeding event is a ' +
+                    'final written warning. ' + TERM_MPH + '+ at any moment is flagged, ' +
+                    'event or not. Alerts fire at ' + ALERT_MPH + '.';
+
+  // A speed is only a warning if a real speeding event was firing at the moment
+  // it was recorded. Ranking the trip's peak instead let an unrelated event
+  // elsewhere on the same trip legitimise a number — Malachi Wilson's 81.4 mph
+  // was corroborated by a 74.6 mph violation seven miles and nine minutes away.
+  var LOG_LIMIT = 500;      // an event window is seconds long; 500 is generous
+  var TIER_A = 'event';      // corroborated: peak measured inside an event window
+  var TIER_B = 'absolute';   // 90+ at any instant, no event required
+
+  // Times are shown in the DRIVER's local zone, not the viewer's. MyGeotab
+  // renders in the signed-in user's timezone, so a Utah manager and a Louisville
+  // OM quoted clocks two hours apart for the same incident.
+  function localTime(iso, tz){
+    if(!iso) return '—';
+    try {
+      return new Intl.DateTimeFormat(undefined, {
+        timeZone: tz || undefined, hour:'numeric', minute:'2-digit',
+        second:'2-digit', hour12:true
+      }).format(new Date(iso));
+    } catch(e){                       // unknown/absent tz — say so rather than lie
+      return new Date(iso).toUTCString().slice(17,25) + ' UTC';
+    }
+  }
+  function localZoneLabel(tz){
+    if(!tz) return 'UTC';
+    try {
+      var p = new Intl.DateTimeFormat('en-US',{timeZone:tz, timeZoneName:'short'})
+                .formatToParts(new Date());
+      for(var i=0;i<p.length;i++) if(p[i].type==='timeZoneName') return p[i].value;
+    } catch(e){}
+    return tz;
+  }
 
   var TOP_N = 20;            // rows on the chart — it gets shown on a meeting screen
   var TRIP_LIMIT = 50000, EVENT_LIMIT = 50000;
@@ -185,7 +222,7 @@ geotab.addin.topSpeed = function () {
   function f1(v){ return (Math.round(v*10)/10).toLocaleString(); }
   function f0(v){ return Math.round(v).toLocaleString(); }
   function bandOf(m){ return m>=TERM_MPH ? 'term' : (m>=FINAL_MPH ? 'final' : 'ok'); }
-  function bandName(b){ return b==='term'?'Termination':b==='final'?'Final warning':'Under policy'; }
+  function bandName(b){ return b==='term'?'Flagged &mdash; '+TERM_MPH+'+':b==='final'?'Final written warning':'Under policy'; }
   function bandColor(b){ return b==='term'?C.critical:b==='final'?C.warning:C.good; }
   function ymd(d){
     return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
@@ -230,7 +267,7 @@ geotab.addin.topSpeed = function () {
       ' &middot; '+esc(top.peakDayLabel)+' &middot; '+top.events+' speeding event'+
       (top.events===1?'':'s')+' in range</div></div>'+
       '<div class="ts-hero-speed"><div class="ts-hero-mph">'+f0(top.peak)+'</div>'+
-      '<div class="ts-hero-unit">mph on a flagged trip &middot; '+esc(bandName(bandOf(top.peak)))+'</div></div>';
+      '<div class="ts-hero-unit">mph inside a flagged event &middot; '+esc(bandName(bandOf(top.peak)))+'</div></div>';
   }
 
   function kpi(label,color,value,sub){
@@ -326,7 +363,7 @@ geotab.addin.topSpeed = function () {
       markers:{size:7, strokeWidth:2, strokeColors:C.surface, fillOpacity:0.85,
         hover:{sizeOffset:3}},
       xaxis:{min:lo, max:hi, tickAmount:ticks,
-        title:{text:'Peak speed on a trip that was flagged for speeding (mph)', style:{fontSize:'12px',fontWeight:600,color:C.ink2}},
+        title:{text:'Fastest speed recorded inside a flagged speeding event (mph)', style:{fontSize:'12px',fontWeight:600,color:C.ink2}},
         axisBorder:{color:C.axis}, axisTicks:{color:C.axis},
         labels:{style:{colors:C.ink3, fontSize:'11.5px'},
           formatter:function(v){ return Math.round(v); }}},
@@ -342,11 +379,19 @@ geotab.addin.topSpeed = function () {
           '<b>'+esc(r.name)+'</b> &middot; '+esc(r.office||'no office')+'<br>'+
           '<b>'+f1(r.peak)+' mph</b> <span style="color:#898781">in '+esc(r.peakVeh)+
           ' on '+esc(r.peakDayLabel)+'</span><br>'+
-          '<span style="color:#898781">that trip was flagged '+r.peakTripEvents+
-          ' time'+(r.peakTripEvents===1?'':'s')+'</span><br>'+
+          '<span style="color:#898781">at <b style="color:#0b0b0b">'+
+            esc(localTime(r.atISO, r.tz))+'</b> '+esc(localZoneLabel(r.tz))+
+            ' &middot; the driver&rsquo;s local time</span><br>'+
+          (r.tier===TIER_A
+            ? '<span style="color:#898781">measured inside a speeding event lasting '+
+              r.seconds+'s</span><br>'
+            : '<span style="color:'+C.warning+'">no speeding event fired &mdash; '+
+              'absolute speed only</span><br>')+
           r.events+' speeding event'+(r.events===1?'':'s')+' in range &middot; '+f0(r.miles)+' mi driven<br>'+
           '<span style="color:'+bandColor(b)+';font-weight:600">'+bandName(b)+'</span>'+
-          '<br><span style="color:#898781;font-size:11px">click for that day’s trips</span></div>';
+          '<br><span style="color:#898781;font-size:11px">'+
+          (r.tier===TIER_A ? 'click to open this event' : 'click for that day&rsquo;s trips')+
+          '</span></div>';
       }}
     });
     chart.render();
@@ -355,21 +400,31 @@ geotab.addin.topSpeed = function () {
       '<span><i class="ts-swatch" style="background:'+C.good+'"></i>Under '+FINAL_MPH+'</span>'+
       '<span><i class="ts-swatch" style="background:'+C.warning+'"></i>'+FINAL_MPH+'–'+(TERM_MPH-1)+' &middot; final warning</span>'+
       '<span><i class="ts-swatch" style="background:'+C.critical+'"></i>'+TERM_MPH+'+ &middot; termination</span>'+
-      '<span><i class="ts-swatch dot" style="background:'+C.ink2+'"></i>Peak on a flagged trip</span>'+
+      '<span><i class="ts-swatch dot" style="background:'+C.ink2+'"></i>Speed inside a flagged event</span>'+
       '<span style="color:#898781">dashed line = '+ALERT_MPH+' mph alert</span>';
   }
 
   // ── Table + drill-through ────────────────────────────────────────────────
+  // Land on the exact incident, not the day.
+  //
+  // `exceptionId` is undocumented — the published URL guide lists ten pages and
+  // no exception page at all. It was read off a URL MyGeotab wrote itself
+  // (2026-08-05) and every id in it verified against the API before use. Supply
+  // only INPUTS: routes, mapBounds, expandedCardIds and isReplayPlayerHidden are
+  // state the page derives after loading, and passing them fights the page.
+  //
+  // Tier B has no event to open, so it lands on the trip's day with the moment
+  // named in the tooltip — an honest limit, not a broken link.
   function goToTrips(r){
     if(!(stateRef && typeof stateRef.gotoPage==='function')) return;
-    try {
-      stateRef.gotoPage('tripsHistory', {
-        dateRange:{interval:'custom', startDate:r.peakDayStart, endDate:r.peakDayEnd},
-        entityType:'Driver',
-        devices:[r.peakDeviceId],
-        selectedEntities:[r.driverId]
-      });
-    } catch(e){}
+    var params = {
+      dateRange: {interval:'custom', startDate:r.peakDayStart, endDate:r.peakDayEnd},
+      entityType: 'Driver',
+      selectedEntities: [r.driverId],
+      devices: r.peakDeviceId ? [r.peakDeviceId] : undefined
+    };
+    if(r.tier===TIER_A && r.eventId) params.exceptionId = r.eventId;
+    try { stateRef.gotoPage('tripsHistory', params); } catch(e){}
   }
 
   function renderTable(rows){
@@ -447,9 +502,47 @@ geotab.addin.topSpeed = function () {
         search:{fromDate:startISO, toDate:endISO, ruleSearch:{id:rule.id}}}, function(events){
         events=events||[];
 
-        var vehName={}, office={};
+        // Resolve the true peak INSIDE each event window. An ExceptionEvent
+        // carries no speed of its own — MyGeotab computes the figure it shows
+        // from LogRecord at render time, and so must we.
+        //
+        // This is affordable because an event window is seconds long: 311
+        // events for a whole day returned 2,195 rows in 2.7s as a single
+        // multiCall (measured 2026-08-05). Batched, not one call per event.
+        var usable = events.filter(function(e){
+          return e && e.activeFrom && e.activeTo && (e.device||{}).id;
+        });
+        var calls = usable.map(function(e){
+          return ['Get',{typeName:'LogRecord', resultsLimit:LOG_LIMIT,
+            search:{fromDate:e.activeFrom, toDate:e.activeTo,
+                    deviceSearch:{id:(e.device||{}).id}}}];
+        });
+        if(!calls.length){ withEventPeaks(events, {}); return; }
+        api.multiCall(calls, function(sets){
+          var peakOf={};
+          (sets||[]).forEach(function(rows, i){
+            var best=0, at=null;
+            (rows||[]).forEach(function(r){
+              if((r.speed||0)>best){ best=r.speed||0; at=r.dateTime; }
+            });
+            if(best>0) peakOf[usable[i].id] = {speed:best, at:at};
+          });
+          withEventPeaks(events, peakOf);
+        }, function(){
+          // Fail soft: without in-event speeds nothing can be ranked to policy,
+          // so say that rather than silently falling back to trip peaks — which
+          // is the exact conflation this rewrite removes.
+          fail('Could not read the speed inside each speeding event, so nothing '+
+               'can be ranked against policy. This is usually a transient Geotab '+
+               'error — reload to retry.');
+        });
+
+        function withEventPeaks(events, eventPeak){
+
+        var vehName={}, office={}, devTz={};
         devices.forEach(function(d){
           vehName[d.id]=d.name||d.id;
+          devTz[d.id]=d.timeZoneId||null;      // the DRIVER's clock, not the viewer's
           (d.groups||[]).forEach(function(g){ if(LEAF[g.id]) office[d.id]=LEAF[g.id]; });
         });
         var uname={};
@@ -487,7 +580,7 @@ geotab.addin.topSpeed = function () {
           }
           return null;
         }
-        var unmatchedEvents=0, eventTripDriver={};
+        var unmatchedEvents=0, eventTripDriver={}, bestEvent={};
         events.forEach(function(e){
           var d=(e.device||{}).id, when=e.activeFrom;
           var t = (d && when) ? tripAt(d, when) : null;
@@ -497,8 +590,22 @@ geotab.addin.topSpeed = function () {
           // none — the trip knows who was behind the wheel even when the event
           // record doesn't, so this recovers attribution rather than losing it.
           var who = drvId(t) || drvId(e);
-          if(who) eventTripDriver[who] = (eventTripDriver[who]||0) + 1;
-          else unmatchedEvents++;
+          if(!who){ unmatchedEvents++; return; }
+          eventTripDriver[who] = (eventTripDriver[who]||0) + 1;
+
+          // TIER A. The speed that counts is the fastest moment inside THIS
+          // event, and the event id travels with it so a manager clicking the
+          // dot lands on the very incident the number came from.
+          var ep = eventPeak[e.id];
+          var m = mph(ep ? ep.speed : 0);
+          var cur = bestEvent[who];
+          if(m > 0 && (!cur || m > cur.mph)){
+            bestEvent[who] = {mph:m, eventId:e.id, deviceId:d, trip:t,
+                              at:(ep && ep.at) || e.activeFrom,
+                              from:e.activeFrom, to:e.activeTo,
+                              seconds: Math.max(0, Math.round(
+                                (new Date(e.activeTo) - new Date(e.activeFrom))/1000))};
+          }
         });
 
         // Peak speed + miles per driver. Peak only counts trips that actually
@@ -509,29 +616,79 @@ geotab.addin.topSpeed = function () {
           var mi=(t.distance||0)*KMH_TO_MPH;
           if(!id){ noDriverTrips++; noDriverMiles+=mi; return; }
           var rec = by[id] || (by[id]={driverId:id, name:uname[id]||id, office:null,
-            peak:0, events:0, miles:0, peakVeh:'—', peakDeviceId:null, peakTripEvents:0,
-            peakDayLabel:'—', peakDayStart:null, peakDayEnd:null, unflaggedPeak:0});
+            peak:0, tier:null, events:0, miles:0, peakVeh:'—', peakDeviceId:null,
+            peakTripEvents:0, peakDayLabel:'—', peakDayStart:null, peakDayEnd:null,
+            unflaggedPeak:0, eventId:null, atISO:null, tz:null, seconds:0, absTrip:null});
           rec.miles += mi;
           var did=(t.device||{}).id;
           if(did && !rec.office && office[did]) rec.office=office[did];
           var m = mph(t.maximumSpeed||0);
-          if(m > rec.unflaggedPeak) rec.unflaggedPeak = m;   // kept only to disclose
-          if(t.__ev > 0 && m > rec.peak){
-            rec.peak=m;
-            rec.peakTripEvents=t.__ev;
-            rec.peakVeh=vehName[did]||did||'—';
-            rec.peakDeviceId=did;
-            var when=new Date(t.start||t.stop||startISO);
-            rec.peakDayLabel=dayLabel(when);
-            var s=new Date(when.getFullYear(),when.getMonth(),when.getDate());
-            rec.peakDayStart=s.toISOString();
-            rec.peakDayEnd=new Date(s.getFullYear(),s.getMonth(),s.getDate()+1).toISOString();
+          if(m > rec.unflaggedPeak) rec.unflaggedPeak = m;
+          // TIER B candidate: 90+ at any instant counts even with no event
+          // behind it, so hold the trip — its exact moment is resolved after.
+          if(m >= TERM_MPH && (!rec.absTrip || m > mph(rec.absTrip.maximumSpeed||0))){
+            rec.absTrip = t;
           }
         });
         Object.keys(eventTripDriver).forEach(function(id){
           if(by[id]) by[id].events = eventTripDriver[id];
         });
 
+        // Fold in the corroborated Tier A figure, then let Tier B override only
+        // when it is genuinely higher — a 90+ instant outranks a slower event.
+        Object.keys(by).forEach(function(id){
+          var rec=by[id], be=bestEvent[id];
+          if(be){
+            rec.peak=be.mph; rec.tier=TIER_A; rec.eventId=be.eventId;
+            rec.peakDeviceId=be.deviceId; rec.peakVeh=vehName[be.deviceId]||be.deviceId||'—';
+            rec.tz=devTz[be.deviceId]||null; rec.seconds=be.seconds; rec.atISO=be.at;
+            rec.peakTripEvents=be.trip.__ev||0;
+            var w=new Date(be.trip.start||be.from);
+            rec.peakDayLabel=dayLabel(w);
+            var d0=new Date(w.getFullYear(),w.getMonth(),w.getDate());
+            rec.peakDayStart=d0.toISOString();
+            rec.peakDayEnd=new Date(d0.getFullYear(),d0.getMonth(),d0.getDate()+1).toISOString();
+          }
+          var absM = rec.absTrip ? mph(rec.absTrip.maximumSpeed||0) : 0;
+          if(absM >= TERM_MPH && absM > rec.peak){
+            var t2=rec.absTrip, d2=(t2.device||{}).id;
+            rec.peak=absM; rec.tier=TIER_B; rec.eventId=null;
+            rec.peakDeviceId=d2; rec.peakVeh=vehName[d2]||d2||'—';
+            rec.tz=devTz[d2]||null; rec.seconds=0; rec.peakTripEvents=t2.__ev||0;
+            var w2=new Date(t2.start||startISO);
+            rec.peakDayLabel=dayLabel(w2);
+            var d3=new Date(w2.getFullYear(),w2.getMonth(),w2.getDate());
+            rec.peakDayStart=d3.toISOString();
+            rec.peakDayEnd=new Date(d3.getFullYear(),d3.getMonth(),d3.getDate()+1).toISOString();
+          }
+        });
+
+        // TIER B moments. Only trips that already touched 90+ qualify, so this
+        // is a handful of calls, not one per driver. Without it a 90+ dot could
+        // name a day but not an instant — and a time is the whole point.
+        var needTime=[];
+        Object.keys(by).forEach(function(id){
+          var r=by[id];
+          if(r.tier===TIER_B && r.absTrip && r.absTrip.start && r.absTrip.stop) needTime.push(r);
+        });
+        if(needTime.length){
+          api.multiCall(needTime.map(function(r){
+            return ['Get',{typeName:'LogRecord', resultsLimit:20000,
+              search:{fromDate:r.absTrip.start, toDate:r.absTrip.stop,
+                      deviceSearch:{id:(r.absTrip.device||{}).id}}}];
+          }), function(sets){
+            (sets||[]).forEach(function(rows, i){
+              var best=0, at=null;
+              (rows||[]).forEach(function(x){
+                if((x.speed||0)>best){ best=x.speed||0; at=x.dateTime; }
+              });
+              if(at) needTime[i].atISO = at;
+            });
+            finish();
+          }, function(){ finish(); });   // a missing instant is not worth failing over
+        } else { finish(); }
+
+        function finish(){
         var all=Object.keys(by).map(function(k){ return by[k]; });
         var rows=all.filter(function(r){ return r.peak>0; })
                     .sort(function(a,b){ return b.peak-a.peak; });
@@ -555,6 +712,8 @@ geotab.addin.topSpeed = function () {
                noDriverEvents:unmatchedEvents, unflagged:unflagged};
         buildOfficeOptions(rows);
         applyFilter();
+        }   // finish
+        }   // withEventPeaks
       }, function(err){ fail('Error loading speeding events: '+esc(err)); });
     }, function(err){ fail('Error loading data: '+esc(err)); });
   }
