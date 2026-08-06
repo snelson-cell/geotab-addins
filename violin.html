@@ -200,8 +200,8 @@ geotab.addin.speedingViolin = function () {
   // any window that comes back at the cap.
   var PAGE_CAP = 25000;
 
-  // Tier boundaries are POLICY, not a description of the data: they are fixed so
-  // "High" means the same thing to every viewer regardless of data scope, and
+  // Band boundaries are POLICY, not a description of the data: they are fixed so
+  // "Coaching review" means the same thing to every viewer regardless of scope, and
   // comparable month over month. They were derived from the fleet median / p80
   // on 2026-07-30. This database is young, so they WILL drift — checkDrift()
   // below recomputes the empirical median/p80 on every render and says so out
@@ -210,7 +210,41 @@ geotab.addin.speedingViolin = function () {
   var LO = 10, HI = 40;
   var TIERS_DERIVED_ON = '2026-07-30';
 
-  var ACTION = 'Vehicles above ' + HI + ' events per 1,000 mi are flagged for coaching review.';
+  // Band names describe the MEASUREMENT and the next step, never the driver.
+  //
+  // These replaced Safe / Watch / High risk on 2026-08-06. Two reasons, and the
+  // second is the one that matters:
+  //
+  //  1. "High risk" characterises a person in a record that is discoverable.
+  //     Naming the process instead ("coaching review") states what happens next
+  //     — a fact about our workflow, not a conclusion about a technician.
+  //     "Safe" was the same problem pointed the other way: a vehicle at 9
+  //     events per 1,000 mi is still speeding regularly, it is just under the
+  //     fleet's own line, and we should never appear to certify that as safe.
+  //  2. There were four names for one band — zone "HIGH RISK", KPI "High risk",
+  //     table "High", tooltip "High" — against an action banner that already
+  //     said "flagged for coaching review". Now every surface reads from here.
+  //
+  // Numbered levels (Level 1/2/3) were considered and rejected: numbers carry no
+  // inherent direction (a Level 1 trauma centre is the best one, a Category 1
+  // hurricane the weakest), so they force every viewer to learn a mapping.
+  //
+  // Renaming is not legal protection and must not be treated as such — discovery
+  // gets these definitions too. What protects the company is that a flag here is
+  // reliably followed by documented coaching.
+  // ink is the accessible text colour for each band (the fill colours in C are
+  // too light to read against). Kept here so a name and its colour can never
+  // drift apart across the six places a band is written.
+  var TIERS = {
+    low:  {name:'Within target',   zone:'WITHIN TARGET',   ink:'#0a6b18'},
+    mod:  {name:'Monitor',         zone:'MONITOR',         ink:'#7a5300'},
+    high: {name:'Coaching review', zone:'COACHING REVIEW', ink:'#9b2626'}
+  };
+
+  // "at or above": tierOf() tests >= HI, and the old wording ("above 40") did
+  // not match the code or the KPI card sitting directly above it.
+  var ACTION = 'Vehicles at or above ' + HI + ' events per 1,000 mi are flagged '+
+               'for coaching review.';
 
   // Which Geotab rule counts as "speeding". Resolved at runtime rather than
   // hardcoded: a rule deleted in MyGeotab takes its exception events with it and
@@ -337,7 +371,7 @@ geotab.addin.speedingViolin = function () {
       (one ? ' &middot; fleet '+fmt(fleet.median) : '')+'</span>'));
 
     // 2. The number that drives action.
-    cards.push(kpi('High risk', C.critical,
+    cards.push(kpi(TIERS.high.name, C.critical,
       String(stats.counts.high),
       false,
       'vehicles at or above '+HI+' &middot; <span class="muted">'+
@@ -449,20 +483,30 @@ geotab.addin.speedingViolin = function () {
       {name:'Vehicle (no driver assigned)', data:noDrv}
     ];
 
-    // Zones carry the risk read. Labels are kept short so they fit inside a
-    // narrow band; the numeric boundaries live in the legend strip above, where
-    // each status colour is paired with its text (a status colour must never
-    // carry meaning by hue alone).
-    function zone(x, x2, color, opacity, text, ink){
+    // Zones carry the risk read. The numeric boundaries live in the legend strip
+    // above, where each status colour is paired with its text (a status colour
+    // must never carry meaning by hue alone).
+    //
+    // A zone label is DROPPED when its band is too narrow to hold it, rather
+    // than allowed to run into the next band. The within-target band is only
+    // LO/visMax of the plot — a tenth of it at a 100 axis — so on a narrow pane
+    // even the old three-letter "SAFE" overprinted "WATCH" and read as
+    // "SAFEWATCH". The legend always carries the full names, so nothing is lost.
+    var plotW = Math.max(120, avail - GUTTER - 18);
+    function zone(x, x2, color, opacity, key){
+      var t = TIERS[key];
+      // ~0.62em average advance for bold uppercase at 10.5px, plus the 7px
+      // inset and a little breathing room before the next band's label.
+      var fits = ((x2 - x) / visMax) * plotW >= t.zone.length*6.6 + 16;
       return {x:x, x2:x2, fillColor:color, opacity:opacity, borderWidth:0,
-        label:{text:text, orientation:'horizontal', position:'top', offsetY:-6,
+        label:{text: fits ? t.zone : '', orientation:'horizontal', position:'top', offsetY:-6,
           textAnchor:'start', offsetX:7, borderWidth:0,
-          style:{background:'transparent', color:ink, fontSize:'10.5px', fontWeight:700}}};
+          style:{background:'transparent', color:t.ink, fontSize:'10.5px', fontWeight:700}}};
     }
     var zones = [
-      zone(0, Math.min(LO,visMax), C.good, 0.07, 'SAFE', '#0a6b18'),
-      zone(Math.min(LO,visMax), Math.min(HI,visMax), C.warning, 0.11, 'WATCH', '#7a5300'),
-      zone(Math.min(HI,visMax), visMax, C.critical, 0.09, 'HIGH RISK', '#9b2626')
+      zone(0, Math.min(LO,visMax), C.good, 0.07, 'low'),
+      zone(Math.min(LO,visMax), Math.min(HI,visMax), C.warning, 0.11, 'mod'),
+      zone(Math.min(HI,visMax), visMax, C.critical, 0.09, 'high')
     ];
     // The empirical benchmark, drawn on top of the policy zones. Left unlabelled
     // in-plot — near the low end it lands on the axis ticks — and named in the
@@ -528,8 +572,7 @@ geotab.addin.speedingViolin = function () {
         padding:{left:GUTTER, right:18, top:8} },
       tooltip:{ custom:function(o){
         var p = o.w.config.series[o.seriesIndex].data[o.dataPointIndex];
-        var t = tierOf(p.rate), tName = t==='high'?'High':t==='mod'?'Watch':'Safe';
-        var tCol = t==='high'?'#9b2626':t==='mod'?'#7a5300':'#0a6b18';
+        var t = tierOf(p.rate), tName = TIERS[t].name, tCol = TIERS[t].ink;
         return '<div style="padding:8px 11px;font-size:12px;line-height:1.5">'+
           '<b>'+esc(p.veh)+'</b> &middot; '+esc(p.office)+'<br>'+
           (p.drv ? '<span style="color:#52514e">current driver:</span> '+esc(p.drv)
@@ -544,9 +587,12 @@ geotab.addin.speedingViolin = function () {
     chart.render();
 
     el('sv-legend').innerHTML =
-      '<span><i class="sv-swatch zone" style="background:'+C.good+'"></i>Safe &mdash; under '+LO+'</span>'+
-      '<span><i class="sv-swatch zone" style="background:'+C.warning+'"></i>Watch &mdash; '+LO+' to '+(HI-1)+'</span>'+
-      '<span><i class="sv-swatch zone" style="background:'+C.critical+'"></i>High risk &mdash; '+HI+' and above</span>'+
+      '<span><i class="sv-swatch zone" style="background:'+C.good+'"></i>'+
+        TIERS.low.name+' &mdash; under '+LO+'</span>'+
+      '<span><i class="sv-swatch zone" style="background:'+C.warning+'"></i>'+
+        TIERS.mod.name+' &mdash; '+LO+' to '+(HI-1)+'</span>'+
+      '<span><i class="sv-swatch zone" style="background:'+C.critical+'"></i>'+
+        TIERS.high.name+' &mdash; '+HI+' and above</span>'+
       '<span class="sv-sep"></span>'+
       '<span><i class="sv-swatch filled"></i>Vehicle &mdash; driver assigned</span>'+
       '<span><i class="sv-swatch hollow"></i>Vehicle &mdash; no driver assigned</span>'+
@@ -586,9 +632,10 @@ geotab.addin.speedingViolin = function () {
 
   function renderTable(rows){
     var head = '<table class="sv-t"><thead><tr><th>Vehicle</th><th>Office</th><th>Driver</th>'+
-      '<th style="text-align:right">Miles</th><th style="text-align:right">Rate</th><th>Tier</th></tr></thead><tbody>';
+      '<th style="text-align:right">Miles</th><th style="text-align:right">Rate</th>'+
+      '<th>Status</th></tr></thead><tbody>';
     var body = rows.map(function(r){
-      var t = tierOf(r.rate), tName = t==='high'?'High':t==='mod'?'Watch':'Safe';
+      var t = tierOf(r.rate), tName = TIERS[t].name;
       var tCol = t==='high'?C.critical:t==='mod'?C.warning:C.good;
       return '<tr class="clickable" data-id="'+esc(r.id)+'">'+
         '<td class="veh">'+esc(r.veh)+'</td><td>'+esc(r.office)+'</td>'+
@@ -607,11 +654,10 @@ geotab.addin.speedingViolin = function () {
 
   function exportCsv(){
     if(!lastRows.length) return;
-    var lines = [['Vehicle','Office','Driver','Miles','Events per 1000 mi','Tier','Window (days)'].join(',')];
+    var lines = [['Vehicle','Office','Driver','Miles','Events per 1000 mi','Status','Window (days)'].join(',')];
     lastRows.forEach(function(r){
-      var t = tierOf(r.rate);
       lines.push([r.veh, r.office, r.drv||'unassigned', Math.round(r.miles), fmt(r.rate),
-        t==='high'?'High':t==='mod'?'Watch':'Safe', days]
+        TIERS[tierOf(r.rate)].name, days]
         .map(function(v){ return '"'+String(v).replace(/"/g,'""')+'"'; }).join(','));
     });
     try {
@@ -942,11 +988,11 @@ geotab.addin.speedingViolin = function () {
     var drift = checkDrift(fleet);
     if(drift && !stale){
       note('sv-warn','sv-note--warn',
-        '<b>Tier thresholds look stale.</b> '+Math.round(drift.share*100)+
-        '% of vehicles now fall in a single tier, so the bands no longer separate anything. '+
+        '<b>Band thresholds look stale.</b> '+Math.round(drift.share*100)+
+        '% of vehicles now fall in a single band, so the bands no longer separate anything. '+
         'They were derived on '+TIERS_DERIVED_ON+'; this window’s median is '+fmt(fleet.median)+
         ' and p80 is '+fmt(fleet.p80)+', suggesting <b>LO='+drift.lo+', HI='+drift.hi+'</b>. '+
-        'Update <code>LO</code>/<code>HI</code> in violin.html and the tier note in README.md.');
+        'Update <code>LO</code>/<code>HI</code> in violin.html and the band note in README.md.');
     }
   }
 

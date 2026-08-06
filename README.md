@@ -83,9 +83,29 @@ Do not tell anyone a change is live on the strength of a string match.
 ## Design conventions
 
 - **Chart library:** ApexCharts (CDN). Keep it consistent across add-ins.
-- **Speeding-risk tiers (fleet-wide, fixed):** Safe `<10`, Watch `10–39`,
-  High risk `≥40` events/1,000 mi (fleet median / 80th percentile, derived
-  2026-07-30). Status colors: high `#d03b3b`, watch `#fab219`, safe `#0ca30c`.
+- **Speeding-risk bands (fleet-wide, fixed):** Within target `<10`, Monitor
+  `10–39`, Coaching review `≥40` events/1,000 mi (fleet median / 80th
+  percentile, derived 2026-07-30). Colors: high `#d03b3b`, watch `#fab219`,
+  safe `#0ca30c` (the internal keys stay `high`/`mod`/`low`).
+- **Band names describe the measurement and the next step, never the driver.**
+  Renamed from Safe / Watch / High risk on 2026-08-06. "High risk" characterises
+  a *person* in a record that is discoverable; "Coaching review" states what
+  happens next, which is a fact about our workflow. "Safe" was the same problem
+  inverted — a vehicle at 9 events/1,000 mi is still speeding regularly, it is
+  just under the fleet's own line, and we should never appear to certify that.
+  Numbered levels (Level 1/2/3) were considered and rejected: numbers carry no
+  inherent direction (a Level 1 trauma centre is the best one, a Category 1
+  hurricane the weakest), so they force every viewer to learn a mapping.
+  **This is not legal protection** — discovery gets the definitions too. What
+  protects the company is a flag here being followed by *documented* coaching.
+  All six surfaces read from the single `TIERS` object; before the rename there
+  were four names for one band (zone "HIGH RISK", KPI "High risk", table "High",
+  tooltip "High") against a banner that already said "coaching review".
+- **A zone label is dropped when its band is too narrow to hold it.** The
+  within-target band is only `LO/visMax` of the plot — a tenth of it on a 100
+  axis — so on a narrow pane even the old three-letter "SAFE" overprinted
+  "WATCH" and read as "SAFEWATCH". `zone()` measures and omits; the legend
+  always carries the full names, so nothing is lost.
   ⚠️ **These were derived from truncated data** — see the 25,000-row cap below.
   The true 30-day fleet median is `5.6` and p80 `27.8`, not the `8.1`/`35.8`
   they came from, so both bands sit more leniently than intended. `checkDrift()`
@@ -127,19 +147,20 @@ Do not tell anyone a change is live on the strength of a string match.
   immediate termination. These superseded an earlier "85+ is termination"
   wording, so re-confirm with her before trusting them long-term. Percentile
   bands (as in `violin.html`) are the fallback for when no policy exists.
-- **Thresholds are policy; statistics are description.** The tiers are *fixed*
-  so "High risk" means the same thing to every viewer regardless of data scope,
-  and stays comparable month over month. The fleet-median line and per-office
-  median markers are computed live and move with the data. Don't blur the two.
-- **This database is young, so the tiers will go stale — but not silently.**
+- **Thresholds are policy; statistics are description.** The bands are *fixed*
+  so "Coaching review" means the same thing to every viewer regardless of data
+  scope, and stays comparable month over month. The fleet-median line and
+  per-office median markers are computed live and move with the data. Don't
+  blur the two.
+- **This database is young, so the bands will go stale — but not silently.**
   `checkDrift()` recomputes the empirical median/p80 on every render and raises
   a visible banner with re-derived values once ≥85% of vehicles land in one
-  tier. When it fires, update `LO`/`HI` in `violin.html` **and** this section.
-- **Tiers are calibrated to a specific rule** — currently `RulePostedSpeedingId`
+  band. When it fires, update `LO`/`HI` in `violin.html` **and** this section.
+- **Bands are calibrated to a specific rule** — currently `RulePostedSpeedingId`
   ("Speeding"). They are *not* transferable: the retired `RuleGpsSpeedingWindowId`
-  fired ~4× as often, which is why the old tiers were `<80 / 80–249 / ≥250`.
-- **Tier is encoded by background zone, never by dot color.** Tier is a pure
-  function of x-position, so coloring the dots by tier spends the only free
+  fired ~4× as often, which is why the old bands were `<80 / 80–249 / ≥250`.
+- **Band is encoded by background zone, never by dot color.** Band is a pure
+  function of x-position, so coloring the dots by band spends the only free
   visual channel restating the axis. It also can't be made accessible: red↔green
   measures ΔE 2.8 under protanopia (validated, target ≥8) — no hex choice fixes
   that, because red and green *are* the confusion axis. Large labelled regions
