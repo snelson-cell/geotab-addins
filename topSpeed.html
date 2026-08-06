@@ -236,7 +236,9 @@ geotab.addin.topSpeed = function () {
     if(tier===TIER_NONE) return 'ok';
     return m>=TERM_MPH ? 'term' : (m>=FINAL_MPH ? 'final' : 'ok');
   }
-  function bandName(b){ return b==='term'?'Flagged &mdash; '+TERM_MPH+'+':b==='final'?'Final written warning':'Under policy'; }
+  // A literal character, not an entity: this string is passed through esc()
+  // before it reaches the DOM, so "&mdash;" would render as text.
+  function bandName(b){ return b==='term'?'Flagged \u2014 '+TERM_MPH+'+':b==='final'?'Final written warning':'Under policy'; }
   function bandColor(b){ return b==='term'?C.critical:b==='final'?C.warning:C.good; }
   function ymd(d){
     return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
@@ -270,12 +272,20 @@ geotab.addin.topSpeed = function () {
   }
 
   // ── Hero + KPIs ──────────────────────────────────────────────────────────
+  // "Speed demon" over a driver who is inside policy is a slur the data does not
+  // support — and on a page that feeds written warnings, the label has to match
+  // the finding. Reserve it for someone actually over the line.
+  function heroLabel(top){
+    var b = bandOf(top.peak, top.tier);
+    return (b==='ok') ? 'Fastest in range' : 'Speed demon';
+  }
+
   function renderHero(top, rangeLabel){
     var h=el('ts-hero');
     if(!top){ h.className='ts-hero'; return; }
     h.className='ts-hero on';
     h.innerHTML =
-      '<div><div class="ts-hero-label">Speed demon &middot; '+esc(rangeLabel)+'</div>'+
+      '<div><div class="ts-hero-label">'+esc(heroLabel(top))+' &middot; '+esc(rangeLabel)+'</div>'+
       '<div class="ts-hero-name">'+esc(top.name)+'</div>'+
       '<div class="ts-hero-meta">'+esc(top.office||'no office')+' &middot; '+esc(top.peakVeh)+
       ' &middot; '+esc(top.peakDayLabel)+' &middot; '+top.events+' speeding event'+
@@ -393,9 +403,11 @@ geotab.addin.topSpeed = function () {
           '<b>'+esc(r.name)+'</b> &middot; '+esc(r.office||'no office')+'<br>'+
           '<b>'+f1(r.peak)+' mph</b> <span style="color:#898781">in '+esc(r.peakVeh)+
           ' on '+esc(r.peakDayLabel)+'</span><br>'+
-          '<span style="color:#898781">at <b style="color:#0b0b0b">'+
-            esc(localTime(r.atISO, r.tz))+'</b> '+esc(localZoneLabel(r.tz))+
-            ' &middot; the driver&rsquo;s local time</span><br>'+
+          (r.atISO
+            ? '<span style="color:#898781">at <b style="color:#0b0b0b">'+
+              esc(localTime(r.atISO, r.tz))+'</b> '+esc(localZoneLabel(r.tz))+
+              ' &middot; the driver&rsquo;s local time</span><br>'
+            : '')+
           (r.tier===TIER_A
             ? '<span style="color:#898781">measured inside a speeding event lasting '+
               r.seconds+'s</span><br>'
@@ -664,7 +676,22 @@ geotab.addin.topSpeed = function () {
           var did=(t.device||{}).id;
           if(did && !rec.office && office[did]) rec.office=office[did];
           var m = mph(t.maximumSpeed||0);
-          if(m > rec.unflaggedPeak) rec.unflaggedPeak = m;
+          if(m > rec.unflaggedPeak){
+            // Remember WHERE this peak happened. Without it an uncorroborated
+            // row renders "— on —" with no vehicle and no date. There is no
+            // exact instant — that needs LogRecord, which is deliberately not
+            // spent below the policy line — so atISO stays null and the tooltip
+            // omits the time rather than inventing one.
+            rec.unflaggedPeak = m;
+            rec.unflaggedVeh = vehName[did]||did||'—';
+            rec.unflaggedDeviceId = did;
+            rec.unflaggedTz = did ? devTz[did] : null;
+            var uw = new Date(t.start||t.stop||startISO);
+            rec.unflaggedDayLabel = dayLabel(uw);
+            var us = new Date(uw.getFullYear(),uw.getMonth(),uw.getDate());
+            rec.unflaggedDayStart = us.toISOString();
+            rec.unflaggedDayEnd = new Date(us.getFullYear(),us.getMonth(),us.getDate()+1).toISOString();
+          }
           // TIER B candidate: 90+ at any instant counts even with no event
           // behind it, so hold the trip — its exact moment is resolved after.
           if(m >= TERM_MPH && (!rec.absTrip || m > mph(rec.absTrip.maximumSpeed||0))){
@@ -698,7 +725,12 @@ geotab.addin.topSpeed = function () {
           if(!be && rec.unflaggedPeak > 0 && rec.events > 0){
             rec.peak = rec.unflaggedPeak;
             rec.tier = TIER_NONE;
-            rec.peakDeviceId = rec.peakDeviceId || null;
+            rec.peakVeh = rec.unflaggedVeh || '—';
+            rec.peakDeviceId = rec.unflaggedDeviceId || null;
+            rec.tz = rec.unflaggedTz || null;
+            rec.peakDayLabel = rec.unflaggedDayLabel || '—';
+            rec.peakDayStart = rec.unflaggedDayStart || null;
+            rec.peakDayEnd = rec.unflaggedDayEnd || null;
           }
 
           var absM = rec.absTrip ? mph(rec.absTrip.maximumSpeed||0) : 0;
