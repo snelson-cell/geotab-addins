@@ -5,79 +5,600 @@
 <!-- ApexCharts from CDN. If your MyGeotab blocks it (blank chart), see INSTALL.md
      "Troubleshooting" to inline the library instead. -->
 <script src="https://cdn.jsdelivr.net/npm/apexcharts@3.49.1/dist/apexcharts.min.js"></script>
-<style>
-  #fbt-wrap{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:16px;color:#1a2b45;}
-  #fbt-wrap h2{font-size:16px;font-weight:600;margin:0;}
-  #fbt-sub{font-size:12.5px;color:#8a97a8;margin:2px 0 4px;}
-  #fbt-chart{max-width:760px;}
-</style>
 </head>
 <body>
-<div id="fbt-wrap">
-  <h2>Fleet by Vehicle Type</h2>
-  <div id="fbt-sub">Loading…</div>
-  <div id="fbt-chart"></div>
+<div id="fbt-root">
+  <div class="fbt-topbar">
+    <div>
+      <h2 class="fbt-h1">Fleet by location</h2>
+      <div class="fbt-scope" id="fbt-scope">Loading…</div>
+    </div>
+  </div>
+
+  <div class="fbt-note" id="fbt-stop"></div>
+
+  <div class="fbt-kpis" id="fbt-kpis"></div>
+
+  <div class="fbt-chartcard">
+    <div class="fbt-legend" id="fbt-legend"></div>
+    <div id="fbt-chart"></div>
+  </div>
+  <div class="fbt-foot" id="fbt-foot"></div>
+
+  <div class="fbt-tablehead">
+    <div class="fbt-tabletitle" id="fbt-tabletitle">Every vehicle</div>
+    <div class="fbt-tools">
+      <button type="button" id="fbt-clear" style="display:none">Clear filter</button>
+      <button type="button" id="fbt-models">Show models</button>
+      <button type="button" id="fbt-toggle">Show vehicles</button>
+      <button type="button" id="fbt-csv">Export CSV</button>
+    </div>
+  </div>
+  <div class="fbt-tablewrap" id="fbt-modelwrap"></div>
+  <div class="fbt-tablewrap" id="fbt-tablewrap"></div>
 </div>
 
 <script>
-// Register the add-in. The name ("fleetByType") is arbitrary but must be unique.
+// Register the add-in. The name ("fleetByType") is arbitrary but must be unique,
+// and must NOT change — the installed MyGeotab add-in config references it, as it
+// does this file's URL. Renaming either breaks the install for every user.
 geotab.addin.fleetByType = function () {
   'use strict';
-  var chart = null;
 
-  function cleanLabel(mk, md) {
-    if (!md) return null;
-    md = md.replace(/\s+Truck$/, '').trim();
-    // Ram etc. decode to a bare series number -> prefix the make
-    if (/^\d+$/.test(md) && mk) return mk + ' ' + md;
-    return mk ? mk + ' ' + md : md;
+  // MyGeotab does not apply a <style> block from this file's <head> — the add-in
+  // HTML is injected into the host page and the head is dropped, which leaves the
+  // dashboard unstyled while the chart (ApexCharts injects its own CSS from JS)
+  // renders fine. So the stylesheet ships as a string and is injected the same
+  // way. Do not move this back into <head>.
+  var STYLE_ID = 'fbt-styles';
+  var CSS = [
+    '/* Light surface only, on purpose: this renders inside MyGeotab\'s light',
+    '   chrome and has no independent theme context to respond to. */',
+    '#fbt-root{',
+    '  --surface-1:#fcfcfb; --page:#f9f9f7;',
+    '  --ink-1:#0b0b0b; --ink-2:#52514e; --ink-3:#898781;',
+    '  --grid:#e1e0d9; --axis:#c3c2b7; --hairline:rgba(11,11,11,.10);',
+    '  --owned:#2a78d6; --rental:#eb6834; --unknown:#898781;',
+    '  --critical-ink:#9b2626;',
+    '  font-family:system-ui,-apple-system,"Segoe UI",sans-serif;',
+    '  color:var(--ink-1); background:var(--page); padding:18px 20px 28px; width:100%;',
+    '}',
+    '#fbt-root, #fbt-root *{box-sizing:border-box;}',
+    '.fbt-h1{font-size:19px;font-weight:650;margin:0;letter-spacing:-.01em;}',
+    '.fbt-scope{font-size:12.5px;color:var(--ink-3);margin:3px 0 0;}',
+    '.fbt-topbar{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:12px;}',
+    '',
+    '.fbt-note{font-size:12.5px;border-radius:7px;padding:9px 12px;margin:12px 0 0;display:none;',
+    '  border:1px solid var(--hairline);background:var(--surface-1);color:var(--ink-2);}',
+    '.fbt-note.on{display:block;}',
+    '.fbt-note--stop{background:#fbece8;border-color:#f0cfc7;color:var(--critical-ink);}',
+    '',
+    '.fbt-kpis{display:flex;flex-wrap:wrap;gap:12px;margin:14px 0 0;}',
+    '.fbt-kpi{flex:1 1 200px;min-width:0;background:var(--surface-1);border:1px solid var(--hairline);',
+    '  border-radius:9px;padding:13px 15px 14px;}',
+    '.fbt-kpi-label{font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;',
+    '  color:var(--ink-3);display:flex;align-items:center;gap:5px;}',
+    // Proportional figures on the big number, per the house type rules; tabular
+    // is reserved for columns that must align vertically (the tables below).
+    '.fbt-kpi-value{font-size:29px;font-weight:640;line-height:1.12;margin:7px 0 0;letter-spacing:-.02em;}',
+    '.fbt-kpi-value.sm{font-size:21px;}',
+    '.fbt-kpi-sub{font-size:12px;color:var(--ink-2);margin:4px 0 0;line-height:1.4;}',
+    '.fbt-kpi-sub .muted{color:var(--ink-3);}',
+    '.fbt-dot{width:8px;height:8px;border-radius:50%;display:inline-block;flex:none;}',
+    '',
+    '.fbt-chartcard{background:var(--surface-1);border:1px solid var(--hairline);border-radius:9px;',
+    // overflow MUST stay visible — see the same note in violin.html. A scroll
+    // container here makes the ApexCharts tooltip resize the box under the
+    // cursor, which dismisses the tooltip and makes hovering feel broken.
+    '  margin:14px 0 0;padding:14px 4px 6px;overflow:visible;}',
+    '.fbt-legend{display:flex;flex-wrap:wrap;gap:16px;padding:0 14px 6px;font-size:12px;color:var(--ink-2);}',
+    '.fbt-legend span{display:inline-flex;align-items:center;gap:6px;}',
+    '.fbt-swatch{width:11px;height:11px;border-radius:3px;flex:none;}',
+    '#fbt-chart{min-width:340px;}',
+    '@media (max-width:700px){',
+    '  #fbt-root{padding:14px 12px 22px;}',
+    '  .fbt-kpi-value{font-size:25px;}',
+    '  .fbt-legend{gap:10px;font-size:11.5px;}',
+    '}',
+    '',
+    '.fbt-foot{font-size:12px;color:var(--ink-3);margin:10px 2px 0;line-height:1.55;}',
+    '.fbt-foot b{color:var(--ink-2);font-weight:600;}',
+    '',
+    '.fbt-tablehead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:20px 0 0;}',
+    '.fbt-tabletitle{font-size:14px;font-weight:650;}',
+    '.fbt-tools{display:flex;flex-wrap:wrap;gap:8px;}',
+    '.fbt-tools button{font:inherit;font-size:12.5px;font-weight:600;color:var(--ink-2);',
+    '  background:var(--surface-1);border:1px solid var(--axis);border-radius:6px;padding:5px 11px;cursor:pointer;}',
+    '.fbt-tools button.on{border-color:var(--owned);color:var(--owned);}',
+    '.fbt-tablewrap{margin:9px 0 0;border:1px solid var(--hairline);border-radius:9px;',
+    '  background:var(--surface-1);display:none;overflow-x:auto;}',
+    '.fbt-tablewrap.on{display:block;}',
+    'table.fbt-t{border-collapse:collapse;width:100%;font-size:12.5px;font-variant-numeric:tabular-nums;}',
+    'table.fbt-t th{position:sticky;top:0;background:var(--surface-1);text-align:left;font-size:10.5px;',
+    '  letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);padding:9px 12px;',
+    '  border-bottom:1px solid var(--grid);white-space:nowrap;z-index:1;}',
+    'table.fbt-t td{padding:8px 12px;border-bottom:1px solid var(--grid);color:var(--ink-2);white-space:nowrap;}',
+    'table.fbt-t tr:last-child td{border-bottom:0;}',
+    'table.fbt-t td.veh{color:var(--ink-1);font-weight:600;}',
+    'table.fbt-t td.num{text-align:right;}',
+    'table.fbt-t td.zero{color:#c9c7c0;}',
+    'table.fbt-t tr.tot td{font-weight:700;color:var(--ink-1);border-top:1px solid var(--axis);}',
+    '.fbt-own{display:inline-flex;align-items:center;gap:6px;font-weight:600;}'
+  ].join('\n');
+  function injectStyles(){
+    if(document.getElementById(STYLE_ID)) return;
+    var s = document.createElement('style');
+    s.id = STYLE_ID; s.textContent = CSS;
+    document.head.appendChild(s);
   }
 
-  function render(rows, total) {
-    var el = document.getElementById('fbt-chart');
-    if (chart) { chart.destroy(); }
-    chart = new ApexCharts(el, {
-      chart: { type: 'bar', height: Math.max(320, rows.length * 40), toolbar: { show: false },
-               fontFamily: 'inherit', animations: { speed: 500 } },
-      series: [{ name: 'Vehicles', data: rows.map(function (r) { return r[1]; }) }],
-      xaxis: { categories: rows.map(function (r) { return r[0]; }) },
-      plotOptions: { bar: { horizontal: true, distributed: true, barHeight: '80%', isFunnel: true } },
-      colors: ['#1f5fb8','#2b7de9','#3f8bec','#5199ef','#63a6f1','#78b4f4',
-               '#8ec2f6','#a6d0f9','#bcdcfb','#d0e6fc','#e2f0fe','#eef6ff'],
-      dataLabels: { enabled: true,
-        formatter: function (val, opt) { return opt.w.globals.labels[opt.dataPointIndex] + ':  ' + val; },
-        style: { fontSize: '13px', fontWeight: 600, colors: ['#0e2036'] } },
-      legend: { show: false }, grid: { show: false }, yaxis: { labels: { show: false } },
-      tooltip: { y: { formatter: function (v) { return v + ' (' + (v / total * 100).toFixed(1) + '% of fleet)'; } } }
+  // ── Configuration ────────────────────────────────────────────────────────
+  var LEAF = {b27AB:'Orlando',b27AC:'Tampa',b27AD:'ATL North',b27AE:'ATL South',b27AF:'Chicago',
+              b27B0:'Indianapolis',b27B1:'N Indiana',b27B2:'Louisville',b27B3:'Detroit',
+              b27B4:'Grand Rapids',b27B5:'Cincinnati',b27B6:'Cleveland',b27B7:'Columbus',
+              b27B8:'American Fork'};
+
+  // Ownership lives in a Geotab custom property backfilled from the Enterprise
+  // Fleet Management export (see Archive/GeoTab/backfill_ownership.py). Resolved
+  // by NAME at runtime rather than by hardcoded id: a property deleted or
+  // recreated in MyGeotab gets a new id, and a stale hardcoded one would read
+  // back blank for every vehicle — an all-"Unknown" chart that looks plausible.
+  var OWN_PROP_NAME = /^ownership$/i;
+
+  // Colours: slot-1 blue and slot-2 orange from the house palette. Validated as
+  // a categorical pair on this surface — CVD ΔE 24.7, normal-vision 33.6, both
+  // far clear of the 8 / 15 floors. Unknown is deliberately a NEUTRAL, not a
+  // third hue: it is an absence of data, not a third kind of vehicle, and it
+  // fails the chroma floor on purpose so it reads as gray.
+  var C = {owned:'#2a78d6', rental:'#eb6834', unknown:'#898781',
+           ink1:'#0b0b0b', ink2:'#52514e', ink3:'#898781',
+           grid:'#e1e0d9', axis:'#c3c2b7', surface:'#fcfcfb'};
+
+  var OWNED='Owned', RENTAL='Rental', UNKNOWN='Unknown';
+
+  var chart=null, apiRef=null, DATA=null, officeFilter='';
+  var lastWidth=0, resizeTimer=null, resizeObs=null, resizePoll=null,
+      onResize=null, pointerInChart=false;
+
+  // ── Helpers ──────────────────────────────────────────────────────────────
+  function el(id){ return document.getElementById(id); }
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+  function pct(a,b){ return b ? Math.round(a/b*100) : 0; }
+
+  // Make/model strings arrive inconsistently cased — the old dashboard listed
+  // "Chevrolet Silverado: 5" and "CHEVROLET Silverado: 2" as two separate models
+  // because it never normalised. Title-casing alone is not enough either: it
+  // turns GMC into "Gmc" and RAM into "Ram", so acronyms are held out, and any
+  // token containing a digit or dash (F-150, 1500) is left exactly as found.
+  var ACRONYMS = {GMC:1, RAM:1, BMW:1, GM:1, MB:1, VW:1};
+  function titleWord(w){
+    if(ACRONYMS[w.toUpperCase()]) return w.toUpperCase();
+    if(!/^[A-Za-z]+$/.test(w)) return w;
+    return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+  }
+  function modelLabel(mk, md){
+    if(!md) return null;
+    md = String(md).replace(/\s+Truck$/i,'').trim();
+    // Ram and similar decode to a bare series number — prefix the make so the
+    // label is not just "1500".
+    var lab = (/^\d+$/.test(md) && mk) ? (mk+' '+md) : (mk ? mk+' '+md : md);
+    return lab.split(/\s+/).map(titleWord).join(' ');
+  }
+
+  function note(id, cls, html){
+    var n = el(id); n.className = 'fbt-note on' + (cls?' '+cls:''); n.innerHTML = html;
+  }
+  function clearNotes(){
+    var n = el('fbt-stop'); n.className='fbt-note'; n.innerHTML='';
+  }
+  function fail(html){
+    el('fbt-kpis').innerHTML=''; el('fbt-legend').innerHTML=''; el('fbt-foot').innerHTML='';
+    if(chart){ chart.destroy(); chart=null; }
+    el('fbt-chart').innerHTML=''; el('fbt-scope').textContent='';
+    note('fbt-stop','fbt-note--stop', html);
+  }
+
+  // ── Tier 1: the numbers a fleet manager leads with ───────────────────────
+  function kpi(label, dotColor, value, small, sub){
+    return '<div class="fbt-kpi"><div class="fbt-kpi-label">'+
+      (dotColor ? '<span class="fbt-dot" style="background:'+dotColor+'"></span>' : '')+
+      esc(label)+'</div><div class="fbt-kpi-value'+(small?' sm':'')+'">'+value+'</div>'+
+      '<div class="fbt-kpi-sub">'+sub+'</div></div>';
+  }
+
+  function renderKpis(s){
+    var cards = [];
+    // The sub carries the EXCLUSION rather than restating the headline: a
+    // manager reading "231 vehicles" should see immediately that it is not the
+    // whole device list, without having to reach the footer.
+    cards.push(kpi('Vehicles', null, String(s.total), false,
+      'across '+s.offices.length+' location'+(s.offices.length===1?'':'s')+
+      (s.ungrouped ? ' &middot; <span class="muted">'+s.ungrouped+
+        ' ungrouped device'+(s.ungrouped===1?'':'s')+' excluded</span>' : '')));
+
+    cards.push(kpi('Rentals', C.rental, String(s.rental), false,
+      pct(s.rental,s.total)+'% of the fleet &middot; <span class="muted">'+s.owned+' owned</span>'));
+
+    // Rentals are meant to be temporary, so the office leaning on them hardest
+    // is the one worth a conversation — a share, not a count, because a big
+    // office with 11 rentals can be healthier than a small one with 9.
+    if(s.topRental){
+      cards.push(kpi('Most rental-reliant', null, esc(s.topRental.office), true,
+        s.topRental.rental+' of '+s.topRental.total+' vehicles &middot; <span class="muted">'+
+        pct(s.topRental.rental,s.topRental.total)+'% rental</span>'));
+    } else {
+      cards.push(kpi('Most rental-reliant', null, '&mdash;', true,
+        '<span class="muted">no rentals in scope</span>'));
+    }
+
+    cards.push(kpi('Ownership unknown', s.unknown ? C.unknown : null,
+      String(s.unknown), false,
+      s.unknown
+        ? 'vehicles with no Ownership value &middot; <span class="muted">'+
+          pct(s.unknown,s.total)+'% of the fleet</span>'
+        : '<span class="muted">every vehicle is classified</span>'));
+
+    el('fbt-kpis').innerHTML = cards.join('');
+  }
+
+  // ── Tier 2: the chart ────────────────────────────────────────────────────
+  function renderChart(s){
+    var host = el('fbt-chart');
+    var avail = Math.max(340, host.clientWidth || host.parentNode.clientWidth || 900);
+    lastWidth = host.parentNode.clientWidth;
+    var narrow = avail < 640;
+    var n = s.offices.length;
+    var H = Math.max(260, n*38 + 90);
+
+    // The category label carries the office AND its total, so "how many at each
+    // location" is answerable without hovering — it is the primary question and
+    // must not be hidden behind an interaction.
+    var cats = s.offices.map(function(o){
+      return narrow ? o.office : o.office + '   ' + o.total;
+    });
+
+    var series = [
+      {name:OWNED,   data:s.offices.map(function(o){ return o.owned; })},
+      {name:RENTAL,  data:s.offices.map(function(o){ return o.rental; })},
+      {name:UNKNOWN, data:s.offices.map(function(o){ return o.unknown; })}
+    ];
+
+    if(chart){ chart.destroy(); }
+    chart = new ApexCharts(host, {
+      chart:{type:'bar', stacked:true, height:H, width:avail, toolbar:{show:false},
+        fontFamily:'inherit', animations:{enabled:false},
+        events:{ dataPointSelection:function(e,ctx,cfg){
+          var o = s.offices[cfg.dataPointIndex];
+          if(o) setFilter(officeFilter === o.office ? '' : o.office);
+        }}},
+      series:series,
+      colors:[C.owned, C.rental, C.unknown],
+      plotOptions:{bar:{horizontal:true, barHeight:'64%',
+        borderRadius:4, borderRadiusApplication:'end', borderRadiusWhenStacked:'last'}},
+      // 2px surface-coloured gap between stacked segments, so adjacent fills
+      // read as separate marks rather than one blended band.
+      stroke:{show:true, width:2, colors:[C.surface]},
+      // Never a number on every segment: only where the segment is wide enough
+      // to hold one without colliding with its neighbour.
+      dataLabels:{enabled:true, formatter:function(v){ return v >= 3 ? v : ''; },
+        style:{fontSize:'11px', fontWeight:700, colors:['#fff','#fff','#fff']},
+        dropShadow:{enabled:false}},
+      xaxis:{ categories:cats,
+        title:{text:'Vehicles', style:{fontSize:'12px', fontWeight:600, color:C.ink2}},
+        axisBorder:{color:C.axis}, axisTicks:{color:C.axis},
+        labels:{style:{colors:C.ink3, fontSize:'11.5px'},
+          formatter:function(v){ return Math.round(v); }} },
+      yaxis:{ labels:{style:{colors:C.ink1, fontSize:narrow?'12px':'12.5px',
+        fontWeight:600}, maxWidth:200} },
+      legend:{show:false},
+      grid:{borderColor:C.grid, xaxis:{lines:{show:true}}, yaxis:{lines:{show:false}},
+        padding:{left:6, right:18, top:4}},
+      tooltip:{ shared:true, intersect:false,
+        custom:function(o){
+          var d = s.offices[o.dataPointIndex];
+          if(!d) return '';
+          function row(label, val, col){
+            if(!val) return '';
+            return '<div style="display:flex;align-items:center;gap:7px;margin-top:3px">'+
+              '<i style="width:9px;height:9px;border-radius:2px;background:'+col+'"></i>'+
+              '<span style="color:#52514e">'+label+'</span>'+
+              '<b style="margin-left:auto">'+val+'</b></div>';
+          }
+          return '<div style="padding:9px 12px;font-size:12px;line-height:1.45;min-width:170px">'+
+            '<b>'+esc(d.office)+'</b> &middot; '+d.total+' vehicle'+(d.total===1?'':'s')+
+            row(OWNED, d.owned, C.owned)+
+            row(RENTAL, d.rental, C.rental)+
+            row(UNKNOWN, d.unknown, C.unknown)+
+            (d.rental ? '<div style="margin-top:6px;color:#898781">'+
+              pct(d.rental,d.total)+'% rental</div>' : '')+
+            '<div style="margin-top:5px;color:#898781;font-size:11px">click to filter the table</div>'+
+            '</div>';
+        }}
     });
     chart.render();
+
+    // Legend is always present for >= 2 series, so identity is never carried by
+    // colour alone.
+    el('fbt-legend').innerHTML =
+      '<span><i class="fbt-swatch" style="background:'+C.owned+'"></i>'+OWNED+' &mdash; '+s.owned+'</span>'+
+      '<span><i class="fbt-swatch" style="background:'+C.rental+'"></i>'+RENTAL+' &mdash; '+s.rental+'</span>'+
+      (s.unknown ? '<span><i class="fbt-swatch" style="background:'+C.unknown+'"></i>'+
+        UNKNOWN+' &mdash; '+s.unknown+'</span>' : '');
   }
 
-  function load(api) {
-    document.getElementById('fbt-sub').textContent = 'Loading…';
-    // Runs in the signed-in user's session -> Geotab auto-scopes results to
-    // THEIR group/data permissions. An OM sees their office; an exec sees all.
-    api.call('Get', { typeName: 'Device', resultsLimit: 50000 }, function (devices) {
-      var counts = {};
-      (devices || []).forEach(function (d) {
-        var label = cleanLabel(d.vinInfoMake, d.vinInfoModel);
-        if (label) counts[label] = (counts[label] || 0) + 1;
-      });
-      var rows = Object.keys(counts).map(function (k) { return [k, counts[k]]; })
-                   .sort(function (a, b) { return b[1] - a[1]; });
-      var total = rows.reduce(function (s, r) { return s + r[1]; }, 0);
-      document.getElementById('fbt-sub').textContent =
-        total + " VIN'd vehicles · " + rows.length + ' models (in your data scope)';
-      render(rows, total);
-    }, function (err) {
-      document.getElementById('fbt-sub').textContent = 'Error loading devices: ' + err;
-    });
+  // ── Tier 3: the tables ───────────────────────────────────────────────────
+  function setFilter(office){
+    officeFilter = office || '';
+    el('fbt-tabletitle').textContent = officeFilter
+      ? 'Vehicles — ' + officeFilter : 'Every vehicle';
+    el('fbt-clear').style.display = officeFilter ? '' : 'none';
+    if(officeFilter && !el('fbt-tablewrap').classList.contains('on')){
+      el('fbt-tablewrap').classList.add('on');
+      el('fbt-toggle').textContent = 'Hide vehicles';
+      el('fbt-toggle').classList.add('on');
+    }
+    renderTable();
   }
+
+  function ownBadge(o){
+    var col = o===OWNED?C.owned : o===RENTAL?C.rental : C.unknown;
+    return '<span class="fbt-own" style="color:'+
+      (o===OWNED?'#1c5cab':o===RENTAL?'#b8461d':'#6f6d68')+'">'+
+      '<span class="fbt-dot" style="background:'+col+'"></span>'+esc(o)+'</span>';
+  }
+
+  function visibleRows(){
+    if(!DATA) return [];
+    return officeFilter
+      ? DATA.rows.filter(function(r){ return r.office === officeFilter; })
+      : DATA.rows;
+  }
+
+  function renderTable(){
+    var rows = visibleRows().slice().sort(function(a,b){
+      return a.office===b.office ? a.name.localeCompare(b.name)
+                                 : a.office.localeCompare(b.office);
+    });
+    var head = '<table class="fbt-t"><thead><tr><th>Vehicle</th><th>Location</th>'+
+      '<th>Ownership</th><th>Make &amp; model</th><th>VIN</th></tr></thead><tbody>';
+    var body = rows.map(function(r){
+      return '<tr><td class="veh">'+esc(r.name)+'</td><td>'+esc(r.office)+'</td>'+
+        '<td>'+ownBadge(r.own)+'</td>'+
+        '<td>'+(r.model ? esc(r.model) : '<span style="color:#898781">no VIN decode</span>')+'</td>'+
+        '<td style="color:#898781">'+(r.vin ? esc(r.vin) : '&mdash;')+'</td></tr>';
+    }).join('');
+    el('fbt-tablewrap').innerHTML = head + body + '</tbody></table>';
+  }
+
+  // Office x model, as a TABLE rather than a heatmap: the grid is about a third
+  // filled, so as a chart it would read as mostly-empty space, while as a table
+  // it stays compact and gives exact counts.
+  function renderModels(){
+    if(!DATA) return;
+    var models = DATA.models, offices = DATA.stats.offices;
+    var head = '<table class="fbt-t"><thead><tr><th>Location</th>'+
+      models.map(function(m){ return '<th style="text-align:right">'+esc(m)+'</th>'; }).join('')+
+      '<th style="text-align:right">Total</th></tr></thead><tbody>';
+    var body = offices.map(function(o){
+      var cells = models.map(function(m){
+        var v = (DATA.byOfficeModel[o.office]||{})[m] || 0;
+        return '<td class="num'+(v?'':' zero')+'">'+(v||'·')+'</td>';
+      }).join('');
+      return '<tr><td class="veh">'+esc(o.office)+'</td>'+cells+
+        '<td class="num"><b>'+o.total+'</b></td></tr>';
+    }).join('');
+    var totals = models.map(function(m){
+      var t = offices.reduce(function(s,o){ return s + ((DATA.byOfficeModel[o.office]||{})[m]||0); },0);
+      return '<td class="num">'+t+'</td>';
+    }).join('');
+    var grand = offices.reduce(function(s,o){ return s+o.total; },0);
+    var foot = '<tr class="tot"><td>Total</td>'+totals+'<td class="num">'+grand+'</td></tr>';
+    el('fbt-modelwrap').innerHTML = head + body + foot + '</tbody></table>';
+  }
+
+  function exportCsv(){
+    var rows = visibleRows();
+    if(!rows.length) return;
+    var lines = [['Vehicle','Location','Ownership','Make and model','VIN'].join(',')];
+    rows.forEach(function(r){
+      lines.push([r.name, r.office, r.own, r.model||'no VIN decode', r.vin||'']
+        .map(function(v){ return '"'+String(v).replace(/"/g,'""')+'"'; }).join(','));
+    });
+    try {
+      var blob = new Blob([lines.join('\n')], {type:'text/csv;charset=utf-8;'});
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'fleet-by-location'+
+        (officeFilter ? '-'+officeFilter.toLowerCase().replace(/[^a-z0-9]+/g,'-') : '')+'.csv';
+      document.body.appendChild(a); a.click();
+      setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 0);
+    } catch(e){}
+  }
+
+  // ── Data ─────────────────────────────────────────────────────────────────
+  function load(api){
+    apiRef = api;
+    clearNotes();
+    el('fbt-scope').textContent = 'Loading vehicles…';
+
+    // Runs in the signed-in user's session, so Geotab auto-scopes results to
+    // THEIR group permissions. An office manager sees their office; an exec
+    // sees all. Never bake in a snapshot, or that scoping breaks.
+    api.multiCall([
+      ['Get', {typeName:'Device', resultsLimit:50000}],
+      ['Get', {typeName:'Property'}]
+    ], function(res){
+      var devices = res[0]||[], props = res[1]||[];
+
+      var ownProp = null;
+      props.forEach(function(p){ if(OWN_PROP_NAME.test(p && p.name || '')) ownProp = p; });
+
+      var rows = [], ungrouped = 0, noVin = 0;
+      var byOffice = {}, byOfficeModel = {}, modelCount = {};
+
+      devices.forEach(function(d){
+        var office = null;
+        (d.groups||[]).forEach(function(g){ if(LEAF[g.id]) office = LEAF[g.id]; });
+        if(!office){ ungrouped++; return; }
+
+        var own = UNKNOWN;
+        if(ownProp){
+          (d.customProperties||[]).forEach(function(cp){
+            if(cp && cp.property && cp.property.id === ownProp.id){
+              var v = String(cp.value||'').trim();
+              if(/^owned$/i.test(v)) own = OWNED;
+              else if(/^rental$/i.test(v)) own = RENTAL;
+            }
+          });
+        }
+
+        var model = modelLabel(d.vinInfoMake, d.vinInfoModel);
+        if(!model) noVin++;
+
+        rows.push({id:d.id, name:d.name||d.id, office:office, own:own, model:model,
+                   vin:(d.vehicleIdentificationNumber||'').trim()});
+
+        var b = byOffice[office] || (byOffice[office] = {owned:0, rental:0, unknown:0, total:0});
+        b.total++;
+        b[own===OWNED?'owned':own===RENTAL?'rental':'unknown']++;
+
+        if(model){
+          modelCount[model] = (modelCount[model]||0) + 1;
+          var m = byOfficeModel[office] || (byOfficeModel[office] = {});
+          m[model] = (m[model]||0) + 1;
+        }
+      });
+
+      if(!rows.length){
+        fail('No vehicle in your data scope is assigned to one of the '+
+             Object.keys(LEAF).length+' location groups, so nothing can be counted by location. '+
+             'Check Groups &amp; Rules in MyGeotab.');
+        return;
+      }
+
+      // Sorted by size: the biggest location first is what "at a glance" means
+      // for a headcount question.
+      var offices = Object.keys(byOffice).map(function(o){
+        return {office:o, owned:byOffice[o].owned, rental:byOffice[o].rental,
+                unknown:byOffice[o].unknown, total:byOffice[o].total};
+      }).sort(function(a,b){ return b.total - a.total; });
+
+      var stats = {
+        offices: offices,
+        total:  rows.length,
+        owned:  rows.filter(function(r){ return r.own===OWNED; }).length,
+        rental: rows.filter(function(r){ return r.own===RENTAL; }).length,
+        unknown:rows.filter(function(r){ return r.own===UNKNOWN; }).length,
+        ungrouped: ungrouped,
+        topRental: null
+      };
+      // Share, not count — and only where the office is big enough for a share
+      // to mean anything.
+      offices.forEach(function(o){
+        if(o.rental && o.total >= 5 &&
+           (!stats.topRental || o.rental/o.total > stats.topRental.rental/stats.topRental.total)){
+          stats.topRental = o;
+        }
+      });
+
+      var models = Object.keys(modelCount).sort(function(a,b){ return modelCount[b]-modelCount[a]; });
+
+      DATA = {rows:rows, stats:stats, models:models, byOfficeModel:byOfficeModel,
+              ungrouped:ungrouped, noVin:noVin, ownProp:ownProp};
+
+      el('fbt-scope').innerHTML =
+        stats.total+' vehicles &middot; '+offices.length+' locations &middot; '+
+        'owned vs rental &middot; your data scope';
+
+      renderKpis(stats);
+      renderChart(stats);
+      renderTable();
+      renderModels();
+
+      // Nothing is hidden without saying so. A location or a class of vehicle
+      // that is silently dropped reads as one that has no vehicles.
+      var foot = [];
+      if(!ownProp){
+        foot.push('<b>No &ldquo;Ownership&rdquo; property exists in this database</b>, so every '+
+          'vehicle is shown as Unknown. Create it and run <code>backfill_ownership.py</code>.');
+      } else if(stats.unknown){
+        foot.push('<b>'+stats.unknown+' vehicle'+(stats.unknown===1?' has':'s have')+
+          ' no Ownership value</b> and cannot be counted as owned or rental. Re-run '+
+          '<code>backfill_ownership.py</code> with the current Enterprise export to clear these.');
+      }
+      if(noVin){
+        foot.push('<b>'+noVin+' vehicle'+(noVin===1?'':'s')+' in a location group '+
+          (noVin===1?'has':'have')+' no VIN decode</b>, so '+(noVin===1?'it is':'they are')+
+          ' counted in the bars above but absent from the model table.');
+      }
+      if(ungrouped){
+        foot.push('<b>'+ungrouped+' device'+(ungrouped===1?'':'s')+
+          ' in your scope '+(ungrouped===1?'is':'are')+' not in any location group</b> '+
+          '(spares, unactivated units, or a missed assignment) and '+
+          (ungrouped===1?'is':'are')+' not counted anywhere on this page.');
+      }
+      el('fbt-foot').innerHTML = foot.join('<br>');
+    }, function(err){ fail('Error loading vehicles: '+esc(err)); });
+  }
+
+  // ── Chrome ───────────────────────────────────────────────────────────────
+  function wireTools(){
+    var t = el('fbt-toggle');
+    t.addEventListener('click', function(){
+      var on = el('fbt-tablewrap').classList.toggle('on');
+      t.textContent = on ? 'Hide vehicles' : 'Show vehicles';
+      t.classList.toggle('on', on);
+    });
+    var m = el('fbt-models');
+    m.addEventListener('click', function(){
+      var on = el('fbt-modelwrap').classList.toggle('on');
+      m.textContent = on ? 'Hide models' : 'Show models';
+      m.classList.toggle('on', on);
+    });
+    el('fbt-clear').addEventListener('click', function(){ setFilter(''); });
+    el('fbt-csv').addEventListener('click', exportCsv);
+  }
+
+  // ApexCharts only reflows on a window resize, but this pane changes width on
+  // its own — collapsing the MyGeotab sidebar resizes the container with no
+  // window event. Watch the container instead. Same pattern as violin.html,
+  // including holding the observer in a variable (an unreferenced
+  // ResizeObserver can be garbage collected and silently stop firing).
+  function watchResize(){
+    var card = el('fbt-chart').parentNode;
+    lastWidth = card.clientWidth;
+    onResize = function(){
+      var w = card.clientWidth;
+      if(!DATA || !w || Math.abs(w - lastWidth) < 16) return;
+      clearTimeout(resizeTimer);
+      function attempt(){
+        // Never rebuild the chart under a pointer that is on it — that destroys
+        // the element the tooltip is anchored to.
+        if(pointerInChart){ resizeTimer = setTimeout(attempt, 250); return; }
+        if(DATA) renderChart(DATA.stats);
+      }
+      resizeTimer = setTimeout(attempt, 140);
+    };
+    card.addEventListener('mouseenter', function(){ pointerInChart = true; });
+    card.addEventListener('mouseleave', function(){ pointerInChart = false; onResize(); });
+    if(typeof ResizeObserver === 'function'){
+      resizeObs = new ResizeObserver(onResize);
+      resizeObs.observe(card);
+    }
+    window.addEventListener('resize', onResize);
+    startPoll();
+  }
+  // ResizeObserver delivery rides the animation-frame loop, so it goes quiet in
+  // a backgrounded tab and some embedded contexts. One clientWidth read makes
+  // the behaviour independent of that.
+  function startPoll(){ if(!resizePoll && onResize) resizePoll = setInterval(onResize, 400); }
+  function stopPoll(){ if(resizePoll){ clearInterval(resizePoll); resizePoll = null; } }
 
   return {
-    initialize: function (api, state, callback) { callback(); },
-    focus: function (api, state) { load(api); },
-    blur: function () {}
+    initialize: function(api, state, cb){ injectStyles(); wireTools(); watchResize(); cb(); },
+    focus: function(api){ startPoll(); load(api); },
+    blur: function(){ stopPoll(); }
   };
 };
 </script>
