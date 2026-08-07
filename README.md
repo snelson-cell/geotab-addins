@@ -15,7 +15,7 @@ that user's role (an office OM sees their office; an exec sees the whole fleet).
 | [`topSpeed.html`](topSpeed.html) | Top Speed by Driver | Peak speed per driver for a chosen day or range, against the written speeding policy, with speeding-event counts and a "speed demon" callout. Built for 1:1s and team meetings |
 | [`fleet.html`](fleet.html) | Fleet Roster | Every vehicle in Geotab — ownership, location, driver, plate, camera and the compliance fields that used to live in the branch spreadsheets. KPI cards follow the active filters |
 | [`rollout.html`](rollout.html) | GO9 & Camera Rollout | Per-location install progress: shipped → assigned → installed (VIN reporting) → camera fitted, so you can see which locations have done what |
-| [`violin.html`](violin.html) | Speeding Distribution | KPI summary + per-vehicle speeding rate (events/1,000 mi) distributed by office, over Within target / Monitor / Coaching review zones, with a per-vehicle table. 7/30/60/90-day windows and an office filter for branch managers |
+| [`violin.html`](violin.html) | Speeding Rate by Vehicle | KPI summary + per-vehicle speeding rate (events/1,000 mi) distributed by office, over Within target / Monitor / Coaching review zones, with a per-vehicle table. 7/30/60/90-day windows and an office filter for branch managers |
 
 Install config: [`config/mira-fleet-charts.config.json`](config/mira-fleet-charts.config.json) ·
 Step-by-step: [`INSTALL.md`](INSTALL.md)

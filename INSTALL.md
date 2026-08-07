@@ -4,8 +4,11 @@ The add-ins are already built and hosted on GitHub Pages, so there's nothing to
 host — you just register them in MyGeotab once.
 
 **Live URLs**
-- Fleet by Type — https://snelson-cell.github.io/geotab-addins/fleetFunnel.html
-- Speeding Distribution — https://snelson-cell.github.io/geotab-addins/violin.html
+- Fleet by Location — https://snelson-cell.github.io/geotab-addins/fleetFunnel.html
+- Fleet Roster — https://snelson-cell.github.io/geotab-addins/fleet.html
+- GO9 & Camera Rollout — https://snelson-cell.github.io/geotab-addins/rollout.html
+- Speeding Rate by Vehicle — https://snelson-cell.github.io/geotab-addins/violin.html
+- Top Speed by Driver — https://snelson-cell.github.io/geotab-addins/topSpeed.html
 
 ## Register in MyGeotab (one time)
 1. In MyGeotab: **Administration → System… → Add-Ins**.
@@ -13,8 +16,9 @@ host — you just register them in MyGeotab once.
 3. Paste the full contents of [`config/mira-fleet-charts.config.json`](config/mira-fleet-charts.config.json) → **OK**.
    - It's unsigned, so MyGeotab shows a trust prompt — accept it (fine for internal use).
 4. Click **Save** (top of the Add-Ins page).
-5. **Refresh** MyGeotab. Two items appear under the **Activity** menu:
-   **Fleet by Type** and **Speeding Distribution**.
+5. **Refresh** MyGeotab. Five items appear under the **Add-Ins** menu, in
+   alphabetical order: **Fleet by Location**, **Fleet Roster**, **GO9 &
+   Camera Rollout**, **Speeding Rate by Vehicle**, **Top Speed by Driver**.
 
 To add more charts later, add another `items[]` entry pointing at the new
 `…github.io/geotab-addins/<file>.html`, and re-paste the config.
