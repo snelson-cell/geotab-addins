@@ -87,6 +87,16 @@ Do not tell anyone a change is live on the strength of a string match.
   `10–39`, Coaching review `≥40` events/1,000 mi (fleet median / 80th
   percentile, derived 2026-07-30). Colors: high `#d03b3b`, watch `#fab219`,
   safe `#0ca30c` (the internal keys stay `high`/`mod`/`low`).
+  **Reviewed 2026-08-07 and deliberately left as-is.** They were derived from
+  *truncated* data — see the 25,000-row cap below — so the statistics behind
+  them were wrong: the true 30-day fleet median is `5.6` and p80 `27.8`, not the
+  `8.1`/`35.8` they came from, which would imply roughly `LO=5, HI=30`. Both
+  bands therefore sit more leniently than intended. Samson was shown these
+  numbers and chose to keep 10/40: moving `HI` changes who gets flagged for
+  coaching, which is a decision about people, not a correctness fix. The bands
+  still discriminate (66% Within target / 21% Monitor / 14% Coaching review) and
+  `checkDrift()` does not fire. **Don't re-propose re-deriving them** unless
+  `checkDrift()` actually fires or the thresholds come up on their own.
 - **Band names describe the measurement and the next step, never the driver.**
   Renamed from Safe / Watch / High risk on 2026-08-06. "High risk" characterises
   a *person* in a record that is discoverable; "Coaching review" states what
@@ -106,11 +116,6 @@ Do not tell anyone a change is live on the strength of a string match.
   axis — so on a narrow pane even the old three-letter "SAFE" overprinted
   "WATCH" and read as "SAFEWATCH". `zone()` measures and omits; the legend
   always carries the full names, so nothing is lost.
-  ⚠️ **These were derived from truncated data** — see the 25,000-row cap below.
-  The true 30-day fleet median is `5.6` and p80 `27.8`, not the `8.1`/`35.8`
-  they came from, so both bands sit more leniently than intended. `checkDrift()`
-  does not fire (the bands still separate: 66% Safe / 21% Watch / 14% High), so
-  this is a deliberate policy call to make, not a bug to fix.
 - **A rate needs exposure, not just a sample.** Miles are the *denominator*, so
   a vehicle with few miles swings wildly on one event: at 250 mi one extra event
   moves it 4 points, at 100 mi it moves it 10. `MIN_MILES` (50) is a hard floor
