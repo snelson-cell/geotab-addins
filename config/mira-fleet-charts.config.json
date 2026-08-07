@@ -1,13 +1,27 @@
 {
   "name": "Mira Fleet Charts",
   "supportEmail": "snelson@thegrit.com",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "items": [
     {
       "url": "https://snelson-cell.github.io/geotab-addins/fleetFunnel.html",
       "path": "ActivityLink/",
       "menuName": {
         "en": "Fleet by Location"
+      }
+    },
+    {
+      "url": "https://snelson-cell.github.io/geotab-addins/fleet.html",
+      "path": "ActivityLink/",
+      "menuName": {
+        "en": "Fleet Register"
+      }
+    },
+    {
+      "url": "https://snelson-cell.github.io/geotab-addins/rollout.html",
+      "path": "ActivityLink/",
+      "menuName": {
+        "en": "GO9 & Camera Rollout"
       }
     },
     {
@@ -22,20 +36,6 @@
       "path": "ActivityLink/",
       "menuName": {
         "en": "Top Speed by Driver"
-      }
-    },
-    {
-      "url": "https://snelson-cell.github.io/geotab-addins/rollout.html",
-      "path": "ActivityLink/",
-      "menuName": {
-        "en": "GO9 & Camera Rollout"
-      }
-    },
-    {
-      "url": "https://snelson-cell.github.io/geotab-addins/fleet.html",
-      "path": "ActivityLink/",
-      "menuName": {
-        "en": "Fleet Register"
       }
     }
   ],
