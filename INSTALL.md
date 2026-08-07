@@ -33,13 +33,28 @@ To add more charts later, add another `items[]` entry pointing at the new
   sees Chicago, an exec at the root sees the whole fleet. No per-role code.
 
 ## Change where it lives in the menu
-In the config, `"path"` sets the menu section: `ActivityLink/` (Activity),
-`SafetyLink/` (Safety), `EngineMaintenanceLink/` (Maintenance),
-`AdministrationLink/`. Change and re-save.
+In the config, `"path"` sets the menu section: `ActivityLink/`, `SafetyLink/`,
+`EngineMaintenanceLink/`, `AdministrationLink/`. Change and re-save.
+
+All five currently use `ActivityLink/`, but in the current MyGeotab UI they
+render under their own **Add-Ins** section in the left nav, not under Activity —
+so don't expect the path name to predict the heading you see. Menu items are
+listed in the order the `items` array is written; ours are kept alphabetical.
 
 ## Updating a chart
 Edit the file, `git commit`, `git push`. Pages rebuilds in ~30–60 s at the same
 URL — just hard-refresh (Cmd+Shift+R) in MyGeotab. No config change needed.
+
+Confirm it actually shipped by comparing hashes, not by looking at the page:
+
+```bash
+curl -s "https://snelson-cell.github.io/geotab-addins/violin.html" -o /tmp/live.html
+shasum -a 256 violin.html /tmp/live.html   # digests must match
+```
+
+If a build is stuck or GitHub Actions is down, request one directly —
+`gh api -X POST repos/snelson-cell/geotab-addins/pages/builds`. See the README's
+"When Actions is down" section.
 
 ## Troubleshooting
 - **Blank chart area:** the ApexCharts CDN was blocked. Inline the library:

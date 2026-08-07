@@ -24,20 +24,34 @@ Step-by-step: [`INSTALL.md`](INSTALL.md)
 
 ```
 geotab-addins/
-├── fleetFunnel.html      # add-in (root = stable Pages URL — don't move)
-├── violin.html           # add-in (root = stable Pages URL — don't move)
-├── index.html            # landing / general info page (scaffold — expand later)
+├── fleetFunnel.html      # add-in — Fleet by Location   (root = stable Pages URL)
+├── fleet.html            # add-in — Fleet Roster
+├── rollout.html          # add-in — GO9 & Camera Rollout
+├── violin.html           # add-in — Speeding Rate by Vehicle
+├── topSpeed.html         # add-in — Top Speed by Driver
+├── index.html            # landing page, served from Pages directly — NOT an
+│                         # add-in, so relative asset paths are fine here
 ├── assets/
 │   └── mira-home-logo.png
 ├── config/
 │   └── mira-fleet-charts.config.json   # paste into MyGeotab → Add-Ins
 ├── INSTALL.md
+├── RULE-SETUP.md         # MyGeotab rule calibration checklist
 └── README.md
 ```
+
+`scorecard/` exists locally (driver-scorecard prototype) and is gitignored —
+this repo is public and frontend-only.
 
 > **Add-in HTML files live at the repo root on purpose** — their Pages URLs
 > are referenced in the MyGeotab config. Moving them changes the URL and breaks
 > the installed add-in. Add new add-ins at the root too.
+>
+> That is also why **`fleetFunnel.html` keeps a filename it outgrew**. It has not
+> drawn a funnel since it was rebuilt as location × ownership, and it is now
+> "Fleet by Location" in the menu — but the filename is baked into the installed
+> config, so renaming it would break the add-in for every user. The file name is
+> not a description; the table above is.
 
 ## Update workflow
 
@@ -71,12 +85,13 @@ directions**, on 2026-08-06:
   broken; worse, a string that already existed in the previous build makes a
   stale response look current. This wrongly reported a good deploy as live
   before it had built.
-- **`gh api repos/<o>/<r>/pages/builds`.** That is the **legacy** Pages build
-  API. This repo deploys through the `pages-build-deployment` Actions workflow,
-  which the legacy endpoint does not report — so it showed a phantom gap and a
-  perfectly healthy deploy looked like it had never happened. Use
-  `gh api repos/<o>/<r>/deployments` if you want the API, or the repo's
-  Deployments page, which is what finally settled it.
+- **`gh api repos/<o>/<r>/pages/builds` as a *status* check.** That endpoint
+  reports **legacy builds**. A deploy driven by the `pages-build-deployment`
+  Actions workflow did not show up there, so it reported a phantom gap and a
+  perfectly healthy deploy looked like it had never happened. For status, use
+  `gh api repos/<o>/<r>/deployments` or the repo's Deployments page.
+  **Do not read this as "avoid that API"** — the same endpoint's *write* side is
+  the outage escape hatch; see the next section. Read ≠ write here.
 
 Do not tell anyone a change is live on the strength of a string match.
 
@@ -281,6 +296,22 @@ infrastructure reasons; verify with the hash check as always.
 - **Don't present the driver as attribution.** It is who Geotab has assigned to
   the vehicle *now*, not who was driving during the 30-day window the events
   come from — hence the "current driver:" prefix rather than a bare name.
+- **The office map is hardcoded, and one label does not match Geotab.** Every
+  add-in carries its own `LEAF` map of group id → office name (`fleetFunnel`,
+  `violin`, `topSpeed`, plus `pull_risk_data.py` and friends in the tooling
+  repo). Two consequences, both verified 2026-08-07 against the live Groups:
+  - **13 of the 14 names match Geotab exactly. `b27B1` does not** — Geotab calls
+    it **`Northern Indy`**, the dashboards display **`N Indiana`**. Nothing is
+    miscounted (the id is what's matched), but a manager who filters by office
+    in MyGeotab sees a different name than the chart shows. The tooling scripts
+    are split too: most say "Northern Indy", `pull_risk_data.py` says
+    "N Indiana". Pick one and align all of them.
+  - **A new office group would be silently invisible.** Devices whose group is
+    not in `LEAF` are dropped from the by-office views (`fleetFunnel` counts
+    them as ungrouped and says so; the others just omit them). The parent groups
+    — Mira Home, and the per-state groups — are correctly excluded, but a real
+    new branch would look like it had no vehicles until someone edits every map.
+
 - **Live fetch only** — never bake in a data snapshot, or role-scoping breaks.
 - **Ship CSS from JavaScript, not from `<head>`.** MyGeotab injects the add-in
   HTML into the host page and the `<head>` goes with it, so a `<style>` block
