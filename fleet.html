@@ -7,7 +7,7 @@
 <div id="fr-root">
   <div class="fr-topbar">
     <div>
-      <h2 class="fr-h1">Fleet register</h2>
+      <h2 class="fr-h1">Fleet roster</h2>
       <div class="fr-scope" id="fr-scope">Loading&hellip;</div>
     </div>
     <div class="fr-tools">
@@ -376,7 +376,7 @@ geotab.addin.fleetRegister = function () {
     });
     var blob=new Blob([lines.join('\n')],{type:'text/csv;charset=utf-8;'});
     var a=document.createElement('a');
-    a.href=URL.createObjectURL(blob); a.download='fleet-register.csv';
+    a.href=URL.createObjectURL(blob); a.download='fleet-roster.csv';
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
   }
 

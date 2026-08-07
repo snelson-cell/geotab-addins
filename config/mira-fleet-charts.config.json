@@ -1,7 +1,7 @@
 {
   "name": "Mira Fleet Charts",
   "supportEmail": "snelson@thegrit.com",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "items": [
     {
       "url": "https://snelson-cell.github.io/geotab-addins/fleetFunnel.html",
@@ -14,7 +14,7 @@
       "url": "https://snelson-cell.github.io/geotab-addins/fleet.html",
       "path": "ActivityLink/",
       "menuName": {
-        "en": "Fleet Register"
+        "en": "Fleet Roster"
       }
     },
     {

@@ -11,11 +11,11 @@ that user's role (an office OM sees their office; an exec sees the whole fleet).
 
 | File | Menu name | What it shows |
 |---|---|---|
-| [`fleetFunnel.html`](fleetFunnel.html) | Fleet by Type | Funnel of the fleet by vehicle model (VIN-decoded) |
+| [`fleetFunnel.html`](fleetFunnel.html) | Fleet by Location | Vehicles per location as a stacked bar — owned vs rental vs unknown — with a rental-reliance KPI, click-to-filter vehicle list, and an office × model table |
 | [`topSpeed.html`](topSpeed.html) | Top Speed by Driver | Peak speed per driver for a chosen day or range, against the written speeding policy, with speeding-event counts and a "speed demon" callout. Built for 1:1s and team meetings |
-| [`fleet.html`](fleet.html) | Fleet Register | Every vehicle in Geotab — ownership, location, driver, plate, camera and the compliance fields that used to live in the branch spreadsheets. KPI cards follow the active filters |
+| [`fleet.html`](fleet.html) | Fleet Roster | Every vehicle in Geotab — ownership, location, driver, plate, camera and the compliance fields that used to live in the branch spreadsheets. KPI cards follow the active filters |
 | [`rollout.html`](rollout.html) | GO9 & Camera Rollout | Per-location install progress: shipped → assigned → installed (VIN reporting) → camera fitted, so you can see which locations have done what |
-| [`violin.html`](violin.html) | Speeding Distribution | KPI summary + per-vehicle speeding rate (events/1,000 mi) distributed by office, over Safe/Watch/High-risk zones, with a per-vehicle table. 7/30/60/90-day windows and an office filter for branch managers |
+| [`violin.html`](violin.html) | Speeding Distribution | KPI summary + per-vehicle speeding rate (events/1,000 mi) distributed by office, over Within target / Monitor / Coaching review zones, with a per-vehicle table. 7/30/60/90-day windows and an office filter for branch managers |
 
 Install config: [`config/mira-fleet-charts.config.json`](config/mira-fleet-charts.config.json) ·
 Step-by-step: [`INSTALL.md`](INSTALL.md)
@@ -79,6 +79,26 @@ directions**, on 2026-08-06:
   Deployments page, which is what finally settled it.
 
 Do not tell anyone a change is live on the strength of a string match.
+
+### When Actions is down: build Pages directly
+
+The warning above is about the legacy **read** endpoint. The legacy **write**
+endpoint is a different thing and is the escape hatch — this repo's Pages source
+is `build_type=legacy` (deploy from a branch), so a build can be requested
+without Actions at all:
+
+```bash
+gh api -X POST repos/snelson-cell/geotab-addins/pages/builds
+gh api repos/snelson-cell/geotab-addins/pages/builds/latest -q '.status'
+```
+
+On 2026-08-06 a GitHub incident (Actions + Pages, "major outage", runners not
+being acquired) failed three `pages-build-deployment` runs in a row and left a
+fourth permanently wedged — GitHub's own state was self-contradictory for it,
+with `cancel` reporting "already completed" and `rerun` reporting "already
+running". Four commits sat undeployed for nine hours. The POST above built them
+in **20 seconds**. Reach for it when a run is queued or failing for
+infrastructure reasons; verify with the hash check as always.
 
 ## Design conventions
 
