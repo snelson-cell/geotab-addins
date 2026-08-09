@@ -131,6 +131,10 @@ geotab.addin.topSpeed = function () {
   var lastWidth=0, resizeTimer=null, resizeObs=null, resizePoll=null, onResize=null,
       pointerInChart=false;
   var fromDate=null, toDate=null;
+  // Auto-fallback state. `autoRange` stays true only while the range is one the
+  // page chose; the moment the user touches a preset or a date box it is their
+  // choice and must be honoured, empty or not.
+  var activeKey=null, autoRange=true, didFallback=false, fellBack=false;
   var allRows=[], officeFilter='', ctx={};
 
   // Stylesheet ships as a string: MyGeotab drops this file's <head>.
@@ -866,6 +870,16 @@ geotab.addin.topSpeed = function () {
         var unflagged=all.filter(function(r){ return r.peak===0 && r.unflaggedPeak>0; })
                          .sort(function(a,b){ return b.unflaggedPeak-a.unflaggedPeak; });
         if(!rows.length){
+          // Today is empty and nobody asked for today specifically -> show
+          // yesterday instead. Once only, and only from Today, so this can
+          // never loop. Deliberately NOT reached for a missing rule or an API
+          // error: those are faults to surface, not quiet days to skip past.
+          if(autoRange && !didFallback && activeKey==='today'){
+            didFallback=true; fellBack=true;
+            applyPreset(PRESETS[1]);        // Yesterday — also moves the button
+            if(apiRef) load(apiRef);
+            return;
+          }
           fail('No speeding events were recorded for any driver in '+esc(rangeLabel)+'. '+
                (unflagged.length ? unflagged.length+' driver(s) drove, topping out at '+
                  f1(unflagged[0].unflaggedPeak)+' mph, but nothing tripped the rule.'
@@ -925,6 +939,13 @@ geotab.addin.topSpeed = function () {
       return;
     }
     clearNotes();
+    // Said out loud every render, not just the first: the whole point of the
+    // busy-fade fix was that nobody should ever read one range as another.
+    if(fellBack){
+      note('ts-warn','ts-note--warn',
+        '<b>No flagged speeding today yet.</b> Showing <b>' + esc(ctx.rangeLabel) +
+        '</b> instead. Click <b>Today</b> to see today.');
+    }
     lastRows=rows; lastChart=rows;
 
     el('ts-scope').innerHTML = ctx.rangeLabel+' &middot; '+
@@ -997,12 +1018,12 @@ geotab.addin.topSpeed = function () {
     {k:'7',     label:'Last 7 days', days:6},
     {k:'30',    label:'Last 30 days', days:29}
   ];
-  function setRange(from,to,activeKey){
-    fromDate=from; toDate=to;
+  function setRange(from,to,key){
+    fromDate=from; toDate=to; activeKey=key;
     el('ts-from').value=ymd(from);
     el('ts-to').value=ymd(to);
     el('ts-presets').querySelectorAll('button').forEach(function(b){
-      b.setAttribute('aria-pressed', String(b.getAttribute('data-k')===activeKey));
+      b.setAttribute('aria-pressed', String(b.getAttribute('data-k')===key));
     });
   }
   function applyPreset(p){
@@ -1018,6 +1039,10 @@ geotab.addin.topSpeed = function () {
     el('ts-presets').querySelectorAll('button').forEach(function(b){
       b.addEventListener('click', function(){
         var p=PRESETS.filter(function(x){ return x.k===b.getAttribute('data-k'); })[0];
+        // An explicit click is a question the user asked. If they pick Today and
+        // today is empty, they need to SEE that — silently showing yesterday
+        // would answer a question they did not ask.
+        autoRange=false; fellBack=false;
         applyPreset(p);
         if(apiRef) load(apiRef);
       });
@@ -1026,6 +1051,7 @@ geotab.addin.topSpeed = function () {
       var f=parseYmd(el('ts-from').value), t=parseYmd(el('ts-to').value);
       if(isNaN(f)||isNaN(t)) return;
       if(f>t){ var tmp=f; f=t; t=tmp; }
+      autoRange=false; fellBack=false;
       setRange(f,t,null);
       if(apiRef) load(apiRef);
     }
@@ -1077,7 +1103,15 @@ geotab.addin.topSpeed = function () {
     initialize:function(api,state,cb){
       injectStyles(); buildDates(); wireOffice(); wireTools(); watchResize(); cb();
     },
-    focus:function(api,state){ stateRef=state; startPoll(); load(api); },
+    focus:function(api,state){
+      stateRef=state; startPoll();
+      // Re-resolve a relative preset on every focus. Without this a tab left
+      // open across midnight keeps yesterday's dates under a "Today" button —
+      // the exact stale-range confusion this page just had fixed.
+      if(activeKey){ var p=PRESETS.filter(function(x){ return x.k===activeKey; })[0];
+                     if(p) applyPreset(p); }
+      load(api);
+    },
     blur:function(){ stopPoll(); }
   };
 };
