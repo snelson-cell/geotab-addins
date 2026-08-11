@@ -29,7 +29,7 @@
   <div class="ds-tablehead">
     <div class="ds-tabletitle" id="ds-title">Ranked drivers</div>
     <div class="ds-tools">
-      <button type="button" id="ds-tier">Coaching list only</button>
+      <button type="button" id="ds-tier">Priority only</button>
       <button type="button" id="ds-csv">Export CSV</button>
     </div>
   </div>
@@ -119,11 +119,14 @@ geotab.addin.driverScorecard = function () {
     // red = worse. Sequential would have been wrong here — the meaning is
     // polarity around a midpoint, not magnitude from zero.
     'td.mcell{text-align:center;font-weight:650;border-radius:0;}',
-    '.ds-tier{display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.05em;',
-    '  text-transform:uppercase;padding:2px 7px;border-radius:20px;}',
-    '.ds-tier.strong{background:#e6f0fb;color:#1c5cab;}',
-    '.ds-tier.typical{background:#f0efec;color:var(--ink-2);}',
-    '.ds-tier.coach{background:#fbece8;color:var(--bad-ink);}',
+    '.ds-band{display:inline-block;font-size:12px;font-weight:700;padding:2px 8px;border-radius:20px;}',
+    '.ds-band.low{background:#e6f0fb;color:#1c5cab;}',
+    '.ds-band.typ{background:#f0efec;color:var(--ink-2);}',
+    '.ds-band.elev{background:#fdf1e8;color:#8a4b1d;}',
+    '.ds-band.prio{background:#fbece8;color:var(--bad-ink);}',
+    '.ds-trend{display:inline-block;font-size:12px;font-weight:650;}',
+    '.ds-trend.worse{color:var(--bad-ink);} .ds-trend.better{color:var(--good-ink);}',
+    '.ds-trend.steady{color:var(--ink-3);font-weight:500;} .ds-trend.new{color:var(--axis);}',
     '.ds-legend{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:11.5px;',
     '  color:var(--ink-3);margin:11px 2px 0;}',
     '.ds-legend i{width:26px;height:11px;border-radius:2px;display:inline-block;}',
@@ -151,8 +154,24 @@ geotab.addin.driverScorecard = function () {
   var PERIODS   = [7, 30];
   var MIN_MILES = 250;   // below this a rate is too jumpy to rank on
   var SHRINK_K  = 2;     // prior strength, in thousands of miles
-  var COACH_PCT = 0.20;  // bottom fifth land on the coaching list
-  var STRONG_PCT= 0.20;
+
+  // Bands are ABSOLUTE multiples of the fleet MEDIAN, not rank quantiles.
+  // A rank tier is a treadmill: exactly 20% are bottom-fifth forever, however
+  // much the fleet improves, so coaching can never show up as progress. With
+  // an absolute band the list shrinks when driving gets better. Median rather
+  // than mean because the distribution is heavily right-skewed — the mean sits
+  // at roughly the 68th percentile of drivers.
+  var BANDS = [
+    {max:0.50, key:'low',  label:'Well below'},
+    {max:1.50, key:'typ',  label:'Typical'},
+    {max:2.50, key:'elev', label:'Elevated'},
+    {max:1e9,  key:'prio', label:'Priority'}
+  ];
+  function bandFor(ratio){
+    for(var i=0;i<BANDS.length;i++){ if(ratio < BANDS[i].max) return BANDS[i]; }
+    return BANDS[BANDS.length-1];
+  }
+  var TREND_Z = 2;       // sigmas a move must clear before it is called a change
   var PAGE_CAP  = 25000; // Trip hard-caps here; ExceptionEvent truncates AT resultsLimit
   var ROW_LIMIT = 25000;
   var KM_TO_MI  = 0.621371;
@@ -268,14 +287,69 @@ geotab.addin.driverScorecard = function () {
       var bad = 0;
       METRICS.forEach(function(m){ bad += m.w * d.pct[m.id]; });
       d.score = Math.round(100 - bad);   // higher is better
+      // Weighted event RATE, separate from the score. The score says where a
+      // driver ranks among peers; this says how often they set something off
+      // compared with a typical driver, and unlike a rank it can improve.
+      d.wRate = weightedRate(d);
+    });
+    var med = median(drivers.map(function(d){ return d.wRate; }));
+    drivers.forEach(function(d){
+      d.ratio = med > 0 ? d.wRate/med : 1;
+      d.band  = bandFor(d.ratio);
     });
     drivers.sort(function(a,b){ return b.score-a.score || b.miles-a.miles; });
-    var n = drivers.length;
-    drivers.forEach(function(d,i){
-      d.rank = i+1;
-      d.tier = i < n*STRONG_PCT ? 'strong' : (i >= n*(1-COACH_PCT) ? 'coach' : 'typical');
-    });
-    return drivers;
+    drivers.forEach(function(d,i){ d.rank = i+1; });
+    return {drivers:drivers, median:med};
+  }
+
+  function weightedEvents(d){
+    var e = 0;
+    METRICS.forEach(function(m){ e += m.w * (d.ev[m.id]||0); });
+    return e;
+  }
+  function weightedRate(d){ return d.miles > 0 ? weightedEvents(d)/(d.miles/1000) : 0; }
+  // Var(sum w_i N_i) = sum w_i^2 * lambda_i for independent Poisson counts.
+  function weightedVar(d){
+    var v = 0;
+    METRICS.forEach(function(m){ v += m.w * m.w * Math.max(d.ev[m.id]||0, 1); });
+    return v;
+  }
+  function median(a){
+    if(!a.length) return 0;
+    var s = a.slice().sort(function(x,y){ return x-y; }), h = s.length>>1;
+    return s.length % 2 ? s[h] : (s[h-1]+s[h])/2;
+  }
+
+  // A change is only called a change when it clears Poisson noise at THAT
+  // driver's exposure — 200 miles and four events cannot show a trend.
+  // Crucially this compares each driver's RATIO to the fleet, not their raw
+  // rate: between the last two 30-day windows the fleet median moved +27% on
+  // its own (rule changes, route mix, new vehicles). Trending raw rates blamed
+  // that on individuals — 4 "worse" for every 1 "better". Trending position
+  // instead comes out 1.4:1, which is what individual variation looks like.
+  function trendOf(d, prev, curMed, prevMed){
+    if(!prev || prev.miles < MIN_MILES) return {key:'new', label:'—', title:'No comparable previous period'};
+    var e1 = weightedEvents(d),    m1 = d.miles/1000;
+    var e2 = weightedEvents(prev), m2 = prev.miles/1000;
+    if(!m1 || !m2 || !curMed || !prevMed) return {key:'new', label:'—', title:'Not enough history'};
+    var r1 = (e1/m1)/curMed, r2 = (e2/m2)/prevMed;
+    // The weighted total is NOT itself a Poisson count, so its variance is
+    // sum(w^2 * n), not the total. Treating it as a count would scale the
+    // standard error with the arbitrary choice of weight magnitude.
+    var se = Math.sqrt(
+      Math.max(weightedVar(d),    1e-9)/(m1*m1*curMed*curMed) +
+      Math.max(weightedVar(prev), 1e-9)/(m2*m2*prevMed*prevMed));
+    var z  = se ? (r1-r2)/se : 0;
+    var pctMove = r2 ? Math.round(100*(r1-r2)/r2) : 0;
+    var t = Math.abs(z) < TREND_Z ? 'steady' : (z > 0 ? 'worse' : 'better');
+    return {
+      key: t,
+      label: t==='steady' ? 'steady' : (z>0 ? '▲ ' : '▼ ')+Math.abs(pctMove)+'%',
+      title: 'Position vs fleet: '+r2.toFixed(2)+'x → '+r1.toFixed(2)+'x ('+
+             (pctMove>=0?'+':'')+pctMove+'%, '+Math.abs(z).toFixed(1)+' sigma). '+
+             (t==='steady' ? 'Inside normal variation for '+f0(d.miles)+' miles.'
+                           : 'Larger than noise at this mileage.')
+    };
   }
 
   // ── Load ─────────────────────────────────────────────────────────────────
@@ -306,53 +380,59 @@ geotab.addin.driverScorecard = function () {
         return;
       }
 
+      function driverId(x){
+        if(x && typeof x === 'object' && x.id && x.id !== 'UnknownDriverId') return x.id;
+        if(typeof x === 'string' && x && x !== 'UnknownDriverId') return x;
+        return null;
+      }
+
       // One windowed fetch PER RULE. An unfiltered 30-day ExceptionEvent Get
       // pulls ~76,000 rows across every rule in the database and throws 70% of
       // them away; the four rules scored here are under a third of that.
-      function fetchEvents(cb, err){
-        var got = [], left = METRICS.length;
-        METRICS.forEach(function(m){
-          fetchWindowed(api, 'ExceptionEvent', from.toISOString(), to.toISOString(),
-            function(rows){ got = got.concat(rows); if(--left === 0) cb(got); },
-            err, {ruleSearch:{id:m.rule}});
-        });
+      function fetchWindow(a, b, cb, err){
+        fetchWindowed(api, 'Trip', a.toISOString(), b.toISOString(), function(trips){
+          var got = [], left = METRICS.length;
+          METRICS.forEach(function(m){
+            fetchWindowed(api, 'ExceptionEvent', a.toISOString(), b.toISOString(),
+              function(rows){ got = got.concat(rows); if(--left === 0) cb(build(trips, got)); },
+              err, {ruleSearch:{id:m.rule}});
+          });
+        }, err);
       }
 
-      fetchWindowed(api, 'Trip', from.toISOString(), to.toISOString(), function(trips){
-        fetchEvents(function(events){
+      function build(trips, events){
+        var drv = {}, unattributed = 0;
+        function ensure(id, office){
+          if(!drv[id]) drv[id] = {id:id, name:uname[id]||id, office:office,
+                                  miles:0, ev:{}, rate:{}, pct:{}};
+          return drv[id];
+        }
+        trips.forEach(function(t){
+          var off = devOffice[(t.device||{}).id]; if(!off) return;
+          var mi = (t.distance||0)*KM_TO_MI;
+          var id = driverId(t.driver);
+          if(!id){ unattributed += mi; return; }
+          ensure(id, off).miles += mi;
+        });
+        events.forEach(function(e){
+          var metric = RULE_TO_METRIC[(e.rule||{}).id]; if(!metric) return;
+          var off = devOffice[(e.device||{}).id]; if(!off) return;
+          var id = driverId(e.driver); if(!id) return;
+          ensure(id, off).ev[metric] = (ensure(id, off).ev[metric]||0) + 1;
+        });
+        return {drv:drv, unattributed:unattributed};
+      }
 
-          var drv = {}, unattributed = 0;
-          function ensure(id, office){
-            if(!drv[id]) drv[id] = {id:id, name:uname[id]||id, office:office,
-                                    miles:0, ev:{}, rate:{}, pct:{}};
-            return drv[id];
-          }
-          function driverId(x){
-            if(x && typeof x === 'object' && x.id && x.id !== 'UnknownDriverId') return x.id;
-            if(typeof x === 'string' && x && x !== 'UnknownDriverId') return x;
-            return null;
-          }
-
-          trips.forEach(function(t){
-            var off = devOffice[(t.device||{}).id]; if(!off) return;
-            var mi = (t.distance||0)*KM_TO_MI;
-            var id = driverId(t.driver);
-            if(!id){ unattributed += mi; return; }
-            ensure(id, off).miles += mi;
-          });
-          events.forEach(function(e){
-            var metric = RULE_TO_METRIC[(e.rule||{}).id]; if(!metric) return;
-            var off = devOffice[(e.device||{}).id]; if(!off) return;
-            var id = driverId(e.driver); if(!id) return;
-            var d = ensure(id, off);
-            d.ev[metric] = (d.ev[metric]||0) + 1;
-          });
-
-          DATA = {drv:drv, unattributed:unattributed, from:from, to:to};
+      // The previous window of equal length, for the trend column.
+      var prevFrom = new Date(from.getTime() - days*24*3600*1000);
+      fetchWindow(from, to, function(cur){
+        fetchWindow(prevFrom, from, function(prev){
+          DATA = {drv:cur.drv, prev:prev.drv, unattributed:cur.unattributed,
+                  from:from, to:to, prevFrom:prevFrom};
           el('ds-root').classList.remove('busy');
           render();
-        }, function(err){ fail('Error loading events: '+esc(err)); });
-      }, function(err){ fail('Error loading trips: '+esc(err)); });
+        }, function(err){ fail('Error loading the previous period: '+esc(err)); });
+      }, function(err){ fail('Error loading this period: '+esc(err)); });
     }, function(err){ fail('Error loading vehicles and drivers: '+esc(err)); });
   }
 
@@ -377,7 +457,16 @@ geotab.addin.driverScorecard = function () {
     // office must not re-rank the survivors, or a manager's "12th of 166"
     // changes meaning depending on which dropdown they touched.
     var eligible = all.filter(function(d){ return d.miles >= MIN_MILES; });
-    scoreAll(eligible);
+    var scored = scoreAll(eligible);
+    var curMed = scored.median;
+    // The previous window gets its own median, so a fleet-wide shift cancels
+    // instead of landing on every driver as "getting worse".
+    var prevAll = Object.keys(DATA.prev||{}).map(function(k){ return DATA.prev[k]; })
+                        .filter(function(d){ return d.miles >= MIN_MILES; });
+    var prevMed = median(prevAll.map(function(d){ return weightedRate(d); }));
+    eligible.forEach(function(d){
+      d.trend = trendOf(d, (DATA.prev||{})[d.id], curMed, prevMed);
+    });
     var companyN = eligible.length;
     var byOffice = {};
     eligible.forEach(function(d){ (byOffice[d.office] = byOffice[d.office] || []).push(d); });
@@ -396,32 +485,35 @@ geotab.addin.driverScorecard = function () {
       (officeFilter ? esc(officeFilter)+' only' : Object.keys(offices).length+' locations')+
       ' &middot; previous '+days+' days &middot; '+MIN_MILES+'+ mi to qualify';
 
-    var coach = view.filter(function(d){ return d.tier==='coach'; });
-    var strong= view.filter(function(d){ return d.tier==='strong'; });
+    var priority = view.filter(function(d){ return d.band.key==='prio'; });
+    var moving   = view.filter(function(d){ return d.trend.key==='worse'; });
     var totMi = view.reduce(function(s,d){ return s+d.miles; }, 0);
     var totEv = view.reduce(function(s,d){
       return s + METRICS.reduce(function(a,m){ return a+(d.ev[m.id]||0); }, 0); }, 0);
+    var noHist = view.filter(function(d){ return d.trend.key==='new'; }).length;
 
     el('ds-kpis').innerHTML =
-      kpi('Coaching list', String(coach.length),
-          'bottom '+Math.round(COACH_PCT*100)+'% of the company &middot; <span class="muted">'+
+      kpi('Priority', String(priority.length),
+          'over '+BANDS[2].max+'&times; the fleet median &middot; <span class="muted">'+
           (officeFilter ? esc(officeFilter) : 'fleet-wide')+'</span>') +
       kpi('Drivers ranked', String(view.length),
           unranked.length+' below '+MIN_MILES+' mi &middot; <span class="muted">not scored</span>') +
       kpi('Events per 1,000 mi', totMi ? (totEv/(totMi/1000)).toFixed(1) : '—',
           f0(totEv)+' events over '+f0(totMi)+' mi') +
-      kpi('Strong performers', String(strong.length),
-          'top '+Math.round(STRONG_PCT*100)+'% &middot; <span class="muted">worth naming out loud</span>');
+      kpi('Slipping', String(moving.length),
+          'moved against the fleet by more than noise'+
+          (noHist ? ' &middot; <span class="muted">'+noHist+' too new to tell</span>' : ''));
 
     // ── Ranked table ──────────────────────────────────────────────────────
-    var rows = coachOnly ? view.filter(function(d){ return d.tier==='coach'; }) : view;
+    var rows = coachOnly ? view.filter(function(d){ return d.band.key==='prio'; }) : view;
     el('ds-title').textContent = coachOnly
-      ? 'Coaching list ('+rows.length+')'
+      ? 'Priority list ('+rows.length+')'
       : 'Ranked drivers ('+rows.length+')';
 
     var head = '<table class="ds-t"><thead><tr>'+
       '<th class="r">#</th><th>Driver</th><th>Location</th>'+
-      '<th class="r">Miles</th><th class="c">Score</th><th>Tier</th>'+
+      '<th class="r">Miles</th><th class="c">Score</th>'+
+      '<th class="c">vs fleet</th><th class="c">Trend</th>'+
       METRICS.map(function(m){ return '<th class="c">'+esc(m.id)+'</th>'; }).join('')+
       '<th class="c">In office</th></tr></thead><tbody>';
     var body = rows.map(function(d){
@@ -431,8 +523,11 @@ geotab.addin.driverScorecard = function () {
         '<td>'+esc(d.office)+'</td>'+
         '<td class="r">'+f0(d.miles)+'</td>'+
         '<td class="c"><span class="ds-score">'+d.score+'</span></td>'+
-        '<td><span class="ds-tier '+d.tier+'">'+
-          (d.tier==='coach'?'Coach':d.tier==='strong'?'Strong':'Typical')+'</span></td>'+
+        '<td class="c"><span class="ds-band '+d.band.key+'" title="'+esc(d.band.label)+
+          ' — '+d.ratio.toFixed(2)+' times the fleet median weighted event rate">'+
+          d.ratio.toFixed(2)+'&times;</span></td>'+
+        '<td class="c"><span class="ds-trend '+d.trend.key+'" title="'+esc(d.trend.title)+'">'+
+          d.trend.label+'</span></td>'+
         METRICS.map(function(m){
           var f = fillFor(d.pct[m.id]);
           return '<td class="mcell" style="background:'+f.bg+';color:'+f.fg+'" title="'+
@@ -470,7 +565,10 @@ geotab.addin.driverScorecard = function () {
   function renderFoot(companyN){
     var legend = '<div class="ds-legend"><span>Cell colour:</span>'+
       FILL.map(function(f){ return '<i style="background:'+f.bg+'"></i>'; }).join('')+
-      '<span>better than typical &rarr; worse</span></div>';
+      '<span>better than typical &rarr; worse</span>'+
+      '<span style="margin-left:14px">Bands:</span>'+
+      BANDS.map(function(b,i){ return '<span class="ds-band '+b.key+'">'+esc(b.label)+'</span>'; }).join('')+
+      '</div>';
     var w = METRICS.map(function(m){ return esc(m.id)+' '+Math.round(m.w*100)+'%'; }).join(' &middot; ');
     var crossed = DATA && DATA.from.getTime() < RULE_CHANGE;
     el('ds-foot').innerHTML = legend +
@@ -489,6 +587,18 @@ geotab.addin.driverScorecard = function () {
       SHRINK_K+',000 miles worth. A driver with 300 miles and four events has not shown you '+
       'a rate yet, and without this they would swing between best and worst week to week. '+
       'Under '+MIN_MILES+' miles nobody is scored at all.</p>'+
+      '<p><b>vs fleet</b> is that driver\'s weighted event rate as a multiple of the fleet '+
+      '<b>median</b> &mdash; median, not average, because the spread is heavily right-skewed and '+
+      'the average sits near the 68th driver. The bands are fixed multiples, deliberately not '+
+      'quantiles: a bottom-20% tier would label exactly 20% of people a problem forever, however '+
+      'much the fleet improves. With a fixed band the list can actually empty out.</p>'+
+      '<p><b>Trend compares position, not raw rate.</b> Between the last two 30-day windows the '+
+      'fleet median moved 27% on its own &mdash; rule changes, route mix, new vehicles &mdash; '+
+      'and trending raw rates charged that to individuals, four &ldquo;worse&rdquo; for every one '+
+      '&ldquo;better&rdquo;. Comparing each driver\'s multiple of the fleet instead comes out '+
+      'near even. An arrow only appears when the move is larger than Poisson noise at that '+
+      'driver\'s mileage; below that it says steady, and with no comparable previous period it '+
+      'says nothing at all.</p>'+
       '<p><b>Rank is coarser than it looks.</b> Measured on this fleet, a driver\'s rank moves '+
       'a median of 17 places between one half of a week and the other. Two drivers within '+
       'about 20 places of each other are not distinguishable &mdash; act on the <b>tier</b>, '+
@@ -542,7 +652,7 @@ geotab.addin.driverScorecard = function () {
     el('ds-tier').addEventListener('click', function(){
       coachOnly = !coachOnly;
       el('ds-tier').className = coachOnly ? 'on' : '';
-      el('ds-tier').textContent = coachOnly ? 'Show everyone' : 'Coaching list only';
+      el('ds-tier').textContent = coachOnly ? 'Show everyone' : 'Priority only';
       render();
     });
     el('ds-toggle').addEventListener('click', function(){
@@ -555,12 +665,13 @@ geotab.addin.driverScorecard = function () {
 
   function exportCsv(){
     if(!lastRanked.length) return;
-    var head = ['Rank','Driver','Location','Miles','Score','Tier','OfficeRank','OfficeSize']
+    var head = ['Rank','Driver','Location','Miles','Score','VsFleetMedian','Band','Trend','OfficeRank','OfficeSize']
       .concat(METRICS.map(function(m){ return m.id+' per 1000mi'; }))
       .concat(METRICS.map(function(m){ return m.id+' events'; }));
     var lines = [head.join(',')].concat(lastRanked.map(function(d){
       return [d.rank, '"'+String(d.name).replace(/"/g,'""')+'"', '"'+d.office+'"',
-              Math.round(d.miles), d.score, d.tier, d.officeRank, d.officeN]
+              Math.round(d.miles), d.score, d.ratio.toFixed(2), d.band.key,
+              d.trend.key, d.officeRank, d.officeN]
         .concat(METRICS.map(function(m){ return d.rate[m.id].toFixed(2); }))
         .concat(METRICS.map(function(m){ return d.ev[m.id]||0; })).join(',');
     }));
