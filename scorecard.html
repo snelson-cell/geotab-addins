@@ -27,6 +27,12 @@
   <div class="ds-kpis" id="ds-kpis"></div>
 
   <div class="ds-tablehead">
+    <div class="ds-tabletitle" id="ds-offtitle">Office standings</div>
+    <div class="ds-tools"><button type="button" id="ds-offtoggle" class="on">Hide</button></div>
+  </div>
+  <div class="ds-card" id="ds-offwrap"></div>
+
+  <div class="ds-tablehead">
     <div class="ds-tabletitle" id="ds-title">Ranked drivers</div>
     <div class="ds-tools">
       <button type="button" id="ds-tier">Priority only</button>
@@ -119,6 +125,9 @@ geotab.addin.driverScorecard = function () {
     // red = worse. Sequential would have been wrong here — the meaning is
     // polarity around a midpoint, not magnitude from zero.
     'td.mcell{text-align:center;font-weight:650;border-radius:0;}',
+    'table.ds-t tr.sel td{background:#eaf2fc;}',
+    'table.ds-t tr.sel td:first-child{box-shadow:inset 3px 0 0 var(--accent);}',
+    'table.ds-t tr.sel td.name{color:var(--accent);}',
     '.ds-band{display:inline-block;font-size:12px;font-weight:700;padding:2px 8px;border-radius:20px;}',
     '.ds-band.low{background:#e6f0fb;color:#1c5cab;}',
     '.ds-band.typ{background:#f0efec;color:var(--ink-2);}',
@@ -474,6 +483,22 @@ geotab.addin.driverScorecard = function () {
       byOffice[o].forEach(function(d,i){ d.officeRank = i+1; d.officeN = byOffice[o].length; });
     });
 
+    // Office standings. Ranked on the MEDIAN driver's multiple, not the office
+    // total: a median puts the office in exactly the same unit as each driver
+    // ("the typical driver here is 1.3x the company typical"), and one outlier
+    // cannot drag a whole branch down the table.
+    var standings = Object.keys(byOffice).map(function(o){
+      return {office:o, n:byOffice[o].length,
+              med: median(byOffice[o].map(function(d){ return d.ratio; })),
+              prio: byOffice[o].filter(function(d){ return d.band.key==='prio'; }).length};
+    }).sort(function(a,b){ return a.med-b.med; });
+    standings.forEach(function(s,i){ s.rank = i+1; });
+    var rankOfOffice = {};
+    standings.forEach(function(s){ rankOfOffice[s.office] = s; });
+    // Offices with vehicles in scope but nobody scorable are listed too — an
+    // empty branch must not read as a good branch.
+    var unscored = Object.keys(offices).filter(function(o){ return !rankOfOffice[o]; }).sort();
+
     var view      = officeFilter ? eligible.filter(function(d){ return d.office===officeFilter; }) : eligible;
     var unranked  = all.filter(function(d){ return d.miles < MIN_MILES; })
                        .filter(function(d){ return !officeFilter || d.office===officeFilter; })
@@ -502,7 +527,40 @@ geotab.addin.driverScorecard = function () {
           f0(totEv)+' events over '+f0(totMi)+' mi') +
       kpi('Slipping', String(moving.length),
           'moved against the fleet by more than noise'+
-          (noHist ? ' &middot; <span class="muted">'+noHist+' too new to tell</span>' : ''));
+          (noHist ? ' &middot; <span class="muted">'+noHist+' too new to tell</span>' : '')) +
+      (officeFilter && rankOfOffice[officeFilter]
+        ? kpi('Office rank',
+              rankOfOffice[officeFilter].rank+'<span style="font-size:17px;color:var(--ink-3)"> of '+
+                standings.length+'</span>',
+              'typical driver here is '+rankOfOffice[officeFilter].med.toFixed(2)+'&times; the company median'+
+              (unscored.length ? ' &middot; <span class="muted">'+unscored.length+
+               ' office'+(unscored.length===1?'':'s')+' unscorable</span>' : ''))
+        : kpi('Offices ranked', String(standings.length),
+              standings.length ? esc(standings[0].office)+' best &middot; <span class="muted">'+
+                esc(standings[standings.length-1].office)+' worst</span>' : '&mdash;'));
+
+    // ── Office standings ──────────────────────────────────────────────────
+    el('ds-offtitle').innerHTML = 'Office standings' + (officeFilter
+      ? ' <span style="font-weight:400;color:var(--ink-3)">&mdash; all offices shown, '+
+        esc(officeFilter)+' highlighted</span>' : '');
+    var oh = '<table class="ds-t"><thead><tr><th class="r">#</th><th>Office</th>'+
+      '<th class="r">Drivers scored</th><th class="c">Typical driver</th>'+
+      '<th class="r">Priority</th></tr></thead><tbody>';
+    var ob = standings.map(function(s){
+      var b = bandFor(s.med);
+      return '<tr'+(s.office===officeFilter?' class="sel"':'')+'>'+
+        '<td class="rank">'+s.rank+'</td>'+
+        '<td class="name">'+esc(s.office)+'</td>'+
+        '<td class="r">'+s.n+'</td>'+
+        '<td class="c"><span class="ds-band '+b.key+'">'+s.med.toFixed(2)+'&times;</span></td>'+
+        '<td class="r"'+(s.prio?' style="color:var(--bad-ink);font-weight:600"':'')+'>'+s.prio+'</td></tr>';
+    }).join('') + unscored.map(function(o){
+      return '<tr'+(o===officeFilter?' class="sel"':'')+'><td class="rank">&mdash;</td>'+
+        '<td class="name">'+esc(o)+'</td><td class="r">0</td>'+
+        '<td class="c" colspan="2" style="color:var(--warn-ink)">no driver with '+MIN_MILES+
+        '+ attributed miles &mdash; unmeasured, not clean</td></tr>';
+    }).join('');
+    el('ds-offwrap').innerHTML = oh+ob+'</tbody></table>';
 
     // ── Ranked table ──────────────────────────────────────────────────────
     var rows = coachOnly ? view.filter(function(d){ return d.band.key==='prio'; }) : view;
@@ -599,6 +657,12 @@ geotab.addin.driverScorecard = function () {
       'near even. An arrow only appears when the move is larger than Poisson noise at that '+
       'driver\'s mileage; below that it says steady, and with no comparable previous period it '+
       'says nothing at all.</p>'+
+      '<p><b>Offices are ranked on their MEDIAN driver</b>, not their total, so one bad week '+
+      'from one person cannot drag a branch down the table and a large branch is not penalised '+
+      'for having more people. It is the same unit as the driver column &mdash; 1.30&times; means '+
+      'the typical driver there sets things off 30% more often than the typical driver company-wide. '+
+      'Offices with nobody over '+MIN_MILES+' miles are listed without a rank rather than left out: '+
+      'an empty branch is unmeasured, not clean, and the fix is assigning drivers to vehicles.</p>'+
       '<p><b>Rank is coarser than it looks.</b> Measured on this fleet, a driver\'s rank moves '+
       'a median of 17 places between one half of a week and the other. Two drivers within '+
       'about 20 places of each other are not distinguishable &mdash; act on the <b>tier</b>, '+
@@ -659,6 +723,12 @@ geotab.addin.driverScorecard = function () {
       var w = el('ds-unranked'), on = w.classList.toggle('on');
       el('ds-toggle').className = on ? 'on' : '';
       el('ds-toggle').textContent = on ? 'Hide' : 'Show';
+    });
+    el('ds-offtoggle').addEventListener('click', function(){
+      var w = el('ds-offwrap'), hide = w.style.display !== 'none';
+      w.style.display = hide ? 'none' : '';
+      el('ds-offtoggle').className = hide ? '' : 'on';
+      el('ds-offtoggle').textContent = hide ? 'Show' : 'Hide';
     });
     el('ds-csv').addEventListener('click', exportCsv);
   }
