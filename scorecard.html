@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<!-- No charting library. The scorecard is a ranked table with diverging cell
+     fills; ApexCharts would be a CDN dependency bought for nothing. -->
+</head>
+<body>
+<div id="ds-root">
+  <div class="ds-topbar">
+    <div>
+      <h2 class="ds-h1">Driver scorecard</h2>
+      <div class="ds-scope" id="ds-scope">Loading…</div>
+    </div>
+    <div class="ds-controls">
+      <label class="ds-officepick">
+        <span>Office</span>
+        <select id="ds-office" aria-label="Filter to one office"><option value="">All offices</option></select>
+      </label>
+      <div class="ds-periods" id="ds-periods" role="group" aria-label="Time range"></div>
+    </div>
+  </div>
+
+  <div class="ds-note" id="ds-stop"></div>
+  <div class="ds-note" id="ds-warn"></div>
+
+  <div class="ds-kpis" id="ds-kpis"></div>
+
+  <div class="ds-tablehead">
+    <div class="ds-tabletitle" id="ds-title">Ranked drivers</div>
+    <div class="ds-tools">
+      <button type="button" id="ds-tier">Coaching list only</button>
+      <button type="button" id="ds-csv">Export CSV</button>
+    </div>
+  </div>
+  <div class="ds-card" id="ds-tablewrap"></div>
+
+  <div class="ds-tablehead">
+    <div class="ds-tabletitle" id="ds-unranked-title">Not enough miles to rank</div>
+    <div class="ds-tools"><button type="button" id="ds-toggle">Show</button></div>
+  </div>
+  <div class="ds-tablewrap" id="ds-unranked"></div>
+
+  <div class="ds-foot" id="ds-foot"></div>
+</div>
+
+<script>
+// Registration name must stay stable — the installed MyGeotab add-in config
+// references it, as it does this file's URL.
+geotab.addin.driverScorecard = function () {
+  'use strict';
+
+  // MyGeotab drops this file's <head>, so the stylesheet ships as a string and
+  // is injected at initialize(). Moving it back into <head> renders the page
+  // completely unstyled, with no warning.
+  var STYLE_ID = 'ds-styles';
+  var CSS = [
+    '#ds-root{',
+    '  --surface-1:#fcfcfb; --page:#f9f9f7;',
+    '  --ink-1:#0b0b0b; --ink-2:#52514e; --ink-3:#898781;',
+    '  --grid:#e1e0d9; --axis:#c3c2b7; --hairline:rgba(11,11,11,.10);',
+    '  --accent:#2a78d6; --good-ink:#0a6b18; --warn-ink:#7a5300; --bad-ink:#9b2626;',
+    '  font-family:system-ui,-apple-system,"Segoe UI",sans-serif;',
+    '  color:var(--ink-1); background:var(--page); padding:18px 20px 28px; width:100%;}',
+    '#ds-root, #ds-root *{box-sizing:border-box;}',
+    '.ds-h1{font-size:19px;font-weight:650;margin:0;letter-spacing:-.01em;}',
+    '.ds-scope{font-size:12.5px;color:var(--ink-3);margin:3px 0 0;}',
+    '.ds-topbar{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:12px;}',
+    '.ds-controls{display:flex;flex-wrap:wrap;align-items:center;gap:10px;}',
+    '.ds-officepick{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:var(--ink-3);}',
+    '.ds-officepick select{font:inherit;font-size:12.5px;font-weight:600;color:var(--ink-1);',
+    '  background:var(--surface-1);border:1px solid var(--axis);border-radius:7px;padding:6px 9px;cursor:pointer;}',
+    '.ds-officepick.on select{border-color:var(--accent);color:var(--accent);}',
+    '.ds-periods{display:inline-flex;border:1px solid var(--axis);border-radius:7px;overflow:hidden;background:var(--surface-1);}',
+    '.ds-periods button{border:0;background:transparent;color:var(--ink-2);font:inherit;font-size:12.5px;',
+    '  font-weight:600;padding:6px 12px;cursor:pointer;border-right:1px solid var(--grid);}',
+    '.ds-periods button:last-child{border-right:0;}',
+    '.ds-periods button[aria-pressed="true"]{background:var(--accent);color:#fff;}',
+    '#ds-root.busy .ds-kpis, #ds-root.busy .ds-card, #ds-root.busy .ds-tablewrap,',
+    '#ds-root.busy .ds-foot{opacity:.3;pointer-events:none;transition:opacity .12s ease;}',
+    '',
+    '.ds-note{font-size:12.5px;border-radius:7px;padding:9px 12px;margin:12px 0 0;display:none;',
+    '  border:1px solid var(--hairline);background:var(--surface-1);color:var(--ink-2);}',
+    '.ds-note.on{display:block;}',
+    '.ds-note--warn{background:#fdf6e3;border-color:#efdca8;color:var(--warn-ink);}',
+    '.ds-note--stop{background:#fbece8;border-color:#f0cfc7;color:var(--bad-ink);}',
+    '',
+    '.ds-kpis{display:flex;flex-wrap:wrap;gap:12px;margin:14px 0 0;}',
+    '.ds-kpi{flex:1 1 190px;min-width:0;background:var(--surface-1);border:1px solid var(--hairline);',
+    '  border-radius:9px;padding:13px 15px 14px;}',
+    '.ds-kpi-label{font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3);}',
+    '.ds-kpi-value{font-size:29px;font-weight:640;line-height:1.12;margin:7px 0 0;letter-spacing:-.02em;}',
+    '.ds-kpi-sub{font-size:12px;color:var(--ink-2);margin:4px 0 0;line-height:1.4;}',
+    '.ds-kpi-sub .muted{color:var(--ink-3);}',
+    '',
+    '.ds-card{background:var(--surface-1);border:1px solid var(--hairline);border-radius:9px;',
+    '  margin:9px 0 0;overflow-x:auto;}',
+    '.ds-tablehead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:20px 0 0;}',
+    '.ds-tabletitle{font-size:14px;font-weight:650;}',
+    '.ds-tools{display:flex;flex-wrap:wrap;gap:8px;}',
+    '.ds-tools button{font:inherit;font-size:12.5px;font-weight:600;color:var(--ink-2);',
+    '  background:var(--surface-1);border:1px solid var(--axis);border-radius:6px;padding:5px 11px;cursor:pointer;}',
+    '.ds-tools button.on{border-color:var(--accent);color:var(--accent);}',
+    '.ds-tablewrap{margin:9px 0 0;border:1px solid var(--hairline);border-radius:9px;',
+    '  background:var(--surface-1);display:none;overflow-x:auto;}',
+    '.ds-tablewrap.on{display:block;}',
+    'table.ds-t{border-collapse:collapse;width:100%;font-size:12.5px;font-variant-numeric:tabular-nums;}',
+    'table.ds-t th{position:sticky;top:0;background:var(--surface-1);text-align:left;font-size:10.5px;',
+    '  letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);padding:9px 10px;',
+    '  border-bottom:1px solid var(--grid);white-space:nowrap;z-index:1;}',
+    'table.ds-t th.c{text-align:center;} table.ds-t th.r{text-align:right;}',
+    'table.ds-t td{padding:7px 10px;border-bottom:1px solid var(--grid);color:var(--ink-2);white-space:nowrap;}',
+    'table.ds-t tr:last-child td{border-bottom:0;}',
+    'table.ds-t td.name{color:var(--ink-1);font-weight:600;}',
+    'table.ds-t td.r{text-align:right;} table.ds-t td.c{text-align:center;}',
+    'table.ds-t td.rank{color:var(--ink-3);font-weight:600;text-align:right;}',
+    '.ds-score{font-size:15px;font-weight:680;letter-spacing:-.01em;}',
+    // Diverging fill: blue = better than the fleet median, gray = typical,
+    // red = worse. Sequential would have been wrong here — the meaning is
+    // polarity around a midpoint, not magnitude from zero.
+    'td.mcell{text-align:center;font-weight:650;border-radius:0;}',
+    '.ds-tier{display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.05em;',
+    '  text-transform:uppercase;padding:2px 7px;border-radius:20px;}',
+    '.ds-tier.strong{background:#e6f0fb;color:#1c5cab;}',
+    '.ds-tier.typical{background:#f0efec;color:var(--ink-2);}',
+    '.ds-tier.coach{background:#fbece8;color:var(--bad-ink);}',
+    '.ds-legend{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:11.5px;',
+    '  color:var(--ink-3);margin:11px 2px 0;}',
+    '.ds-legend i{width:26px;height:11px;border-radius:2px;display:inline-block;}',
+    '.ds-foot{font-size:12px;color:var(--ink-3);margin:16px 2px 0;line-height:1.55;}',
+    '.ds-foot b{color:var(--ink-2);font-weight:600;}',
+    '.ds-foot p{margin:0 0 9px;}'
+  ].join('\n');
+
+  // ── Constants ────────────────────────────────────────────────────────────
+  var LEAF = {b27AB:'Orlando', b27AC:'Tampa', b27AD:'ATL North', b27AE:'ATL South',
+              b27AF:'Chicago', b27B0:'Indianapolis', b27B1:'Northern Indy',
+              b27B2:'Louisville', b27B3:'Detroit', b27B4:'Grand Rapids',
+              b27B5:'Cincinnati', b27B6:'Cleveland', b27B7:'Columbus',
+              b27B8:'American Fork'};
+
+  var METRICS = [
+    {id:'Speeding',     rule:'RulePostedSpeedingId',        w:0.35},
+    {id:'Braking',      rule:'RuleHarshGpsBrakingId',       w:0.35},
+    {id:'Cornering',    rule:'RuleHarshGpsCorneringId',     w:0.15},
+    {id:'Acceleration', rule:'RuleHarshGpsAccelerationId',  w:0.15}
+  ];
+  var RULE_TO_METRIC = {};
+  METRICS.forEach(function(m){ RULE_TO_METRIC[m.rule] = m.id; });
+
+  var PERIODS   = [7, 30];
+  var MIN_MILES = 250;   // below this a rate is too jumpy to rank on
+  var SHRINK_K  = 2;     // prior strength, in thousands of miles
+  var COACH_PCT = 0.20;  // bottom fifth land on the coaching list
+  var STRONG_PCT= 0.20;
+  var PAGE_CAP  = 25000; // Trip hard-caps here; ExceptionEvent truncates AT resultsLimit
+  var ROW_LIMIT = 25000;
+  var KM_TO_MI  = 0.621371;
+  // The harsh rules were retuned on 2026-08-11 and the speeding rule on
+  // 2026-08-10. Event volume before those dates is not comparable to after.
+  var RULE_CHANGE = Date.UTC(2026, 7, 11);
+
+  // Diverging scale: blue (better than typical) -> gray -> red (worse).
+  var FILL = [
+    {max:10,  bg:'#2a78d6', fg:'#ffffff'},
+    {max:30,  bg:'#9ec5f4', fg:'#0b0b0b'},
+    {max:70,  bg:'#f0efec', fg:'#52514e'},
+    {max:90,  bg:'#ec8f8f', fg:'#0b0b0b'},
+    {max:101, bg:'#e34948', fg:'#ffffff'}
+  ];
+  function fillFor(pct){
+    for(var i=0;i<FILL.length;i++){ if(pct < FILL[i].max) return FILL[i]; }
+    return FILL[FILL.length-1];
+  }
+
+  // ── State (declared above every use) ─────────────────────────────────────
+  var days = 30, apiRef = null, DATA = null, officeFilter = '', coachOnly = false;
+  var lastRanked = [], lastUnranked = [];
+
+  // ── Small helpers ────────────────────────────────────────────────────────
+  function el(id){ return document.getElementById(id); }
+  function esc(s){
+    return String(s == null ? '' : s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+  function f0(n){ return Math.round(n).toLocaleString(); }
+  function clearNotes(){
+    ['ds-stop','ds-warn'].forEach(function(i){ el(i).className='ds-note'; el(i).innerHTML=''; });
+  }
+  function note(id, cls, html){ el(id).className='ds-note '+cls+' on'; el(id).innerHTML=html; }
+  function fail(msg){
+    el('ds-root').classList.remove('busy');
+    note('ds-stop','ds-note--stop', msg);
+    el('ds-scope').textContent='Could not load';
+  }
+  function injectStyles(){
+    if(document.getElementById(STYLE_ID)) return;
+    var s=document.createElement('style'); s.id=STYLE_ID; s.textContent=CSS;
+    document.head.appendChild(s);
+  }
+
+  // Average ranks so ties don't inherit an arbitrary order.
+  function rankAsc(vals){
+    var idx = vals.map(function(v,i){ return i; })
+                  .sort(function(a,b){ return vals[a]-vals[b]; });
+    var out = new Array(vals.length), i = 0;
+    while(i < idx.length){
+      var j = i;
+      while(j+1 < idx.length && vals[idx[j+1]] === vals[idx[i]]) j++;
+      var avg = (i + j) / 2 + 1;
+      for(var k=i;k<=j;k++) out[idx[k]] = avg;
+      i = j + 1;
+    }
+    return out;
+  }
+
+  // Geotab silently truncates: Trip caps at 25,000 no matter what resultsLimit
+  // says, and ExceptionEvent honours resultsLimit and cuts there — unevenly,
+  // dropping recent rows first. Either way a guard on `length >= resultsLimit`
+  // is the only thing that fires, so split the window until nothing is cut.
+  function fetchWindowed(api, typeName, a0, b0, done, fail_, extra){
+    var out=[], pending=0, failed=false, splits=0;
+    function grab(a,b,depth){
+      pending++;
+      var search = {fromDate:a, toDate:b};
+      if(extra) for(var k in extra) search[k] = extra[k];
+      api.call('Get', {typeName:typeName, resultsLimit:ROW_LIMIT,
+                       search:search}, function(rows){
+        rows = rows || [];
+        if(rows.length >= PAGE_CAP && depth < 7){
+          var mid = new Date((new Date(a).getTime() + new Date(b).getTime())/2).toISOString();
+          splits++; pending--;
+          grab(a, mid, depth+1); grab(mid, b, depth+1);
+          return;
+        }
+        out = out.concat(rows);
+        if(--pending === 0 && !failed) done(out, splits);
+      }, function(err){ if(!failed){ failed = true; fail_(err); } });
+    }
+    grab(a0, b0, 0);
+  }
+
+  // ── Scoring ──────────────────────────────────────────────────────────────
+  // Percentile within the eligible set, per metric, on a rate that is shrunk
+  // toward the fleet mean in proportion to how few miles the driver drove.
+  // Without the shrink a 260-mile driver's three events read as a real rate.
+  function scoreAll(drivers){
+    if(!drivers.length) return [];
+    var fleetRate = {};
+    METRICS.forEach(function(m){
+      var ev=0, mi=0;
+      drivers.forEach(function(d){ ev += d.ev[m.id]||0; mi += d.miles; });
+      fleetRate[m.id] = mi > 0 ? ev/(mi/1000) : 0;
+    });
+    var pct = {};
+    METRICS.forEach(function(m){
+      var raw = drivers.map(function(d){
+        return ((d.ev[m.id]||0) + SHRINK_K*fleetRate[m.id]) / (d.miles/1000 + SHRINK_K);
+      });
+      var r = rankAsc(raw), n = drivers.length;
+      pct[m.id] = r.map(function(x){ return n>1 ? 100*(x-1)/(n-1) : 50; });
+      drivers.forEach(function(d,i){
+        d.rate[m.id] = (d.ev[m.id]||0) / (d.miles/1000);
+        d.pct[m.id]  = pct[m.id][i];
+      });
+    });
+    drivers.forEach(function(d){
+      var bad = 0;
+      METRICS.forEach(function(m){ bad += m.w * d.pct[m.id]; });
+      d.score = Math.round(100 - bad);   // higher is better
+    });
+    drivers.sort(function(a,b){ return b.score-a.score || b.miles-a.miles; });
+    var n = drivers.length;
+    drivers.forEach(function(d,i){
+      d.rank = i+1;
+      d.tier = i < n*STRONG_PCT ? 'strong' : (i >= n*(1-COACH_PCT) ? 'coach' : 'typical');
+    });
+    return drivers;
+  }
+
+  // ── Load ─────────────────────────────────────────────────────────────────
+  function load(api){
+    apiRef = api; clearNotes();
+    el('ds-scope').textContent = 'Loading '+days+' days…';
+    el('ds-root').classList.add('busy');
+
+    var to = new Date(), from = new Date(to.getTime() - days*24*3600*1000);
+
+    api.multiCall([
+      ['Get', {typeName:'Device', resultsLimit:50000}],
+      ['Get', {typeName:'User', search:{isDriver:true}}]
+    ], function(res){
+      var devices = res[0]||[], users = res[1]||[];
+
+      var devOffice = {};
+      devices.forEach(function(d){
+        (d.groups||[]).forEach(function(g){ if(LEAF[g.id]) devOffice[d.id] = LEAF[g.id]; });
+      });
+      var uname = {};
+      users.forEach(function(u){
+        uname[u.id] = ((u.firstName||'')+' '+(u.lastName||'')).trim() || u.id;
+      });
+      if(!Object.keys(devOffice).length){
+        fail('No vehicle in your data scope is assigned to one of the '+
+             Object.keys(LEAF).length+' location groups, so no driver can be scored.');
+        return;
+      }
+
+      // One windowed fetch PER RULE. An unfiltered 30-day ExceptionEvent Get
+      // pulls ~76,000 rows across every rule in the database and throws 70% of
+      // them away; the four rules scored here are under a third of that.
+      function fetchEvents(cb, err){
+        var got = [], left = METRICS.length;
+        METRICS.forEach(function(m){
+          fetchWindowed(api, 'ExceptionEvent', from.toISOString(), to.toISOString(),
+            function(rows){ got = got.concat(rows); if(--left === 0) cb(got); },
+            err, {ruleSearch:{id:m.rule}});
+        });
+      }
+
+      fetchWindowed(api, 'Trip', from.toISOString(), to.toISOString(), function(trips){
+        fetchEvents(function(events){
+
+          var drv = {}, unattributed = 0;
+          function ensure(id, office){
+            if(!drv[id]) drv[id] = {id:id, name:uname[id]||id, office:office,
+                                    miles:0, ev:{}, rate:{}, pct:{}};
+            return drv[id];
+          }
+          function driverId(x){
+            if(x && typeof x === 'object' && x.id && x.id !== 'UnknownDriverId') return x.id;
+            if(typeof x === 'string' && x && x !== 'UnknownDriverId') return x;
+            return null;
+          }
+
+          trips.forEach(function(t){
+            var off = devOffice[(t.device||{}).id]; if(!off) return;
+            var mi = (t.distance||0)*KM_TO_MI;
+            var id = driverId(t.driver);
+            if(!id){ unattributed += mi; return; }
+            ensure(id, off).miles += mi;
+          });
+          events.forEach(function(e){
+            var metric = RULE_TO_METRIC[(e.rule||{}).id]; if(!metric) return;
+            var off = devOffice[(e.device||{}).id]; if(!off) return;
+            var id = driverId(e.driver); if(!id) return;
+            var d = ensure(id, off);
+            d.ev[metric] = (d.ev[metric]||0) + 1;
+          });
+
+          DATA = {drv:drv, unattributed:unattributed, from:from, to:to};
+          el('ds-root').classList.remove('busy');
+          render();
+        }, function(err){ fail('Error loading events: '+esc(err)); });
+      }, function(err){ fail('Error loading trips: '+esc(err)); });
+    }, function(err){ fail('Error loading vehicles and drivers: '+esc(err)); });
+  }
+
+  // ── Render ───────────────────────────────────────────────────────────────
+  function render(){
+    if(!DATA) return;
+    clearNotes();
+
+    var all = Object.keys(DATA.drv).map(function(k){ return DATA.drv[k]; });
+    var offices = {};
+    all.forEach(function(d){ (offices[d.office] = offices[d.office] || []).push(d); });
+    var officeNames = Object.keys(offices).sort();
+    syncOfficePicker(officeNames);
+
+    if(officeFilter && !offices[officeFilter]){
+      note('ds-warn','ds-note--warn','<b>'+esc(officeFilter)+'</b> has no attributed driving in '+
+           'this window, so nobody there can be scored. Showing all offices.');
+      officeFilter=''; syncOfficePicker(officeNames);
+    }
+
+    // Ranking is always computed against the WHOLE company — filtering to an
+    // office must not re-rank the survivors, or a manager's "12th of 166"
+    // changes meaning depending on which dropdown they touched.
+    var eligible = all.filter(function(d){ return d.miles >= MIN_MILES; });
+    scoreAll(eligible);
+    var companyN = eligible.length;
+    var byOffice = {};
+    eligible.forEach(function(d){ (byOffice[d.office] = byOffice[d.office] || []).push(d); });
+    Object.keys(byOffice).forEach(function(o){
+      byOffice[o].forEach(function(d,i){ d.officeRank = i+1; d.officeN = byOffice[o].length; });
+    });
+
+    var view      = officeFilter ? eligible.filter(function(d){ return d.office===officeFilter; }) : eligible;
+    var unranked  = all.filter(function(d){ return d.miles < MIN_MILES; })
+                       .filter(function(d){ return !officeFilter || d.office===officeFilter; })
+                       .sort(function(a,b){ return b.miles-a.miles; });
+    lastRanked = view; lastUnranked = unranked;
+
+    el('ds-scope').innerHTML =
+      f0(companyN)+' drivers ranked company-wide &middot; '+
+      (officeFilter ? esc(officeFilter)+' only' : Object.keys(offices).length+' locations')+
+      ' &middot; previous '+days+' days &middot; '+MIN_MILES+'+ mi to qualify';
+
+    var coach = view.filter(function(d){ return d.tier==='coach'; });
+    var strong= view.filter(function(d){ return d.tier==='strong'; });
+    var totMi = view.reduce(function(s,d){ return s+d.miles; }, 0);
+    var totEv = view.reduce(function(s,d){
+      return s + METRICS.reduce(function(a,m){ return a+(d.ev[m.id]||0); }, 0); }, 0);
+
+    el('ds-kpis').innerHTML =
+      kpi('Coaching list', String(coach.length),
+          'bottom '+Math.round(COACH_PCT*100)+'% of the company &middot; <span class="muted">'+
+          (officeFilter ? esc(officeFilter) : 'fleet-wide')+'</span>') +
+      kpi('Drivers ranked', String(view.length),
+          unranked.length+' below '+MIN_MILES+' mi &middot; <span class="muted">not scored</span>') +
+      kpi('Events per 1,000 mi', totMi ? (totEv/(totMi/1000)).toFixed(1) : '—',
+          f0(totEv)+' events over '+f0(totMi)+' mi') +
+      kpi('Strong performers', String(strong.length),
+          'top '+Math.round(STRONG_PCT*100)+'% &middot; <span class="muted">worth naming out loud</span>');
+
+    // ── Ranked table ──────────────────────────────────────────────────────
+    var rows = coachOnly ? view.filter(function(d){ return d.tier==='coach'; }) : view;
+    el('ds-title').textContent = coachOnly
+      ? 'Coaching list ('+rows.length+')'
+      : 'Ranked drivers ('+rows.length+')';
+
+    var head = '<table class="ds-t"><thead><tr>'+
+      '<th class="r">#</th><th>Driver</th><th>Location</th>'+
+      '<th class="r">Miles</th><th class="c">Score</th><th>Tier</th>'+
+      METRICS.map(function(m){ return '<th class="c">'+esc(m.id)+'</th>'; }).join('')+
+      '<th class="c">In office</th></tr></thead><tbody>';
+    var body = rows.map(function(d){
+      return '<tr>'+
+        '<td class="rank">'+d.rank+'</td>'+
+        '<td class="name">'+esc(d.name)+'</td>'+
+        '<td>'+esc(d.office)+'</td>'+
+        '<td class="r">'+f0(d.miles)+'</td>'+
+        '<td class="c"><span class="ds-score">'+d.score+'</span></td>'+
+        '<td><span class="ds-tier '+d.tier+'">'+
+          (d.tier==='coach'?'Coach':d.tier==='strong'?'Strong':'Typical')+'</span></td>'+
+        METRICS.map(function(m){
+          var f = fillFor(d.pct[m.id]);
+          return '<td class="mcell" style="background:'+f.bg+';color:'+f.fg+'" title="'+
+            esc(d.name)+' — '+esc(m.id)+': '+d.rate[m.id].toFixed(1)+' per 1,000 mi ('+
+            (d.ev[m.id]||0)+' events)">'+d.rate[m.id].toFixed(1)+'</td>';
+        }).join('')+
+        '<td class="c">'+d.officeRank+' of '+d.officeN+'</td></tr>';
+    }).join('');
+    el('ds-tablewrap').innerHTML = rows.length
+      ? head+body+'</tbody></table>'
+      : '<div style="padding:16px;font-size:12.5px;color:var(--ink-3)">No driver in this '+
+        'selection has '+MIN_MILES+'+ attributed miles in the window.</div>';
+
+    // ── Unranked ──────────────────────────────────────────────────────────
+    el('ds-unranked-title').textContent = 'Not enough miles to rank ('+unranked.length+')';
+    el('ds-unranked').innerHTML = unranked.length
+      ? '<table class="ds-t"><thead><tr><th>Driver</th><th>Location</th><th class="r">Miles</th>'+
+        '<th class="r">Events</th></tr></thead><tbody>'+
+        unranked.map(function(d){
+          var n = METRICS.reduce(function(a,m){ return a+(d.ev[m.id]||0); }, 0);
+          return '<tr><td class="name">'+esc(d.name)+'</td><td>'+esc(d.office)+'</td>'+
+                 '<td class="r">'+f0(d.miles)+'</td><td class="r">'+n+'</td></tr>';
+        }).join('')+'</tbody></table>'
+      : '<div style="padding:16px;font-size:12.5px;color:var(--ink-3)">Everyone cleared '+
+        MIN_MILES+' miles.</div>';
+
+    renderFoot(companyN);
+  }
+
+  function kpi(label, value, sub){
+    return '<div class="ds-kpi"><div class="ds-kpi-label">'+esc(label)+'</div>'+
+      '<div class="ds-kpi-value">'+value+'</div><div class="ds-kpi-sub">'+sub+'</div></div>';
+  }
+
+  function renderFoot(companyN){
+    var legend = '<div class="ds-legend"><span>Cell colour:</span>'+
+      FILL.map(function(f){ return '<i style="background:'+f.bg+'"></i>'; }).join('')+
+      '<span>better than typical &rarr; worse</span></div>';
+    var w = METRICS.map(function(m){ return esc(m.id)+' '+Math.round(m.w*100)+'%'; }).join(' &middot; ');
+    var crossed = DATA && DATA.from.getTime() < RULE_CHANGE;
+    el('ds-foot').innerHTML = legend +
+      (crossed
+        ? '<p style="color:var(--warn-ink)"><b>This window crosses the rule changes.</b> '+
+          'The speeding rule changed on 10 Aug and all three harsh rules on 11 Aug, so event '+
+          'counts before and after are not the same measurement. Ranking survives it better '+
+          'than raw counts do &mdash; everyone is affected together &mdash; but treat the '+
+          'per-1,000-mile numbers as mixed until 10 Sep.</p>'
+        : '') +
+      '<p><b>Score</b> is 0&ndash;100, higher is better. Each metric becomes a percentile '+
+      'against every ranked driver in the company, then they are weighted ('+w+') and '+
+      'subtracted from 100. Percentiles rather than raw rates, because cornering fires far '+
+      'more often than speeding and would otherwise decide the score by itself.</p>'+
+      '<p><b>Thin mileage is pulled toward the fleet average</b> before ranking, by about '+
+      SHRINK_K+',000 miles worth. A driver with 300 miles and four events has not shown you '+
+      'a rate yet, and without this they would swing between best and worst week to week. '+
+      'Under '+MIN_MILES+' miles nobody is scored at all.</p>'+
+      '<p><b>Rank is coarser than it looks.</b> Measured on this fleet, a driver\'s rank moves '+
+      'a median of 17 places between one half of a week and the other. Two drivers within '+
+      'about 20 places of each other are not distinguishable &mdash; act on the <b>tier</b>, '+
+      'and treat the number beside it as rough position. A 30-day window is roughly four times '+
+      'steadier than a 7-day one.</p>'+
+      '<p><b>Ranking is always company-wide</b> ('+f0(companyN)+' drivers), so filtering to one '+
+      'office narrows who is listed but never re-ranks them. Route mix still differs by '+
+      'location &mdash; dense residential work produces more cornering per mile regardless of '+
+      'who is driving &mdash; which is why cornering carries the lowest weight and the '+
+      '&ldquo;in office&rdquo; column is there beside it.</p>'+
+      '<p><b>Only attributed driving counts.</b> A vehicle with no assigned driver contributes '+
+      'nothing here'+(DATA && DATA.unattributed > 1
+        ? ' &mdash; '+f0(DATA.unattributed)+' miles in this window belong to nobody'
+        : '')+'. Fleet Health lists those vehicles. Camera-based rules are deliberately '+
+      'excluded: fitment runs from 0% to 79% by location, so including them would rank people '+
+      'by whether they were given a camera.</p>';
+  }
+
+  // ── Controls ─────────────────────────────────────────────────────────────
+  function syncOfficePicker(names){
+    var sel = el('ds-office');
+    var want = [''].concat(names);
+    var have = Array.prototype.slice.call(sel.options).map(function(o){ return o.value; });
+    if(have.length !== want.length || have.some(function(v,i){ return v !== want[i]; })){
+      sel.innerHTML = '<option value="">All offices</option>' +
+        names.map(function(n){ return '<option value="'+esc(n)+'">'+esc(n)+'</option>'; }).join('');
+    }
+    sel.value = officeFilter;
+    sel.parentNode.className = 'ds-officepick' + (officeFilter ? ' on' : '');
+  }
+
+  function buildChrome(){
+    el('ds-periods').innerHTML = PERIODS.map(function(p){
+      return '<button type="button" data-d="'+p+'" aria-pressed="'+(p===days)+'">'+p+'d</button>';
+    }).join('');
+    el('ds-periods').addEventListener('click', function(e){
+      var b = e.target.closest ? e.target.closest('button') : null;
+      if(!b || !apiRef) return;
+      var d = +b.getAttribute('data-d');
+      if(d === days) return;
+      days = d;
+      Array.prototype.forEach.call(el('ds-periods').children, function(x){
+        x.setAttribute('aria-pressed', String(+x.getAttribute('data-d') === days));
+      });
+      load(apiRef);
+    });
+    el('ds-office').addEventListener('change', function(e){
+      officeFilter = e.target.value || '';
+      render();                      // pure re-render, no API call
+    });
+    el('ds-tier').addEventListener('click', function(){
+      coachOnly = !coachOnly;
+      el('ds-tier').className = coachOnly ? 'on' : '';
+      el('ds-tier').textContent = coachOnly ? 'Show everyone' : 'Coaching list only';
+      render();
+    });
+    el('ds-toggle').addEventListener('click', function(){
+      var w = el('ds-unranked'), on = w.classList.toggle('on');
+      el('ds-toggle').className = on ? 'on' : '';
+      el('ds-toggle').textContent = on ? 'Hide' : 'Show';
+    });
+    el('ds-csv').addEventListener('click', exportCsv);
+  }
+
+  function exportCsv(){
+    if(!lastRanked.length) return;
+    var head = ['Rank','Driver','Location','Miles','Score','Tier','OfficeRank','OfficeSize']
+      .concat(METRICS.map(function(m){ return m.id+' per 1000mi'; }))
+      .concat(METRICS.map(function(m){ return m.id+' events'; }));
+    var lines = [head.join(',')].concat(lastRanked.map(function(d){
+      return [d.rank, '"'+String(d.name).replace(/"/g,'""')+'"', '"'+d.office+'"',
+              Math.round(d.miles), d.score, d.tier, d.officeRank, d.officeN]
+        .concat(METRICS.map(function(m){ return d.rate[m.id].toFixed(2); }))
+        .concat(METRICS.map(function(m){ return d.ev[m.id]||0; })).join(',');
+    }));
+    var blob = new Blob([lines.join('\n')], {type:'text/csv;charset=utf-8;'});
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'driver-scorecard'+(officeFilter ? '-'+officeFilter.toLowerCase().replace(/[^a-z0-9]+/g,'-') : '')+
+                 '-'+days+'d.csv';
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a); URL.revokeObjectURL(a.href);
+  }
+
+  return {
+    initialize:function(api,state,cb){ injectStyles(); buildChrome(); cb(); },
+    focus:function(api){ load(api); },
+    blur:function(){}
+  };
+};
+</script>
+</body>
+</html>
