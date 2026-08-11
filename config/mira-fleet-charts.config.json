@@ -1,13 +1,20 @@
 {
   "name": "Mira Fleet Charts",
   "supportEmail": "snelson@thegrit.com",
-  "version": "1.9.0",
+  "version": "1.10.0",
   "items": [
     {
       "url": "https://snelson-cell.github.io/geotab-addins/fleetFunnel.html",
       "path": "ActivityLink/",
       "menuName": {
         "en": "Fleet by Location"
+      }
+    },
+    {
+      "url": "https://snelson-cell.github.io/geotab-addins/health.html",
+      "path": "ActivityLink/",
+      "menuName": {
+        "en": "Fleet Health"
       }
     },
     {

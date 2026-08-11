@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<!-- No charting library on purpose. This page is a table with inline coverage
+     bars; ApexCharts would be a CDN dependency and a render cycle bought for
+     nothing. The other add-ins load it because they actually plot data. -->
+</head>
+<body>
+<div id="fh-root">
+  <div class="fh-topbar">
+    <div>
+      <h2 class="fh-h1">Fleet health</h2>
+      <div class="fh-scope" id="fh-scope">Loading…</div>
+    </div>
+    <div class="fh-controls">
+      <label class="fh-officepick">
+        <span>Office</span>
+        <select id="fh-office" aria-label="Filter to one office"><option value="">All offices</option></select>
+      </label>
+      <div class="fh-periods" id="fh-periods" role="group" aria-label="Time range"></div>
+    </div>
+  </div>
+
+  <div class="fh-note" id="fh-stop"></div>
+  <div class="fh-note" id="fh-warn"></div>
+
+  <div class="fh-kpis" id="fh-kpis"></div>
+  <div class="fh-action" id="fh-action"></div>
+
+  <div class="fh-tablehead">
+    <div class="fh-tabletitle">By location</div>
+  </div>
+  <div class="fh-card" id="fh-officewrap"></div>
+
+  <div class="fh-tablehead">
+    <div class="fh-tabletitle" id="fh-listtitle">Vehicles needing a driver</div>
+    <div class="fh-tools">
+      <button type="button" id="fh-toggle">Show list</button>
+      <button type="button" id="fh-csv">Export CSV</button>
+    </div>
+  </div>
+  <div class="fh-tablewrap" id="fh-listwrap"></div>
+
+  <div class="fh-foot" id="fh-foot"></div>
+</div>
+
+<script>
+// Registration name must stay stable — the installed MyGeotab add-in config
+// references it, as it does this file's URL.
+geotab.addin.fleetHealth = function () {
+  'use strict';
+
+  // MyGeotab drops this file's <head>, so the stylesheet ships as a string and
+  // is injected at initialize(). Do not move it back into <head> — the page
+  // renders completely unstyled and nothing warns you.
+  var STYLE_ID = 'fh-styles';
+  var CSS = [
+    '/* Light surface only: this renders inside MyGeotab\'s light chrome. */',
+    '#fh-root{',
+    '  --surface-1:#fcfcfb; --page:#f9f9f7;',
+    '  --ink-1:#0b0b0b; --ink-2:#52514e; --ink-3:#898781;',
+    '  --grid:#e1e0d9; --axis:#c3c2b7; --hairline:rgba(11,11,11,.10);',
+    '  --good:#0ca30c; --warn:#fab219; --bad:#d03b3b; --accent:#2a78d6;',
+    '  --good-ink:#0a6b18; --warn-ink:#7a5300; --bad-ink:#9b2626;',
+    '  font-family:system-ui,-apple-system,"Segoe UI",sans-serif;',
+    '  color:var(--ink-1); background:var(--page); padding:18px 20px 28px; width:100%;}',
+    '#fh-root, #fh-root *{box-sizing:border-box;}',
+    '.fh-h1{font-size:19px;font-weight:650;margin:0;letter-spacing:-.01em;}',
+    '.fh-scope{font-size:12.5px;color:var(--ink-3);margin:3px 0 0;}',
+    '.fh-topbar{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:12px;}',
+    '.fh-controls{display:flex;flex-wrap:wrap;align-items:center;gap:10px;}',
+    '.fh-officepick{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:var(--ink-3);}',
+    '.fh-officepick select{font:inherit;font-size:12.5px;font-weight:600;color:var(--ink-1);',
+    '  background:var(--surface-1);border:1px solid var(--axis);border-radius:7px;padding:6px 9px;cursor:pointer;}',
+    '.fh-officepick.on select{border-color:var(--accent);color:var(--accent);}',
+    '.fh-periods{display:inline-flex;border:1px solid var(--axis);border-radius:7px;overflow:hidden;background:var(--surface-1);}',
+    '.fh-periods button{border:0;background:transparent;color:var(--ink-2);font:inherit;font-size:12.5px;',
+    '  font-weight:600;padding:6px 12px;cursor:pointer;border-right:1px solid var(--grid);}',
+    '.fh-periods button:last-child{border-right:0;}',
+    '.fh-periods button[aria-pressed="true"]{background:var(--accent);color:#fff;}',
+    '',
+    // Same busy treatment as the other add-ins: while a new window loads the
+    // OLD numbers stay on screen, and a glance reads them as current.
+    '#fh-root.busy .fh-kpis, #fh-root.busy .fh-card, #fh-root.busy .fh-tablewrap,',
+    '#fh-root.busy .fh-foot, #fh-root.busy .fh-action{opacity:.3;pointer-events:none;transition:opacity .12s ease;}',
+    '',
+    '.fh-note{font-size:12.5px;border-radius:7px;padding:9px 12px;margin:12px 0 0;display:none;',
+    '  border:1px solid var(--hairline);background:var(--surface-1);color:var(--ink-2);}',
+    '.fh-note.on{display:block;}',
+    '.fh-note--warn{background:#fdf6e3;border-color:#efdca8;color:var(--warn-ink);}',
+    '.fh-note--stop{background:#fbece8;border-color:#f0cfc7;color:var(--bad-ink);}',
+    '',
+    '.fh-kpis{display:flex;flex-wrap:wrap;gap:12px;margin:14px 0 0;}',
+    '.fh-kpi{flex:1 1 200px;min-width:0;background:var(--surface-1);border:1px solid var(--hairline);',
+    '  border-radius:9px;padding:13px 15px 14px;}',
+    '.fh-kpi-label{font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;',
+    '  color:var(--ink-3);display:flex;align-items:center;gap:5px;}',
+    '.fh-kpi-value{font-size:29px;font-weight:640;line-height:1.12;margin:7px 0 0;letter-spacing:-.02em;}',
+    '.fh-kpi-sub{font-size:12px;color:var(--ink-2);margin:4px 0 0;line-height:1.4;}',
+    '.fh-kpi-sub .muted{color:var(--ink-3);}',
+    '.fh-dot{width:8px;height:8px;border-radius:50%;display:inline-block;flex:none;}',
+    '.fh-action{font-size:12.5px;color:var(--ink-2);background:var(--surface-1);border:1px solid var(--hairline);',
+    '  border-left:3px solid var(--accent);border-radius:7px;padding:9px 13px;margin:12px 0 0;}',
+    '',
+    '.fh-card{background:var(--surface-1);border:1px solid var(--hairline);border-radius:9px;',
+    '  margin:9px 0 0;overflow-x:auto;}',
+    '.fh-tablehead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:20px 0 0;}',
+    '.fh-tabletitle{font-size:14px;font-weight:650;}',
+    '.fh-tools{display:flex;flex-wrap:wrap;gap:8px;}',
+    '.fh-tools button{font:inherit;font-size:12.5px;font-weight:600;color:var(--ink-2);',
+    '  background:var(--surface-1);border:1px solid var(--axis);border-radius:6px;padding:5px 11px;cursor:pointer;}',
+    '.fh-tools button.on{border-color:var(--accent);color:var(--accent);}',
+    '.fh-tablewrap{margin:9px 0 0;border:1px solid var(--hairline);border-radius:9px;',
+    '  background:var(--surface-1);display:none;overflow-x:auto;}',
+    '.fh-tablewrap.on{display:block;}',
+    'table.fh-t{border-collapse:collapse;width:100%;font-size:12.5px;font-variant-numeric:tabular-nums;}',
+    'table.fh-t th{position:sticky;top:0;background:var(--surface-1);text-align:left;font-size:10.5px;',
+    '  letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);padding:9px 12px;',
+    '  border-bottom:1px solid var(--grid);white-space:nowrap;z-index:1;}',
+    'table.fh-t td{padding:8px 12px;border-bottom:1px solid var(--grid);color:var(--ink-2);white-space:nowrap;}',
+    'table.fh-t tr:last-child td{border-bottom:0;}',
+    'table.fh-t td.veh{color:var(--ink-1);font-weight:600;}',
+    'table.fh-t td.num{text-align:right;}',
+    'table.fh-t tr.act td{background:#fdf6e3;}',
+    // Inline coverage bar. A number plus a bar reads faster than either alone,
+    // and the width is the same channel for every row so they are comparable.
+    '.fh-bar{display:inline-block;vertical-align:middle;width:78px;height:7px;border-radius:4px;',
+    '  background:var(--grid);margin-left:8px;overflow:hidden;}',
+    '.fh-bar i{display:block;height:100%;border-radius:4px;}',
+    '.fh-verdict{display:inline-flex;align-items:center;gap:6px;font-weight:600;font-size:11.5px;}',
+    '.fh-verdict.full{color:var(--good-ink);} .fh-verdict.partial{color:var(--warn-ink);}',
+    '.fh-verdict.limited{color:var(--bad-ink);}',
+    '.fh-foot{font-size:12px;color:var(--ink-3);margin:16px 2px 0;line-height:1.55;}',
+    '.fh-foot b{color:var(--ink-2);font-weight:600;}',
+    '@media (max-width:700px){ #fh-root{padding:14px 12px 22px;} .fh-kpi-value{font-size:25px;} }'
+  ].join('\n');
+  function injectStyles(){
+    if(document.getElementById(STYLE_ID)) return;
+    var s=document.createElement('style'); s.id=STYLE_ID; s.textContent=CSS;
+    document.head.appendChild(s);
+  }
+
+  // ── Configuration ────────────────────────────────────────────────────────
+  var PERIODS = [7, 30];
+  var MIN_MILES = 50;       // below this in-window, "it drove" is not meaningful
+  var QUIET_DAYS = 3;       // no communication for this long = worth chasing
+  var TRIP_LIMIT = 25000;   // Geotab's real per-call row cap, whatever you ask for
+  var PAGE_CAP = 25000;
+  var KM_TO_MI = 0.621371;
+
+  var LEAF = {b27AB:'Orlando',b27AC:'Tampa',b27AD:'ATL North',b27AE:'ATL South',b27AF:'Chicago',
+              b27B0:'Indianapolis',b27B1:'Northern Indy',b27B2:'Louisville',b27B3:'Detroit',
+              b27B4:'Grand Rapids',b27B5:'Cincinnati',b27B6:'Cleveland',b27B7:'Columbus',
+              b27B8:'American Fork'};
+
+  var C = {good:'#0ca30c', warn:'#fab219', bad:'#d03b3b', ink3:'#898781', accent:'#2a78d6'};
+
+  // Gate thresholds for the measurability verdict. These are judgement, not
+  // derived — a location is only "full" if a per-driver metric would actually
+  // mean something there.
+  var GATE_FULL = {attrib:90, camera:50, report:95};
+  var GATE_PART = {attrib:70, camera:0,  report:85};
+
+  var days = 7, apiRef = null, DATA = null, officeFilter = '';
+  var lastNeed = [];   // rows behind Export CSV; declared above every use
+
+  // ── Helpers ──────────────────────────────────────────────────────────────
+  function el(id){ return document.getElementById(id); }
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+  function f0(v){ return Math.round(v).toLocaleString(); }
+  function pct(a,b){ return b ? (100*a/b) : 0; }
+  function bar(v, color){
+    return '<span class="fh-bar"><i style="width:'+Math.max(0,Math.min(100,v)).toFixed(0)+
+           '%;background:'+color+'"></i></span>';
+  }
+  function gateColor(v, good, warn){ return v>=good ? C.good : (v>=warn ? C.warn : C.bad); }
+  function note(id, cls, html){
+    var n=el(id); n.className='fh-note on'+(cls?' '+cls:''); n.innerHTML=html;
+  }
+  function clearNotes(){
+    ['fh-stop','fh-warn'].forEach(function(id){ var n=el(id); n.className='fh-note'; n.innerHTML=''; });
+  }
+  function fail(html){
+    el('fh-kpis').innerHTML=''; el('fh-officewrap').innerHTML=''; el('fh-foot').innerHTML='';
+    el('fh-action').style.display='none'; el('fh-scope').textContent='';
+    el('fh-root').classList.remove('busy');
+    note('fh-stop','fh-note--stop', html);
+  }
+
+  // Split a date range until every slice is under the server's row cap. Geotab
+  // caps a Get at 25,000 rows no matter what resultsLimit says, silently, so a
+  // guard written as `rows.length >= resultsLimit` can never fire.
+  function fetchWindowed(api, typeName, a0, b0, done, fail_){
+    var out=[], pending=0, failed=false, splits=0;
+    function grab(a,b,depth){
+      pending++;
+      api.call('Get', {typeName:typeName, resultsLimit:TRIP_LIMIT,
+                       search:{fromDate:a, toDate:b}}, function(rows){
+        rows = rows||[];
+        if(rows.length >= PAGE_CAP && depth < 6){
+          var mid=new Date((new Date(a).getTime()+new Date(b).getTime())/2).toISOString();
+          splits++; pending--;
+          grab(a,mid,depth+1); grab(mid,b,depth+1);
+          return;
+        }
+        out = out.concat(rows);
+        if(--pending===0 && !failed) done(out, splits);
+      }, function(err){ if(!failed){ failed=true; fail_(err); } });
+    }
+    grab(a0,b0,0);
+  }
+
+  // ── Load ─────────────────────────────────────────────────────────────────
+  function load(api){
+    apiRef=api; clearNotes();
+    el('fh-scope').textContent='Loading '+days+' days…';
+    el('fh-root').classList.add('busy');
+
+    var to=new Date(), from=new Date(to.getTime()-days*24*3600*1000);
+
+    api.multiCall([
+      ['Get', {typeName:'Device', resultsLimit:50000}],
+      ['Get', {typeName:'Camera'}],
+      ['Get', {typeName:'DeviceStatusInfo'}]
+    ], function(res){
+      var devices=res[0]||[], cameras=res[1]||[], status=res[2]||[];
+
+      // Camera records key off the GO device SERIAL NUMBER, not the device id.
+      // Joining on device.id returns nothing and silently reports 0% coverage.
+      var camSerial={};
+      cameras.forEach(function(c){
+        var s=(c && c.deviceSerialNumber || '').trim();
+        if(s) camSerial[s]=true;
+      });
+
+      var assigned={}, lastComm={};
+      status.forEach(function(s){
+        var id=(s.device||{}).id; if(!id) return;
+        var d=s.driver;
+        if(d && typeof d==='object' && d.id && d.id!=='UnknownDriverId') assigned[id]=true;
+        if(s.dateTime) lastComm[id]=new Date(s.dateTime);
+      });
+
+      var veh={};
+      devices.forEach(function(d){
+        var off=null;
+        (d.groups||[]).forEach(function(g){ if(LEAF[g.id]) off=LEAF[g.id]; });
+        if(!off) return;
+        veh[d.id]={id:d.id, name:d.name||d.id, office:off,
+                   vin:(d.vehicleIdentificationNumber||'').trim(),
+                   camera:!!camSerial[(d.serialNumber||'').trim()],
+                   assigned:!!assigned[d.id],
+                   last:lastComm[d.id]||null, miles:0, milesDrv:0};
+      });
+      if(!Object.keys(veh).length){
+        fail('No vehicle in your data scope is assigned to one of the '+
+             Object.keys(LEAF).length+' location groups, so nothing can be reported by location.');
+        return;
+      }
+
+      fetchWindowed(api, 'Trip', from.toISOString(), to.toISOString(), function(trips){
+        trips.forEach(function(t){
+          var v=veh[(t.device||{}).id]; if(!v) return;
+          var mi=(t.distance||0)*KM_TO_MI;
+          v.miles += mi;
+          var dr=t.driver;
+          var did = (dr && typeof dr==='object') ? dr.id : (typeof dr==='string' ? dr : null);
+          if(did && did!=='UnknownDriverId') v.milesDrv += mi;
+        });
+        DATA={veh:veh, now:to};
+        render();
+      }, function(err){ fail('Error loading trips: '+esc(err)); });
+    }, function(err){ fail('Error loading fleet: '+esc(err)); });
+  }
+
+  // ── Render ───────────────────────────────────────────────────────────────
+  function verdictOf(a, cam, rep){
+    if(a>=GATE_FULL.attrib && cam>=GATE_FULL.camera && rep>=GATE_FULL.report) return 'full';
+    if(a>=GATE_PART.attrib && rep>=GATE_PART.report) return 'partial';
+    return 'limited';
+  }
+  function verdictName(v){
+    return v==='full' ? 'Full' : v==='partial' ? 'Partial' : 'Limited';
+  }
+
+  function summarize(list, now){
+    var s={n:list.length, miles:0, milesDrv:0, camera:0, vin:0, quiet:0,
+           needDriver:0, drove:0};
+    list.forEach(function(v){
+      s.miles+=v.miles; s.milesDrv+=v.milesDrv;
+      if(v.camera) s.camera++;
+      if(v.vin) s.vin++;
+      if(!v.last || (now-v.last)/86400000 >= QUIET_DAYS) s.quiet++;
+      if(v.miles>=MIN_MILES){
+        s.drove++;
+        if(!v.assigned) s.needDriver++;
+      }
+    });
+    s.attrib = pct(s.milesDrv, s.miles);
+    s.camPct = pct(s.camera, s.n);
+    s.repPct = pct(s.n-s.quiet, s.n);
+    s.verdict = verdictOf(s.attrib, s.camPct, s.repPct);
+    return s;
+  }
+
+  function kpi(label, dot, value, small, sub){
+    return '<div class="fh-kpi"><div class="fh-kpi-label">'+
+      (dot?'<span class="fh-dot" style="background:'+dot+'"></span>':'')+esc(label)+
+      '</div><div class="fh-kpi-value'+(small?' sm':'')+'">'+value+'</div>'+
+      '<div class="fh-kpi-sub">'+sub+'</div></div>';
+  }
+
+  function render(){
+    if(!DATA) return;
+    clearNotes();
+    el('fh-root').classList.remove('busy');
+    var now=DATA.now;
+
+    var all=[]; Object.keys(DATA.veh).forEach(function(k){ all.push(DATA.veh[k]); });
+    var offices={};
+    all.forEach(function(v){ (offices[v.office]=offices[v.office]||[]).push(v); });
+    syncOfficePicker(Object.keys(offices).sort());
+
+    if(officeFilter && !offices[officeFilter]){
+      note('fh-warn','fh-note--warn','<b>'+esc(officeFilter)+'</b> has no vehicles in your data '+
+           'scope. Showing all offices.');
+      officeFilter=''; syncOfficePicker(Object.keys(offices).sort());
+    }
+    var view = officeFilter ? offices[officeFilter] : all;
+    var fleet = summarize(all, now);
+    var s = summarize(view, now);
+
+    el('fh-scope').innerHTML =
+      f0(s.n)+' vehicles &middot; '+(officeFilter ? esc(officeFilter)+' only'
+        : Object.keys(offices).length+' locations')+
+      ' &middot; previous '+days+' days &middot; your data scope';
+
+    // ── KPIs. The first is the one that should be zero. ───────────────────
+    el('fh-kpis').innerHTML =
+      kpi('Needs a driver', s.needDriver ? C.bad : C.good, String(s.needDriver), false,
+          'drove '+MIN_MILES+'+ mi with nobody assigned'+
+          (s.drove ? ' &middot; <span class="muted">of '+s.drove+' that drove</span>' : '')) +
+      kpi('Vehicles', null, String(s.n), false,
+          s.drove+' drove '+MIN_MILES+'+ mi &middot; <span class="muted">'+
+          (s.n-s.drove)+' idle or parked</span>') +
+      kpi('Cameras', null, Math.round(s.camPct)+'%', false,
+          s.camera+' of '+s.n+' fitted'+
+          (s.camPct<50 ? ' &middot; <span class="muted">camera rules cannot fire on the rest</span>' : '')) +
+      kpi('Not reporting', s.quiet ? C.warn : null, String(s.quiet), false,
+          'silent '+QUIET_DAYS+'+ days &middot; <span class="muted">'+
+          Math.round(s.repPct)+'% healthy</span>');
+
+    el('fh-action').style.display='';
+    el('fh-action').innerHTML = s.needDriver
+      ? '<b>'+s.needDriver+' vehicle'+(s.needDriver===1?'':'s')+' drove with no driver assigned.</b> '+
+        'Until a driver is attached, those miles and any events on them cannot be coached to anyone '+
+        '&mdash; and Geotab never backfills them, so the loss is permanent.'
+      : 'Every vehicle that drove has a driver assigned. Nothing to chase.';
+
+    // ── Per-office table ──────────────────────────────────────────────────
+    var offs=Object.keys(offices).sort(function(a,b){
+      return summarize(offices[b],now).needDriver - summarize(offices[a],now).needDriver
+          || summarize(offices[b],now).miles - summarize(offices[a],now).miles;
+    });
+    var head='<table class="fh-t"><thead><tr>'+
+      '<th>Location</th><th style="text-align:right">Veh</th><th style="text-align:right">Miles</th>'+
+      '<th style="text-align:right">Needs driver</th><th>Attributed</th><th>Cameras</th>'+
+      '<th>Reporting</th><th>Measurable</th></tr></thead><tbody>';
+    var body=offs.map(function(o){
+      var t=summarize(offices[o], now);
+      return '<tr'+(t.needDriver?' class="act"':'')+'>'+
+        '<td class="veh">'+esc(o)+'</td>'+
+        '<td class="num">'+t.n+'</td>'+
+        '<td class="num">'+f0(t.miles)+'</td>'+
+        '<td class="num"><b'+(t.needDriver?' style="color:'+C.bad+'"':'')+'>'+t.needDriver+'</b></td>'+
+        '<td>'+Math.round(t.attrib)+'%'+bar(t.attrib, gateColor(t.attrib,90,70))+'</td>'+
+        '<td>'+Math.round(t.camPct)+'%'+bar(t.camPct, gateColor(t.camPct,50,1))+'</td>'+
+        '<td>'+Math.round(t.repPct)+'%'+bar(t.repPct, gateColor(t.repPct,95,85))+'</td>'+
+        '<td><span class="fh-verdict '+t.verdict+'">'+verdictName(t.verdict)+'</span></td></tr>';
+    }).join('');
+    el('fh-officewrap').innerHTML = head+body+'</tbody></table>';
+
+    // ── The named list ────────────────────────────────────────────────────
+    var need = view.filter(function(v){ return v.miles>=MIN_MILES && !v.assigned; })
+                   .sort(function(a,b){ return b.miles-a.miles; });
+    lastNeed = need;
+    el('fh-listtitle').textContent = 'Vehicles needing a driver'+(need.length?' ('+need.length+')':'');
+    var lh='<table class="fh-t"><thead><tr><th>Vehicle</th><th>Location</th>'+
+      '<th style="text-align:right">Miles</th><th>Camera</th><th>VIN</th><th>Last heard</th>'+
+      '</tr></thead><tbody>';
+    var lb=need.map(function(v){
+      var age = v.last ? Math.floor((now-v.last)/86400000) : null;
+      return '<tr><td class="veh">'+esc(v.name)+'</td><td>'+esc(v.office)+'</td>'+
+        '<td class="num">'+f0(v.miles)+'</td>'+
+        '<td>'+(v.camera?'yes':'<span style="color:#898781">no</span>')+'</td>'+
+        '<td>'+(v.vin?'yes':'<span style="color:#898781">no</span>')+'</td>'+
+        '<td>'+(age===null?'<span style="color:#898781">never</span>'
+                : age===0?'today' : age+'d ago')+'</td></tr>';
+    }).join('');
+    el('fh-listwrap').innerHTML = need.length
+      ? lh+lb+'</tbody></table>'
+      : '<table class="fh-t"><tbody><tr><td>Nothing to chase &mdash; every vehicle that drove has a driver.</td></tr></tbody></table>';
+
+    // ── Footer: everything this page cannot see ───────────────────────────
+    var foot=[];
+    foot.push('<b>Attributed</b> is the share of miles with a driver attached. A trip is '+
+      'attributed only if the vehicle had an assigned driver AT THE TIME &mdash; Geotab never '+
+      'backfills, so miles driven before a vehicle was assigned stay unattributed forever. '+
+      'A recently provisioned location will show a low percentage it cannot fix; the '+
+      '<b>Needs driver</b> count is the number it can act on.');
+    if(fleet.camPct < 100){
+      foot.push('<b>Cameras gate five rule families.</b> Tailgating, phone use, distraction, '+
+        'drinking/eating and rolling stops can only fire on a camera-fitted vehicle, so a '+
+        'location with few cameras will look clean on those regardless of how it drives.');
+    }
+    foot.push('<b>Measurable</b> combines attribution, cameras and reporting. It says whether a '+
+      'per-driver number from this location would mean anything &mdash; not whether the location '+
+      'is safe. A low-event location that is only <i>Limited</i> measurable is unmeasured, not clean.');
+    foot.push('Posted-speed-limit coverage is not shown: it runs 87&ndash;93% at every location '+
+      'except Columbus, so it does not separate them, and measuring it live would cost one API '+
+      'call per vehicle.');
+    var novin = view.filter(function(v){ return !v.vin; }).length;
+    if(novin){
+      foot.push(novin+' vehicle'+(novin===1?' has':'s have')+' no VIN. That does not stop the '+
+        'harsh rules firing &mdash; it only makes their per-vehicle-class thresholds less exact.');
+    }
+    el('fh-foot').innerHTML = foot.join('<br><br>');
+  }
+
+  function exportCsv(){
+    if(!lastNeed.length) return;
+    var lines=[['Vehicle','Location','Miles','Camera','VIN','Days since last report'].join(',')];
+    lastNeed.forEach(function(v){
+      var age = v.last ? Math.floor((DATA.now-v.last)/86400000) : '';
+      lines.push([v.name, v.office, Math.round(v.miles), v.camera?'yes':'no',
+                  v.vin?'yes':'no', age]
+        .map(function(x){ return '"'+String(x).replace(/"/g,'""')+'"'; }).join(','));
+    });
+    try{
+      var blob=new Blob([lines.join('\n')],{type:'text/csv;charset=utf-8;'});
+      var a=document.createElement('a');
+      a.href=URL.createObjectURL(blob);
+      a.download='needs-driver'+(officeFilter?'-'+officeFilter.toLowerCase().replace(/[^a-z0-9]+/g,'-'):'')+
+                 '-'+days+'d.csv';
+      document.body.appendChild(a); a.click();
+      setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); },0);
+    }catch(e){
+      note('fh-warn',null,'Could not start the download. Use <b>Show list</b> and copy the rows.');
+    }
+  }
+
+  // ── Chrome ───────────────────────────────────────────────────────────────
+  function syncOfficePicker(list){
+    var sel=el('fh-office'); if(!sel) return;
+    var have=Array.prototype.slice.call(sel.options,1).map(function(o){ return o.value; });
+    if(have.join(' ')!==list.join(' ')){
+      sel.innerHTML='<option value="">All offices</option>'+
+        list.map(function(o){ return '<option value="'+esc(o)+'">'+esc(o)+'</option>'; }).join('');
+    }
+    sel.value=officeFilter;
+    sel.parentNode.className='fh-officepick'+(officeFilter?' on':'');
+  }
+
+  function buildChrome(){
+    el('fh-periods').innerHTML=PERIODS.map(function(d){
+      return '<button type="button" data-d="'+d+'" aria-pressed="'+(d===days)+'">'+d+'d</button>';
+    }).join('');
+    el('fh-periods').querySelectorAll('button').forEach(function(b){
+      b.addEventListener('click', function(){
+        var d=parseInt(b.getAttribute('data-d'),10);
+        if(d===days) return;
+        days=d;
+        el('fh-periods').querySelectorAll('button').forEach(function(x){
+          x.setAttribute('aria-pressed', String(parseInt(x.getAttribute('data-d'),10)===days));
+        });
+        if(apiRef) load(apiRef);
+      });
+    });
+    el('fh-office').addEventListener('change', function(e){
+      // No refetch: load() already holds every office, so this is a re-render.
+      officeFilter=e.target.value||'';
+      render();
+    });
+    var t=el('fh-toggle');
+    t.addEventListener('click', function(){
+      var on=el('fh-listwrap').classList.toggle('on');
+      t.textContent = on ? 'Hide list' : 'Show list';
+      t.classList.toggle('on', on);
+    });
+    el('fh-csv').addEventListener('click', exportCsv);
+  }
+
+  return {
+    initialize:function(api,state,cb){ injectStyles(); buildChrome(); cb(); },
+    focus:function(api){ load(api); },
+    blur:function(){}
+  };
+};
+</script>
+</body>
+</html>
