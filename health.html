@@ -29,7 +29,7 @@
   <div class="fh-action" id="fh-action"></div>
 
   <div class="fh-tablehead">
-    <div class="fh-tabletitle">By location</div>
+    <div class="fh-tabletitle" id="fh-loctitle">By location</div>
   </div>
   <div class="fh-card" id="fh-officewrap"></div>
 
@@ -123,6 +123,13 @@ geotab.addin.fleetHealth = function () {
     'table.fh-t td.veh{color:var(--ink-1);font-weight:600;}',
     'table.fh-t td.num{text-align:right;}',
     'table.fh-t tr.act td{background:#fdf6e3;}',
+    // The By location table deliberately keeps ALL locations when one office is
+    // selected, so a manager can see where they stand rather than a useless
+    // one-row table. That only works if their own row is findable — without
+    // this the picker looks like a filter that failed to apply.
+    // Declared after .act so it wins the background.
+    'table.fh-t tr.sel td{background:#eaf2fc;}',
+    'table.fh-t tr.sel td:first-child{box-shadow:inset 3px 0 0 var(--accent);color:var(--accent);}',
     // Inline coverage bar. A number plus a bar reads faster than either alone,
     // and the width is the same channel for every row so they are comparable.
     '.fh-bar{display:inline-block;vertical-align:middle;width:78px;height:7px;border-radius:4px;',
@@ -348,7 +355,7 @@ geotab.addin.fleetHealth = function () {
       kpi('Cameras', null, Math.round(s.camPct)+'%', false,
           s.camera+' of '+s.n+' fitted'+
           (s.camPct<50 ? ' &middot; <span class="muted">camera rules cannot fire on the rest</span>' : '')) +
-      kpi('Not reporting', s.quiet ? C.warn : null, String(s.quiet), false,
+      kpi('Not reporting', s.quiet ? C.warn : C.good, String(s.quiet), false,
           'silent '+QUIET_DAYS+'+ days &middot; <span class="muted">'+
           Math.round(s.repPct)+'% healthy</span>');
 
@@ -368,9 +375,14 @@ geotab.addin.fleetHealth = function () {
       '<th>Location</th><th style="text-align:right">Veh</th><th style="text-align:right">Miles</th>'+
       '<th style="text-align:right">Needs driver</th><th>Attributed</th><th>Cameras</th>'+
       '<th>Reporting</th><th>Measurable</th></tr></thead><tbody>';
+    el('fh-loctitle').innerHTML = officeFilter
+      ? 'By location <span style="font-weight:400;color:var(--ink-3)">&mdash; all locations shown, '+
+        esc(officeFilter)+' highlighted</span>'
+      : 'By location';
     var body=offs.map(function(o){
       var t=summarize(offices[o], now);
-      return '<tr'+(t.needDriver?' class="act"':'')+'>'+
+      var cls=[]; if(t.needDriver) cls.push('act'); if(o===officeFilter) cls.push('sel');
+      return '<tr'+(cls.length?' class="'+cls.join(' ')+'"':'')+'>'+
         '<td class="veh">'+esc(o)+'</td>'+
         '<td class="num">'+t.n+'</td>'+
         '<td class="num">'+f0(t.miles)+'</td>'+
