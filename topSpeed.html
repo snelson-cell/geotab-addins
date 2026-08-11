@@ -209,6 +209,8 @@ geotab.addin.topSpeed = function () {
     '.ts-legend span{display:inline-flex;align-items:center;gap:6px;}',
     '.ts-swatch{width:12px;height:12px;border-radius:3px;flex:none;opacity:.5;}',
     '.ts-swatch.dot{border-radius:50%;opacity:1;width:11px;height:11px;}',
+    // Hollow = the reading exists but no flagged event corroborates it.
+    '.ts-swatch.dot.hollow{background:var(--surface-1);border:2px solid var(--ink-2);}',
     '#ts-chart{min-width:380px;}',
     '',
     '.ts-foot{font-size:12px;color:var(--ink-3);margin:10px 2px 0;line-height:1.55;}',
@@ -329,9 +331,14 @@ geotab.addin.topSpeed = function () {
   }
 
   function renderKpis(rows){
-    var term=rows.filter(function(r){ return r.peak>=TERM_MPH; });
-    var fin =rows.filter(function(r){ return r.peak>=FINAL_MPH && r.peak<TERM_MPH; });
-    var alert=rows.filter(function(r){ return r.peak>=ALERT_MPH; });
+    // Count through bandOf(), NOT raw peak. An uncorroborated reading sits at
+    // the same x as a real one but carries no sanction, so filtering on peak
+    // alone put those drivers in the Final Warning count while their dot,
+    // tooltip and band label all said "Under policy" — the KPI contradicted
+    // every other surface on the page.
+    var term=rows.filter(function(r){ return bandOf(r.peak, r.tier)==='term'; });
+    var fin =rows.filter(function(r){ return bandOf(r.peak, r.tier)==='final'; });
+    var alert=rows.filter(function(r){ return r.peak>=ALERT_MPH && r.tier!==TIER_NONE; });
     var events=rows.reduce(function(s,r){ return s+r.events; },0);
     el('ts-kpis').innerHTML =
       kpi('Termination threshold', C.critical, String(term.length),
@@ -371,6 +378,20 @@ geotab.addin.topSpeed = function () {
 
     var pts = show.map(function(r,i){
       return {x: Math.max(lo, r.peak), y: n-i, r: r};
+    });
+
+    // A dot's POSITION says how fast; its FILL says whether anything corroborates
+    // that reading. Without this, a driver whose top speed merely landed in the
+    // Final Warning band looks identical to one who actually earned a sanction —
+    // Edwin Foster at 81.4 with no event firing sat in the orange band beside
+    // Jaedyn Peterson's 83.9 inside a 19-second event, and only the tooltip told
+    // them apart. Hollow = uncorroborated, and it can never carry a sanction.
+    var discrete = [];
+    show.forEach(function(r,i){
+      if(r.tier === TIER_NONE){
+        discrete.push({seriesIndex:0, dataPointIndex:i,
+                       fillColor:C.surface, strokeColor:C.ink2, size:6.5});
+      }
     });
 
     var zones = [
@@ -413,7 +434,7 @@ geotab.addin.topSpeed = function () {
       series:[{name:'Peak speed', data:pts}],
       colors:[C.ink2],
       markers:{size:7, strokeWidth:2, strokeColors:C.surface, fillOpacity:0.85,
-        hover:{sizeOffset:3}},
+        discrete:discrete, hover:{sizeOffset:3}},
       xaxis:{min:lo, max:hi, tickAmount:ticks,
         title:{text:'Fastest speed recorded inside a flagged speeding event (mph)', style:{fontSize:'12px',fontWeight:600,color:C.ink2}},
         axisBorder:{color:C.axis}, axisTicks:{color:C.axis},
@@ -459,6 +480,7 @@ geotab.addin.topSpeed = function () {
       '<span><i class="ts-swatch" style="background:'+C.warning+'"></i>'+FINAL_MPH+'–'+(TERM_MPH-1)+' &middot; final warning</span>'+
       '<span><i class="ts-swatch" style="background:'+C.critical+'"></i>'+TERM_MPH+'+ &middot; termination</span>'+
       '<span><i class="ts-swatch dot" style="background:'+C.ink2+'"></i>Speed inside a flagged event</span>'+
+      '<span><i class="ts-swatch dot hollow"></i>Top speed only &mdash; no event, no sanction</span>'+
       '<span style="color:#898781">dashed line = '+ALERT_MPH+' mph alert</span>';
   }
 
