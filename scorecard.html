@@ -533,10 +533,25 @@ geotab.addin.driverScorecard = function () {
                        .sort(function(a,b){ return b.miles-a.miles; });
     lastRanked = view; lastUnranked = unranked;
 
+    // Every Get is filtered by the signed-in user's data scope, so a
+    // location-scoped manager sees only their own office — and the median and
+    // percentiles are then computed from that office alone. Saying
+    // "company-wide" to that user would be false, so the wording follows what
+    // is actually visible.
+    var nOff = Object.keys(offices).length;
     el('ds-scope').innerHTML =
-      f0(companyN)+' drivers ranked company-wide &middot; '+
-      (officeFilter ? esc(officeFilter)+' only' : Object.keys(offices).length+' locations')+
+      f0(companyN)+' drivers ranked across '+
+      (nOff===1 ? '<b>'+esc(Object.keys(offices)[0])+'</b> &mdash; everything your login can see'
+                : nOff+' locations in your data scope')+
+      (officeFilter && nOff>1 ? ' &middot; showing '+esc(officeFilter) : '')+
       ' &middot; previous '+days+' days &middot; '+MIN_MILES+'+ mi to qualify';
+    if(nOff===1){
+      note('ds-warn','ds-note--warn',
+        'Your MyGeotab login is scoped to <b>'+esc(Object.keys(offices)[0])+'</b>, so every number '+
+        'here is measured against that office alone. &ldquo;1.20&times;&rdquo; means 1.20&times; the '+
+        'typical '+esc(Object.keys(offices)[0])+' driver, not the typical Mira driver, and the '+
+        'ranks are positions within your branch. Office standings cannot be shown.');
+    }
 
     var priority = view.filter(function(d){ return d.band.key==='prio'; });
     var moving   = view.filter(function(d){ return d.trend.key==='worse'; });
@@ -590,7 +605,10 @@ geotab.addin.driverScorecard = function () {
         '<td class="c" colspan="2" style="color:var(--warn-ink)">no driver with '+MIN_MILES+
         '+ attributed miles &mdash; unmeasured, not clean</td></tr>';
     }).join('');
-    el('ds-offwrap').innerHTML = oh+ob+'</tbody></table>';
+    el('ds-offwrap').innerHTML = (standings.length + unscored.length) > 1
+      ? oh+ob+'</tbody></table>'
+      : '<div style="padding:14px;font-size:12.5px;color:var(--ink-3)">Only one location is '+
+        'visible to your login, so there is nothing to rank it against.</div>';
 
     // ── Ranked table ──────────────────────────────────────────────────────
     var rows = coachOnly ? view.filter(function(d){ return d.band.key==='prio'; }) : view;
@@ -705,8 +723,10 @@ geotab.addin.driverScorecard = function () {
       'about 20 places of each other are not distinguishable &mdash; act on the <b>tier</b>, '+
       'and treat the number beside it as rough position. A 30-day window is roughly four times '+
       'steadier than a 7-day one.</p>'+
-      '<p><b>Ranking is always company-wide</b> ('+f0(companyN)+' drivers), so filtering to one '+
-      'office narrows who is listed but never re-ranks them. Route mix still differs by '+
+      '<p><b>Ranking covers everything your login can see</b> ('+f0(companyN)+' drivers), and the '+
+      'office picker narrows who is listed without ever re-ranking them. A login scoped to a single '+
+      'branch produces a ranking within that branch &mdash; the arithmetic is identical, but every '+
+      '&ldquo;&times; the median&rdquo; is then relative to that branch, not to Mira as a whole. Route mix still differs by '+
       'location &mdash; dense residential work produces more cornering per mile regardless of '+
       'who is driving &mdash; which is why cornering carries the lowest weight and the '+
       '&ldquo;in office&rdquo; column is there beside it.</p>'+
