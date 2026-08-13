@@ -133,6 +133,9 @@ geotab.addin.driverScorecard = function () {
     '.ds-band.typ{background:#f0efec;color:var(--ink-2);}',
     '.ds-band.elev{background:#fdf1e8;color:#8a4b1d;}',
     '.ds-band.prio{background:#fbece8;color:var(--bad-ink);}',
+    '.ds-gone{display:inline-block;font-size:10px;font-weight:700;letter-spacing:.05em;',
+    '  text-transform:uppercase;padding:1px 6px;border-radius:20px;margin-left:6px;',
+    '  background:var(--grid);color:var(--ink-3);vertical-align:1px;}',
     '.ds-trend{display:inline-block;font-size:12px;font-weight:650;}',
     '.ds-trend.worse{color:var(--bad-ink);} .ds-trend.better{color:var(--good-ink);}',
     '.ds-trend.worse-lo{color:var(--ink-3);font-weight:500;}',
@@ -394,9 +397,14 @@ geotab.addin.driverScorecard = function () {
       devices.forEach(function(d){
         (d.groups||[]).forEach(function(g){ if(LEAF[g.id]) devOffice[d.id] = LEAF[g.id]; });
       });
-      var uname = {};
+      // Geotab returns archived drivers from this call like any other, so an
+      // ex-employee keeps appearing for as long as the window covers their
+      // driving. Their miles are real and stay in the measurement; what they
+      // must not do is sit in a list of people to go and talk to.
+      var uname = {}, gone = {}, nowMs = Date.now();
       users.forEach(function(u){
         uname[u.id] = ((u.firstName||'')+' '+(u.lastName||'')).trim() || u.id;
+        if(u.activeTo && new Date(u.activeTo).getTime() <= nowMs) gone[u.id] = true;
       });
       if(!Object.keys(devOffice).length){
         fail('No vehicle in your data scope is assigned to one of the '+
@@ -428,7 +436,7 @@ geotab.addin.driverScorecard = function () {
         var drv = {}, unattributed = 0;
         function ensure(id, office){
           if(!drv[id]) drv[id] = {id:id, name:uname[id]||id, office:office,
-                                  miles:0, ev:{}, rate:{}, pct:{}};
+                                  archived:!!gone[id], miles:0, ev:{}, rate:{}, pct:{}};
           return drv[id];
         }
         trips.forEach(function(t){
@@ -525,8 +533,10 @@ geotab.addin.driverScorecard = function () {
       (officeFilter ? esc(officeFilter)+' only' : Object.keys(offices).length+' locations')+
       ' &middot; previous '+days+' days &middot; '+MIN_MILES+'+ mi to qualify';
 
-    var priority = view.filter(function(d){ return d.band.key==='prio'; });
-    var moving   = view.filter(function(d){ return d.trend.key==='worse'; });
+    var priority = view.filter(function(d){ return d.band.key==='prio' && !d.archived; });
+    var priGone  = view.filter(function(d){ return d.band.key==='prio' &&  d.archived; }).length;
+    var moving   = view.filter(function(d){ return d.trend.key==='worse' && !d.archived; });
+    var archived = view.filter(function(d){ return d.archived; }).length;
     var totMi = view.reduce(function(s,d){ return s+d.miles; }, 0);
     var totEv = view.reduce(function(s,d){
       return s + METRICS.reduce(function(a,m){ return a+(d.ev[m.id]||0); }, 0); }, 0);
@@ -534,10 +544,13 @@ geotab.addin.driverScorecard = function () {
 
     el('ds-kpis').innerHTML =
       kpi('Priority', String(priority.length),
-          'over '+BANDS[2].max+'&times; the fleet median &middot; <span class="muted">'+
-          (officeFilter ? esc(officeFilter) : 'fleet-wide')+'</span>') +
+          'over '+BANDS[2].max+'&times; the fleet median'+
+          (priGone ? ' &middot; <span class="muted">'+priGone+' more, but they have left</span>'
+                   : ' &middot; <span class="muted">'+(officeFilter ? esc(officeFilter) : 'fleet-wide')+'</span>')) +
       kpi('Drivers ranked', String(view.length),
-          unranked.length+' below '+MIN_MILES+' mi &middot; <span class="muted">not scored</span>') +
+          unranked.length+' below '+MIN_MILES+' mi'+
+          (archived ? ' &middot; <span class="muted">'+archived+' no longer employed</span>'
+                    : ' &middot; <span class="muted">not scored</span>')) +
       kpi('Events per 1,000 mi', totMi ? (totEv/(totMi/1000)).toFixed(1) : '—',
           f0(totEv)+' events over '+f0(totMi)+' mi') +
       kpi('Slipping', String(moving.length),
@@ -578,7 +591,7 @@ geotab.addin.driverScorecard = function () {
     el('ds-offwrap').innerHTML = oh+ob+'</tbody></table>';
 
     // ── Ranked table ──────────────────────────────────────────────────────
-    var rows = coachOnly ? view.filter(function(d){ return d.band.key==='prio'; }) : view;
+    var rows = coachOnly ? view.filter(function(d){ return d.band.key==='prio' && !d.archived; }) : view;
     el('ds-title').textContent = coachOnly
       ? 'Priority list ('+rows.length+')'
       : 'Ranked drivers ('+rows.length+')';
@@ -592,7 +605,9 @@ geotab.addin.driverScorecard = function () {
     var body = rows.map(function(d){
       return '<tr>'+
         '<td class="rank">'+d.rank+'</td>'+
-        '<td class="name">'+esc(d.name)+'</td>'+
+        '<td class="name">'+esc(d.name)+
+          (d.archived ? ' <span class="ds-gone" title="Archived in Geotab — no longer employed">left</span>' : '')+
+        '</td>'+
         '<td>'+esc(d.office)+'</td>'+
         '<td class="r">'+f0(d.miles)+'</td>'+
         '<td class="c"><span class="ds-score">'+d.score+'</span></td>'+
@@ -627,7 +642,7 @@ geotab.addin.driverScorecard = function () {
       : '<div style="padding:16px;font-size:12.5px;color:var(--ink-3)">Everyone cleared '+
         MIN_MILES+' miles.</div>';
 
-    renderFoot(companyN);
+    renderFoot(companyN, archived);
   }
 
   function kpi(label, value, sub){
@@ -635,7 +650,7 @@ geotab.addin.driverScorecard = function () {
       '<div class="ds-kpi-value">'+value+'</div><div class="ds-kpi-sub">'+sub+'</div></div>';
   }
 
-  function renderFoot(companyN){
+  function renderFoot(companyN, archived){
     var legend = '<div class="ds-legend"><span>Cell colour:</span>'+
       FILL.map(function(f){ return '<i style="background:'+f.bg+'"></i>'; }).join('')+
       '<span>better than typical &rarr; worse</span>'+
@@ -695,6 +710,12 @@ geotab.addin.driverScorecard = function () {
       'location &mdash; dense residential work produces more cornering per mile regardless of '+
       'who is driving &mdash; which is why cornering carries the lowest weight and the '+
       '&ldquo;in office&rdquo; column is there beside it.</p>'+
+      '<p><b>Drivers who have left are marked <span class="ds-gone">left</span> and stay in the '+
+      'numbers.</b> Geotab returns archived users from the same call as everyone else, so an '+
+      'ex-employee keeps appearing for as long as the window still covers their driving &mdash; '+
+      'currently '+archived+' of the ranked list. Their miles really happened, so removing them '+
+      'would misstate what the office did; but they are excluded from the Priority and Slipping '+
+      'counts and from the Priority list, because those are lists of people to go and talk to.</p>'+
       '<p><b>Only attributed driving counts.</b> A vehicle with no assigned driver contributes '+
       'nothing here'+(DATA && DATA.unattributed > 1
         ? ' &mdash; '+f0(DATA.unattributed)+' miles in this window belong to nobody'
@@ -757,13 +778,13 @@ geotab.addin.driverScorecard = function () {
 
   function exportCsv(){
     if(!lastRanked.length) return;
-    var head = ['Rank','Driver','Location','Miles','Score','VsFleetMedian','Band','Trend','OfficeRank','OfficeSize']
+    var head = ['Rank','Driver','Location','Miles','Score','VsFleetMedian','Band','Trend','Archived','OfficeRank','OfficeSize']
       .concat(METRICS.map(function(m){ return m.id+' per 1000mi'; }))
       .concat(METRICS.map(function(m){ return m.id+' events'; }));
     var lines = [head.join(',')].concat(lastRanked.map(function(d){
       return [d.rank, '"'+String(d.name).replace(/"/g,'""')+'"', '"'+d.office+'"',
               Math.round(d.miles), d.score, d.ratio.toFixed(2), d.band.key,
-              d.trend.key, d.officeRank, d.officeN]
+              d.trend.key, d.archived?'yes':'no', d.officeRank, d.officeN]
         .concat(METRICS.map(function(m){ return d.rate[m.id].toFixed(2); }))
         .concat(METRICS.map(function(m){ return d.ev[m.id]||0; })).join(',');
     }));
