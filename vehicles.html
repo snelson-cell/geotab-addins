@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<!-- No charting library. This is a per-vehicle worklist. -->
+</head>
+<body>
+<div id="vh-root">
+  <div class="vh-topbar">
+    <div>
+      <h2 class="vh-h1">Vehicle health</h2>
+      <div class="vh-scope" id="vh-scope">Loading…</div>
+    </div>
+    <div class="vh-controls">
+      <label class="vh-officepick">
+        <span>Branch</span>
+        <select id="vh-office" aria-label="Filter to one branch"><option value="">All branches</option></select>
+      </label>
+      <div class="vh-periods" id="vh-periods" role="group" aria-label="Mileage basis"></div>
+    </div>
+  </div>
+
+  <div class="vh-note" id="vh-stop"></div>
+  <div class="vh-note" id="vh-warn"></div>
+
+  <div class="vh-kpis" id="vh-kpis"></div>
+
+  <div class="vh-tablehead">
+    <div class="vh-tabletitle" id="vh-title">Vehicles</div>
+    <div class="vh-tools">
+      <button type="button" id="vh-att">Needs attention only</button>
+      <button type="button" id="vh-csv">Export CSV</button>
+    </div>
+  </div>
+  <div class="vh-card" id="vh-tablewrap"></div>
+
+  <div class="vh-tablehead">
+    <div class="vh-tabletitle" id="vh-blind-title">Not reporting maintenance data</div>
+    <div class="vh-tools"><button type="button" id="vh-blind-toggle">Show</button></div>
+  </div>
+  <div class="vh-tablewrap" id="vh-blind"></div>
+
+  <div class="vh-foot" id="vh-foot"></div>
+</div>
+
+<script>
+geotab.addin.vehicleHealth = function () {
+  'use strict';
+
+  // MyGeotab drops this file's <head>, so the stylesheet ships as a string.
+  var STYLE_ID = 'vh-styles';
+  var CSS = [
+    '#vh-root{',
+    '  --surface-1:#fcfcfb; --page:#f9f9f7;',
+    '  --ink-1:#0b0b0b; --ink-2:#52514e; --ink-3:#898781;',
+    '  --grid:#e1e0d9; --axis:#c3c2b7; --hairline:rgba(11,11,11,.10);',
+    '  --accent:#2a78d6; --good-ink:#0a6b18; --warn-ink:#7a5300; --bad-ink:#9b2626;',
+    '  font-family:system-ui,-apple-system,"Segoe UI",sans-serif;',
+    '  color:var(--ink-1); background:var(--page); padding:18px 20px 28px; width:100%;}',
+    '#vh-root, #vh-root *{box-sizing:border-box;}',
+    '.vh-h1{font-size:19px;font-weight:650;margin:0;letter-spacing:-.01em;}',
+    '.vh-scope{font-size:12.5px;color:var(--ink-3);margin:3px 0 0;}',
+    '.vh-topbar{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:12px;}',
+    '.vh-controls{display:flex;flex-wrap:wrap;align-items:center;gap:10px;}',
+    '.vh-officepick{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:var(--ink-3);}',
+    '.vh-officepick select{font:inherit;font-size:12.5px;font-weight:600;color:var(--ink-1);',
+    '  background:var(--surface-1);border:1px solid var(--axis);border-radius:7px;padding:6px 9px;cursor:pointer;}',
+    '.vh-officepick.on select{border-color:var(--accent);color:var(--accent);}',
+    '.vh-periods{display:inline-flex;border:1px solid var(--axis);border-radius:7px;overflow:hidden;background:var(--surface-1);}',
+    '.vh-periods button{border:0;background:transparent;color:var(--ink-2);font:inherit;font-size:12.5px;',
+    '  font-weight:600;padding:6px 12px;cursor:pointer;border-right:1px solid var(--grid);}',
+    '.vh-periods button:last-child{border-right:0;}',
+    '.vh-periods button[aria-pressed="true"]{background:var(--accent);color:#fff;}',
+    '#vh-root.busy .vh-kpis, #vh-root.busy .vh-card, #vh-root.busy .vh-tablewrap,',
+    '#vh-root.busy .vh-foot{opacity:.3;pointer-events:none;transition:opacity .12s ease;}',
+    '',
+    '.vh-note{font-size:12.5px;border-radius:7px;padding:9px 12px;margin:12px 0 0;display:none;',
+    '  border:1px solid var(--hairline);background:var(--surface-1);color:var(--ink-2);}',
+    '.vh-note.on{display:block;}',
+    '.vh-note--warn{background:#fdf6e3;border-color:#efdca8;color:var(--warn-ink);}',
+    '.vh-note--stop{background:#fbece8;border-color:#f0cfc7;color:var(--bad-ink);}',
+    '',
+    '.vh-kpis{display:flex;flex-wrap:wrap;gap:12px;margin:14px 0 0;}',
+    '.vh-kpi{flex:1 1 185px;min-width:0;background:var(--surface-1);border:1px solid var(--hairline);',
+    '  border-radius:9px;padding:13px 15px 14px;}',
+    '.vh-kpi-label{font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;',
+    '  color:var(--ink-3);display:flex;align-items:center;gap:5px;}',
+    '.vh-kpi-value{font-size:29px;font-weight:640;line-height:1.12;margin:7px 0 0;letter-spacing:-.02em;}',
+    '.vh-kpi-sub{font-size:12px;color:var(--ink-2);margin:4px 0 0;line-height:1.4;}',
+    '.vh-kpi-sub .muted{color:var(--ink-3);}',
+    '.vh-dot{width:8px;height:8px;border-radius:50%;display:inline-block;flex:none;}',
+    '',
+    '.vh-card{background:var(--surface-1);border:1px solid var(--hairline);border-radius:9px;',
+    '  margin:9px 0 0;overflow-x:auto;}',
+    '.vh-tablehead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:20px 0 0;}',
+    '.vh-tabletitle{font-size:14px;font-weight:650;}',
+    '.vh-tools{display:flex;flex-wrap:wrap;gap:8px;}',
+    '.vh-tools button{font:inherit;font-size:12.5px;font-weight:600;color:var(--ink-2);',
+    '  background:var(--surface-1);border:1px solid var(--axis);border-radius:6px;padding:5px 11px;cursor:pointer;}',
+    '.vh-tools button.on{border-color:var(--accent);color:var(--accent);}',
+    '.vh-tablewrap{margin:9px 0 0;border:1px solid var(--hairline);border-radius:9px;',
+    '  background:var(--surface-1);display:none;overflow-x:auto;}',
+    '.vh-tablewrap.on{display:block;}',
+    'table.vh-t{border-collapse:collapse;width:100%;font-size:12.5px;font-variant-numeric:tabular-nums;}',
+    'table.vh-t th{position:sticky;top:0;background:var(--surface-1);text-align:left;font-size:10.5px;',
+    '  letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);padding:9px 10px;',
+    '  border-bottom:1px solid var(--grid);white-space:nowrap;z-index:1;}',
+    'table.vh-t th.c{text-align:center;} table.vh-t th.r{text-align:right;}',
+    'table.vh-t td{padding:7px 10px;border-bottom:1px solid var(--grid);color:var(--ink-2);white-space:nowrap;}',
+    'table.vh-t tr:last-child td{border-bottom:0;}',
+    'table.vh-t td.veh{color:var(--ink-1);font-weight:600;}',
+    'table.vh-t td.r{text-align:right;} table.vh-t td.c{text-align:center;}',
+    'table.vh-t tr.act td{background:#fdf6e3;}',
+    'table.vh-t tr.bad td{background:#fbece8;}',
+    'a.vh-link{color:var(--accent);text-decoration:none;font-weight:600;}',
+    'a.vh-link:hover{text-decoration:underline;}',
+    '.vh-pill{display:inline-block;font-size:11px;font-weight:700;padding:1px 7px;border-radius:20px;}',
+    '.vh-pill.ok{background:#e9f5e9;color:var(--good-ink);}',
+    '.vh-pill.warn{background:#fdf1e8;color:#8a4b1d;}',
+    '.vh-pill.bad{background:#fbece8;color:var(--bad-ink);}',
+    '.vh-pill.none{background:var(--grid);color:var(--ink-3);}',
+    '.vh-age{color:var(--ink-3);font-size:11px;}',
+    '.vh-bar{display:inline-block;vertical-align:middle;width:52px;height:7px;border-radius:4px;',
+    '  background:var(--grid);margin-left:7px;overflow:hidden;}',
+    '.vh-bar i{display:block;height:100%;border-radius:4px;}',
+    '.vh-foot{font-size:12px;color:var(--ink-3);margin:16px 2px 0;line-height:1.55;}',
+    '.vh-foot b{color:var(--ink-2);font-weight:600;}',
+    '.vh-foot p{margin:0 0 9px;}'
+  ].join('\n');
+
+  // ── Constants ────────────────────────────────────────────────────────────
+  var LEAF = {b27AB:'Orlando', b27AC:'Tampa', b27AD:'ATL North', b27AE:'ATL South',
+              b27AF:'Chicago', b27B0:'Indianapolis', b27B1:'Northern Indy',
+              b27B2:'Louisville', b27B3:'Detroit', b27B4:'Grand Rapids',
+              b27B5:'Cincinnati', b27B6:'Cleveland', b27B7:'Columbus',
+              b27B8:'American Fork'};
+
+  var D_ODO  = 'DiagnosticOdometerId';
+  var D_OIL  = 'DiagnosticEngineOilLifeRemainingId';
+  var TYRES  = [
+    {k:'FL', id:'DiagnosticTirePressureFrontLeftId',  label:'Front left'},
+    {k:'FR', id:'DiagnosticTirePressureFrontRightId', label:'Front right'},
+    {k:'RL', id:'DiagnosticTirePressureRearLeftId',   label:'Rear left'},
+    {k:'RR', id:'DiagnosticTirePressureRearRightId',  label:'Rear right'}
+  ];
+
+  var M_TO_MI  = 1/1609.344;
+  var PA_TO_PSI = 1/6894.76;
+
+  // Fault triage. Geotab returns 3,939 "Active" faults across 297 vehicles, but
+  // severity is null on every one and the J1939 lamp fields (redStop,
+  // malfunction, amber) are never populated on light-duty OBD — so a raw count
+  // flags 80% of the fleet and means nothing. These are triaged by ID instead.
+  //
+  // ACTIONABLE device problems. Note "Low voltage power supply" is the only
+  // battery signal available anywhere: vehicle battery voltage is not reported
+  // by a single vehicle in this fleet.
+  var DEV_ACTION = {
+    DiagnosticDeviceHasBeenUnpluggedId:                         'device unplugged',
+    DiagnosticDeviceRestartedBecauseOfLowVoltageInPowerSupplyId:'low voltage — battery or wiring',
+    'a6cIJwNbaQEG4DH_pZy-mSQ':                                  'low voltage — battery or wiring',
+    DiagnosticInvalidGpsMessagesReceivedId:                     'poor GPS — check install',
+    DiagnosticDisabledExcessiveAccelerometerDataId:             'accelerometer — check install',
+    DiagnosticCanBusShortId:                                    'engine comms — short circuit'
+  };
+  // Device chatter nobody can act on: normal power cycling, modem and radio
+  // restarts, watchdog resets. "All power removed" alone fires on 208 of 387
+  // vehicles, which is what turned the attention list into the whole fleet.
+  var DEV_NOISE = {
+    DiagnosticDeviceRestartedBecauseAllPowerWasRemovedId:1,
+    DiagnosticDeviceRestartedDueToInternalWatchdogConditionId:1,
+    DiagnosticDeviceRestartedDueToInternalResetConditionId:1,
+    DiagnosticRestartedTheModemStateMachineId:1,
+    DiagnosticRestartedTheModemManagerStateMachineId:1,
+    DiagnosticRestartedTheRadioStateMachineId:1,
+    DiagnosticRestartedTheRadioManagerStateMachineId:1,
+    DiagnosticInvalidOpcodeResetId:1,
+    'aeAx1iIdw7U28BQED9dJ7Fg':1,
+    'ai6PO2E-pMkGB8vSypeoLdg':1
+  };
+
+  var PERIODS   = [7, 30];
+  var QUIET_DAYS = 3;
+  var OIL_SOON  = 25;   // % remaining -> book it
+  var OIL_NOW   = 10;   // % remaining -> overdue
+  // FMVSS 138 requires a TPMS lamp at 25% below the placard pressure. The
+  // placard is not in Geotab, so each vehicle is compared with its OWN four
+  // corners — the median of them stands in for the placard. Self-calibrating,
+  // so Mavericks, Colorados and rentals all judge correctly with no lookup.
+  var TYRE_LOW_FRAC = 0.75;
+  var TYRE_SPREAD   = 6;    // psi between best and worst corner = probable leak
+  var STALE_HOURS   = 72;   // a reading older than this is labelled, not trusted
+  var PAGE_CAP = 25000, ROW_LIMIT = 25000;
+  // Latest-value windows, walked backwards. Odometer logs heavily — a single
+  // 24h fleet-wide Get hits the cap and then returns FEWER devices than a 12h
+  // one, because truncation eats them. Small steps, newest kept.
+  var LOOKBACK_H = [12, 36, 84, 180];
+
+  // ── State ────────────────────────────────────────────────────────────────
+  var days = 30, apiRef = null, DATA = null, officeFilter = '', attnOnly = false;
+  var lastRows = [], lastBlind = [];
+
+  function el(id){ return document.getElementById(id); }
+  function esc(s){
+    return String(s == null ? '' : s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+  function f0(n){ return Math.round(n).toLocaleString(); }
+  function clearNotes(){ ['vh-stop','vh-warn'].forEach(function(i){ el(i).className='vh-note'; el(i).innerHTML=''; }); }
+  function note(id,cls,html){ el(id).className='vh-note '+cls+' on'; el(id).innerHTML=html; }
+  function fail(m){ el('vh-root').classList.remove('busy'); note('vh-stop','vh-note--stop',m);
+                    el('vh-scope').textContent='Could not load'; }
+  function injectStyles(){
+    if(document.getElementById(STYLE_ID)) return;
+    var s=document.createElement('style'); s.id=STYLE_ID; s.textContent=CSS; document.head.appendChild(s);
+  }
+  function median(a){
+    if(!a.length) return null;
+    var s=a.slice().sort(function(x,y){ return x-y; }), h=s.length>>1;
+    return s.length%2 ? s[h] : (s[h-1]+s[h])/2;
+  }
+  function ageText(ms){
+    if(ms == null) return '';
+    var h = ms/3600000;
+    if(h < 1)  return 'just now';
+    if(h < 48) return Math.round(h)+'h ago';
+    return Math.round(h/24)+'d ago';
+  }
+
+  // Trips still need the cap-splitting fetch: Trip truncates at 25,000 no
+  // matter what resultsLimit says.
+  function fetchWindowed(api, typeName, a0, b0, done, fail_, extra){
+    var out=[], pending=0, failed=false;
+    function grab(a,b,depth){
+      pending++;
+      var search={fromDate:a, toDate:b};
+      if(extra) for(var k in extra) search[k]=extra[k];
+      api.call('Get', {typeName:typeName, resultsLimit:ROW_LIMIT, search:search}, function(rows){
+        rows=rows||[];
+        if(rows.length >= PAGE_CAP && depth < 7){
+          var mid=new Date((new Date(a).getTime()+new Date(b).getTime())/2).toISOString();
+          pending--; grab(a,mid,depth+1); grab(mid,b,depth+1); return;
+        }
+        out=out.concat(rows);
+        if(--pending===0 && !failed) done(out);
+      }, function(err){ if(!failed){ failed=true; fail_(err); } });
+    }
+    grab(a0,b0,0);
+  }
+
+  // Newest reading per device for one diagnostic, walking windows backwards so
+  // no single call is anywhere near the row cap.
+  // Returns {values, truncated}. A deep window can still exceed the row cap on
+  // a full-company login (odometer logs ~43,000 rows a day fleet-wide), which
+  // silently drops long-parked vehicles. A branch-scoped login — the intended
+  // audience — sees about a fourteenth of that and never truncates, but the
+  // page says so either way rather than showing a partial list as complete.
+  function latestByDevice(api, diagId, done, fail_){
+    var out={}, i=0, to=new Date(), truncated=false;
+    function step(){
+      if(i >= LOOKBACK_H.length){ done(out, truncated); return; }
+      var from=new Date(to.getTime() - LOOKBACK_H[i]*3600000);
+      var prev=i>0 ? new Date(to.getTime() - LOOKBACK_H[i-1]*3600000) : to;
+      api.call('Get', {typeName:'StatusData', resultsLimit:ROW_LIMIT,
+        search:{diagnosticSearch:{id:diagId}, fromDate:from.toISOString(), toDate:prev.toISOString()}},
+        function(rows){
+          rows = rows||[];
+          if(rows.length >= PAGE_CAP) truncated = true;
+          rows.forEach(function(r){
+            var id=(r.device||{}).id; if(!id || r.data==null || !r.dateTime) return;
+            var t=new Date(r.dateTime).getTime();
+            if(!out[id] || t > out[id].t) out[id]={t:t, v:r.data};
+          });
+          i++; step();
+        }, fail_);
+    }
+    step();
+  }
+
+  // ── Load ─────────────────────────────────────────────────────────────────
+  function load(api){
+    apiRef=api; clearNotes();
+    el('vh-scope').textContent='Loading…';
+    el('vh-root').classList.add('busy');
+    var to=new Date(), from=new Date(to.getTime()-days*24*3600*1000);
+    var truncatedOdo=false;
+
+    api.multiCall([
+      ['Get', {typeName:'Device', resultsLimit:50000}],
+      ['Get', {typeName:'Camera'}],
+      ['Get', {typeName:'DeviceStatusInfo'}],
+      ['Get', {typeName:'FaultData', resultsLimit:ROW_LIMIT,
+               search:{fromDate:new Date(to.getTime()-7*24*3600*1000).toISOString(),
+                       toDate:to.toISOString()}}]
+    ], function(res){
+      var devices=res[0]||[], cameras=res[1]||[], status=res[2]||[], faults=res[3]||[];
+
+      // Camera records key off the GO device SERIAL NUMBER, not the device id.
+      var camSerial={};
+      cameras.forEach(function(c){
+        var s=(c && c.deviceSerialNumber || '').trim();
+        if(s) camSerial[s]=true;
+      });
+      var assigned={}, lastComm={};
+      status.forEach(function(s){
+        var id=(s.device||{}).id; if(!id) return;
+        var d=s.driver;
+        if(d && typeof d==='object' && d.id && d.id!=='UnknownDriverId') assigned[id]=true;
+        if(s.dateTime) lastComm[id]=new Date(s.dateTime);
+      });
+      var faultCount={}, devIssue={};
+      faults.forEach(function(f){
+        var id=(f.device||{}).id; if(!id || String(f.faultState)!=='Active') return;
+        var dg=(f.diagnostic||{}).id;
+        if(DEV_ACTION[dg]){ (devIssue[id]=devIssue[id]||{})[DEV_ACTION[dg]]=true; return; }
+        if(DEV_NOISE[dg]) return;
+        faultCount[id]=(faultCount[id]||0)+1;
+      });
+
+      var veh={};
+      devices.forEach(function(d){
+        var off=null;
+        (d.groups||[]).forEach(function(g){ if(LEAF[g.id]) off=LEAF[g.id]; });
+        if(!off) return;
+        veh[d.id]={id:d.id, name:d.name||d.id, office:off,
+                   camera:!!camSerial[(d.serialNumber||'').trim()],
+                   assigned:!!assigned[d.id], last:lastComm[d.id]||null,
+                   faults:faultCount[d.id]||0,
+                   devIssues:Object.keys(devIssue[d.id]||{}),
+                   miles:0, odo:null, odoAt:null, oil:null, oilAt:null, tyre:{}, tyreAt:null};
+      });
+      if(!Object.keys(veh).length){
+        fail('No vehicle in your data scope is assigned to one of the '+
+             Object.keys(LEAF).length+' branch groups, so nothing can be shown by branch.');
+        return;
+      }
+
+      fetchWindowed(api, 'Trip', from.toISOString(), to.toISOString(), function(trips){
+        trips.forEach(function(t){
+          var v=veh[(t.device||{}).id]; if(!v) return;
+          v.miles += (t.distance||0)*0.621371;
+        });
+        // odometer, oil life, then the four corners — sequentially so the
+        // browser never holds more than one window's worth.
+        latestByDevice(api, D_ODO, function(odo, odoTrunc){
+          truncatedOdo = odoTrunc;
+          Object.keys(odo).forEach(function(id){
+            if(veh[id]){ veh[id].odo=odo[id].v*M_TO_MI; veh[id].odoAt=odo[id].t; }
+          });
+          latestByDevice(api, D_OIL, function(oil){
+            Object.keys(oil).forEach(function(id){
+              if(veh[id]){ veh[id].oil=oil[id].v; veh[id].oilAt=oil[id].t; }
+            });
+            var ti=0;
+            (function nextTyre(){
+              if(ti >= TYRES.length){ finish(); return; }
+              var T=TYRES[ti++];
+              latestByDevice(api, T.id, function(m){
+                Object.keys(m).forEach(function(id){
+                  if(veh[id]){ veh[id].tyre[T.k]=m[id].v*PA_TO_PSI;
+                               veh[id].tyreAt=Math.max(veh[id].tyreAt||0, m[id].t); }
+                });
+                nextTyre();
+              }, function(err){ nextTyre(); });   // one missing corner must not kill the page
+            })();
+          }, function(err){ fail('Error loading oil life: '+esc(err)); });
+        }, function(err){ fail('Error loading odometer: '+esc(err)); });
+
+        function finish(){
+          DATA={veh:veh, from:from, to:to, truncatedOdo:truncatedOdo};
+          el('vh-root').classList.remove('busy');
+          render();
+        }
+      }, function(err){ fail('Error loading trips: '+esc(err)); });
+    }, function(err){ fail('Error loading vehicles: '+esc(err)); });
+  }
+
+  // ── Per-vehicle assessment ───────────────────────────────────────────────
+  function assess(v, now){
+    var out={flags:[], severity:0};
+    v.mpd = v.miles / days;
+
+    // Oil. Days-to-service uses the vehicle's OWN mileage rate, so a van doing
+    // 90 mi/day is flagged before a spare doing 5, at the same oil percentage.
+    v.oilDays = null;
+    if(v.oil != null && v.mpd > 1 && v.odo != null){
+      // 10,000-mile interval is an assumption, stated on the page. Without a
+      // service history in Geotab there is nothing better to anchor to yet.
+      v.oilDays = Math.round((v.oil/100) * 10000 / v.mpd);
+    }
+    if(v.oil != null){
+      if(v.oil <= OIL_NOW){ out.flags.push('oil'); out.severity=Math.max(out.severity,3); }
+      else if(v.oil <= OIL_SOON){ out.flags.push('oil-soon'); out.severity=Math.max(out.severity,2); }
+    }
+
+    // Tyres, judged against this vehicle's own corners.
+    var vals=[], corners=Object.keys(v.tyre);
+    corners.forEach(function(k){ vals.push(v.tyre[k]); });
+    v.tyreMin=null; v.tyreSpread=null; v.tyreRef=null;
+    if(vals.length >= 3){
+      v.tyreRef=median(vals);
+      v.tyreMin=Math.min.apply(null, vals);
+      v.tyreSpread=Math.max.apply(null, vals)-v.tyreMin;
+      if(v.tyreMin < v.tyreRef*TYRE_LOW_FRAC){
+        out.flags.push('tyre-low'); out.severity=Math.max(out.severity,3);
+      } else if(v.tyreSpread >= TYRE_SPREAD){
+        out.flags.push('tyre-spread'); out.severity=Math.max(out.severity,2);
+      }
+    }
+
+    // A device problem is a job for the branch — go and plug it back in — so it
+    // drives the attention list. A vehicle DTC with no severity attached is
+    // shown but does not, or a quarter of the fleet lands on the worklist.
+    if(v.devIssues.length){ out.flags.push('device'); out.severity=Math.max(out.severity,3); }
+    if(v.faults > 0) out.flags.push('dtc');
+
+    var quiet = !v.last || (now - v.last)/86400000 >= QUIET_DAYS;
+    if(quiet){ out.flags.push('quiet'); out.severity=Math.max(out.severity,2); }
+    v.quiet=quiet;
+
+    v.blind = (v.oil == null && vals.length < 3);
+    return out;
+  }
+
+  // ── Render ───────────────────────────────────────────────────────────────
+  function render(){
+    if(!DATA) return;
+    clearNotes();
+    var now=DATA.to.getTime();
+    var all=Object.keys(DATA.veh).map(function(k){ return DATA.veh[k]; });
+    all.forEach(function(v){ v.a=assess(v, now); });
+
+    var offices={};
+    all.forEach(function(v){ (offices[v.office]=offices[v.office]||[]).push(v); });
+    var names=Object.keys(offices).sort();
+    syncOfficePicker(names);
+    if(officeFilter && !offices[officeFilter]){ officeFilter=''; syncOfficePicker(names); }
+
+    var view = officeFilter ? offices[officeFilter] : all;
+    var nOff = names.length;
+    el('vh-scope').innerHTML =
+      f0(view.length)+' vehicles &middot; '+
+      (officeFilter ? esc(officeFilter)
+        : (nOff===1 ? '<b>'+esc(names[0])+'</b> &mdash; everything your login can see'
+                    : nOff+' branches in your data scope'))+
+      ' &middot; mileage over the previous '+days+' days';
+
+    var visible = view.filter(function(v){ return !v.blind; });
+    var blind   = view.filter(function(v){ return  v.blind; });
+    var attn    = visible.filter(function(v){ return v.a.severity > 0; });
+    var oilDue  = visible.filter(function(v){ return v.oil != null && v.oil <= OIL_SOON; });
+    var tyre    = visible.filter(function(v){
+      return v.a.flags.indexOf('tyre-low')>=0 || v.a.flags.indexOf('tyre-spread')>=0; });
+    var fault   = visible.filter(function(v){ return v.faults > 0; });
+    var devbad  = visible.filter(function(v){ return v.devIssues.length > 0; });
+
+    el('vh-kpis').innerHTML =
+      kpi('Needs attention', attn.length ? '#d03b3b' : '#0ca30c', String(attn.length),
+          'of '+visible.length+' reporting &middot; <span class="muted">'+
+          (officeFilter ? esc(officeFilter) : 'all branches')+'</span>') +
+      kpi('Service due', oilDue.length ? '#fab219' : null, String(oilDue.length),
+          'oil life at or under '+OIL_SOON+'%') +
+      kpi('Tyre alerts', tyre.length ? '#fab219' : null, String(tyre.length),
+          'a corner low, or the set uneven') +
+      kpi('Device problems', devbad.length ? '#d03b3b' : null, String(devbad.length),
+          'unplugged, low voltage or bad install') +
+      kpi('Fault codes', null, String(fault.length),
+          'vehicles with an active DTC &middot; <span class="muted">no severity available</span>') +
+      kpi('Not measurable', blind.length ? '#898781' : null, String(blind.length),
+          'no oil life or tyre data &middot; <span class="muted">listed below</span>');
+
+    var rows = (attnOnly ? attn : visible).slice().sort(function(a,b){
+      return b.a.severity-a.a.severity || (a.oil==null?101:a.oil)-(b.oil==null?101:b.oil)
+          || b.miles-a.miles;
+    });
+    lastRows = rows; lastBlind = blind;
+    el('vh-title').textContent = (attnOnly ? 'Needs attention (' : 'Vehicles (')+rows.length+')';
+
+    var head='<table class="vh-t"><thead><tr>'+
+      '<th>Vehicle</th><th>Branch</th><th class="r">Odometer</th><th class="r">Mi/day</th>'+
+      '<th>Oil life</th><th class="c">Service</th><th>Tyres</th><th class="c">Fault codes</th><th>Device</th>'+
+      '<th class="c">Camera</th><th class="c">Driver</th><th class="c">Last heard</th>'+
+      '<th class="c">Open</th></tr></thead><tbody>';
+    var body=rows.map(function(v){
+      var cls = v.a.severity>=3 ? ' class="bad"' : (v.a.severity>0 ? ' class="act"' : '');
+      return '<tr'+cls+'>'+
+        '<td class="veh">'+esc(v.name)+'</td>'+
+        '<td>'+esc(v.office)+'</td>'+
+        '<td class="r">'+(v.odo!=null ? f0(v.odo)+' <span class="vh-age">'+ageText(now-v.odoAt)+'</span>' : '&mdash;')+'</td>'+
+        '<td class="r">'+(v.miles>0 ? v.mpd.toFixed(0) : '<span class="vh-age">0</span>')+'</td>'+
+        '<td>'+oilCell(v)+'</td>'+
+        '<td class="c">'+serviceCell(v)+'</td>'+
+        '<td>'+tyreCell(v)+'</td>'+
+        '<td class="c">'+(v.faults ? '<span class="vh-pill warn">'+v.faults+'</span>'
+                                   : '<span class="vh-age">0</span>')+'</td>'+
+        '<td>'+(v.devIssues.length ? '<span class="vh-pill bad">'+esc(v.devIssues[0])+'</span>'
+                                   : '<span class="vh-age">ok</span>')+'</td>'+
+        '<td class="c">'+(v.camera?'yes':'<span class="vh-age">no</span>')+'</td>'+
+        '<td class="c">'+(v.assigned?'yes':'<span class="vh-pill warn">none</span>')+'</td>'+
+        '<td class="c">'+(v.quiet ? '<span class="vh-pill bad">'+(v.last?ageText(now-v.last.getTime()):'never')+'</span>'
+                                  : '<span class="vh-age">'+(v.last?ageText(now-v.last.getTime()):'never')+'</span>')+'</td>'+
+        '<td class="c"><a class="vh-link" target="_blank" rel="noopener" '+
+          'href="#device,id:'+esc(v.id)+'" title="Open this asset in MyGeotab to raise a work request">open</a></td>'+
+        '</tr>';
+    }).join('');
+    el('vh-tablewrap').innerHTML = rows.length ? head+body+'</tbody></table>'
+      : '<div style="padding:16px;font-size:12.5px;color:var(--ink-3)">Nothing to show.</div>';
+
+    el('vh-blind-title').textContent='Not reporting maintenance data ('+blind.length+')';
+    el('vh-blind').innerHTML = blind.length
+      ? '<table class="vh-t"><thead><tr><th>Vehicle</th><th>Branch</th><th class="r">Odometer</th>'+
+        '<th class="r">Mi/day</th><th class="c">Last heard</th></tr></thead><tbody>'+
+        blind.sort(function(a,b){ return b.miles-a.miles; }).map(function(v){
+          return '<tr><td class="veh">'+esc(v.name)+'</td><td>'+esc(v.office)+'</td>'+
+            '<td class="r">'+(v.odo!=null?f0(v.odo):'&mdash;')+'</td>'+
+            '<td class="r">'+(v.miles>0?v.mpd.toFixed(0):'0')+'</td>'+
+            '<td class="c"><span class="vh-age">'+(v.last?ageText(now-v.last.getTime()):'never')+'</span></td></tr>';
+        }).join('')+'</tbody></table>'
+      : '<div style="padding:16px;font-size:12.5px;color:var(--ink-3)">Every vehicle is reporting.</div>';
+
+    renderFoot(visible.length, blind.length);
+  }
+
+  function kpi(label, dot, value, sub){
+    return '<div class="vh-kpi"><div class="vh-kpi-label">'+
+      (dot?'<span class="vh-dot" style="background:'+dot+'"></span>':'')+esc(label)+
+      '</div><div class="vh-kpi-value">'+value+'</div><div class="vh-kpi-sub">'+sub+'</div></div>';
+  }
+  function oilCell(v){
+    if(v.oil==null) return '<span class="vh-age">no reading</span>';
+    var c = v.oil<=OIL_NOW ? '#d03b3b' : v.oil<=OIL_SOON ? '#fab219' : '#0ca30c';
+    return Math.round(v.oil)+'%<span class="vh-bar"><i style="width:'+
+      Math.max(2,Math.min(100,v.oil))+'%;background:'+c+'"></i></span>';
+  }
+  function serviceCell(v){
+    if(v.oil==null) return '<span class="vh-age">&mdash;</span>';
+    if(v.oil<=OIL_NOW) return '<span class="vh-pill bad">overdue</span>';
+    if(v.oilDays==null) return '<span class="vh-age">&mdash;</span>';
+    if(v.oilDays<=14) return '<span class="vh-pill warn">~'+v.oilDays+'d</span>';
+    return '<span class="vh-age">~'+v.oilDays+'d</span>';
+  }
+  function tyreCell(v){
+    if(v.tyreMin==null) return '<span class="vh-age">no reading</span>';
+    var low=v.a.flags.indexOf('tyre-low')>=0, sp=v.a.flags.indexOf('tyre-spread')>=0;
+    var txt=v.tyreMin.toFixed(1)+' psi';
+    if(low) return '<span class="vh-pill bad">'+txt+'</span> <span class="vh-age">vs '+
+      v.tyreRef.toFixed(0)+' typical</span>';
+    if(sp)  return '<span class="vh-pill warn">'+v.tyreSpread.toFixed(1)+' psi spread</span>';
+    return '<span class="vh-age">'+txt+' &middot; even</span>';
+  }
+
+  function renderFoot(nVis, nBlind){
+    el('vh-foot').innerHTML =
+      (DATA && DATA.truncatedOdo
+        ? '<p style="color:var(--warn-ink)"><b>Odometer readings are incomplete for vehicles that '+
+          'have been parked for several days.</b> Fetching them for the whole company at once '+
+          'exceeds what Geotab returns in a single request, so the oldest readings are cut. '+
+          'Filtering to one branch removes the problem entirely, and a branch-scoped login never '+
+          'hits it. Everything else on this page is complete.</p>'
+        : '') +
+      '<p><b>What this page is for.</b> Which vehicles need attention before they break down or '+
+      'fail an inspection. It is the counterpart to the Driver Scorecard: that one asks how your '+
+      'people drive, this one asks whether the trucks are fit to be driven.</p>'+
+      '<p><b>A low tyre is judged against its own vehicle.</b> Federal rules require a dashboard '+
+      'TPMS light at 25% below the placard pressure, but the placard is not in Geotab &mdash; so '+
+      'each corner is compared with the median of that vehicle\'s own four. A Maverick and a '+
+      'loaded Colorado are therefore both judged correctly with no lookup table. A <b>spread</b> '+
+      'of '+TYRE_SPREAD+' psi or more between best and worst corner is flagged separately: four '+
+      'tyres low together is cold weather, one tyre low is a leak.</p>'+
+      '<p><b>Service timing uses the vehicle\'s own mileage.</b> A van covering 90 miles a day at '+
+      '30% oil life needs booking before a spare covering 5 miles a day at the same percentage. '+
+      'The day count assumes a 10,000-mile oil interval &mdash; once service history is being '+
+      'recorded in Geotab that assumption can be replaced with the real one.</p>'+
+      '<p><b>Readings are last-known, not live</b>, and each one carries its age. A parked vehicle '+
+      'keeps showing the last figure it sent; if that is days old, the age beside it says so '+
+      'rather than implying the number is current.</p>'+
+      '<p><b>'+nBlind+' of '+(nVis+nBlind)+' vehicles report no oil life or tyre data at all</b> and '+
+      'are listed separately rather than shown as healthy. Roughly half the fleet is in that state '+
+      '&mdash; an empty maintenance row means the truck is not talking, not that it is fine.</p>'+
+      '<p><b>Fault codes are shown but do not drive the attention list.</b> Geotab reports 3,939 '+
+      'active faults across 297 vehicles with <i>severity null on every one</i>, and the warning-lamp '+
+      'fields it would normally rank them by are never populated on light-duty OBD. Counting them '+
+      'would flag most of the fleet. <b>Device problems do</b> drive it &mdash; unplugged, low '+
+      'supply voltage, bad install &mdash; because each is a specific job, and because a vehicle '+
+      'that is not talking cannot be managed at all. Routine device chatter (power cycling, modem '+
+      'restarts) is filtered out: "all power removed" alone fires on 208 of 387 vehicles.</p>'+
+      '<p><b>Open</b> takes you to the asset in MyGeotab, where a work request can be raised '+
+      'against it. Nothing on this page writes to Geotab.</p>';
+  }
+
+  // ── Controls ─────────────────────────────────────────────────────────────
+  function syncOfficePicker(names){
+    var sel=el('vh-office');
+    var want=[''].concat(names);
+    var have=Array.prototype.slice.call(sel.options).map(function(o){ return o.value; });
+    if(have.length!==want.length || have.some(function(v,i){ return v!==want[i]; })){
+      sel.innerHTML='<option value="">All branches</option>'+
+        names.map(function(n){ return '<option value="'+esc(n)+'">'+esc(n)+'</option>'; }).join('');
+    }
+    sel.value=officeFilter;
+    sel.parentNode.className='vh-officepick'+(officeFilter?' on':'');
+  }
+
+  function buildChrome(){
+    el('vh-periods').innerHTML=PERIODS.map(function(p){
+      return '<button type="button" data-d="'+p+'" aria-pressed="'+(p===days)+'">'+p+'d</button>';
+    }).join('');
+    el('vh-periods').addEventListener('click', function(e){
+      var b=e.target.closest?e.target.closest('button'):null;
+      if(!b||!apiRef) return;
+      var d=+b.getAttribute('data-d'); if(d===days) return;
+      days=d;
+      Array.prototype.forEach.call(el('vh-periods').children, function(x){
+        x.setAttribute('aria-pressed', String(+x.getAttribute('data-d')===days));
+      });
+      load(apiRef);
+    });
+    el('vh-office').addEventListener('change', function(e){
+      officeFilter=e.target.value||''; render();      // pure re-render
+    });
+    el('vh-att').addEventListener('click', function(){
+      attnOnly=!attnOnly;
+      el('vh-att').className=attnOnly?'on':'';
+      el('vh-att').textContent=attnOnly?'Show all vehicles':'Needs attention only';
+      render();
+    });
+    el('vh-blind-toggle').addEventListener('click', function(){
+      var w=el('vh-blind'), on=w.classList.toggle('on');
+      el('vh-blind-toggle').className=on?'on':'';
+      el('vh-blind-toggle').textContent=on?'Hide':'Show';
+    });
+    el('vh-csv').addEventListener('click', exportCsv);
+  }
+
+  function exportCsv(){
+    if(!lastRows.length) return;
+    var head=['Vehicle','Branch','Odometer_mi','MilesPerDay','OilLife_pct','ServiceInDays',
+              'TyreMin_psi','TyreSpread_psi','ActiveFaults','DeviceIssues','Camera','DriverAssigned',
+              'LastHeard_hours','Flags'];
+    var now=DATA.to.getTime();
+    var lines=[head.join(',')].concat(lastRows.map(function(v){
+      return ['"'+String(v.name).replace(/"/g,'""')+'"','"'+v.office+'"',
+        v.odo!=null?Math.round(v.odo):'', v.mpd.toFixed(1),
+        v.oil!=null?v.oil.toFixed(1):'', v.oilDays!=null?v.oilDays:'',
+        v.tyreMin!=null?v.tyreMin.toFixed(1):'', v.tyreSpread!=null?v.tyreSpread.toFixed(1):'',
+        v.faults, v.camera?'yes':'no', v.assigned?'yes':'no',
+        v.last?Math.round((now-v.last.getTime())/3600000):'', '"'+v.a.flags.join(' ')+'"'].join(',');
+    }));
+    var blob=new Blob([lines.join('\n')],{type:'text/csv;charset=utf-8;'});
+    var a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download='vehicle-health'+(officeFilter?'-'+officeFilter.toLowerCase().replace(/[^a-z0-9]+/g,'-'):'')+'.csv';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(a.href);
+  }
+
+  return {
+    initialize:function(api,state,cb){ injectStyles(); buildChrome(); cb(); },
+    focus:function(api){ load(api); },
+    blur:function(){}
+  };
+};
+</script>
+</body>
+</html>
