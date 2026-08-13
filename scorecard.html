@@ -135,6 +135,7 @@ geotab.addin.driverScorecard = function () {
     '.ds-band.prio{background:#fbece8;color:var(--bad-ink);}',
     '.ds-trend{display:inline-block;font-size:12px;font-weight:650;}',
     '.ds-trend.worse{color:var(--bad-ink);} .ds-trend.better{color:var(--good-ink);}',
+    '.ds-trend.worse-lo{color:var(--ink-3);font-weight:500;}',
     '.ds-trend.steady{color:var(--ink-3);font-weight:500;} .ds-trend.new{color:var(--axis);}',
     '.ds-legend{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:11.5px;',
     '  color:var(--ink-3);margin:11px 2px 0;}',
@@ -181,6 +182,11 @@ geotab.addin.driverScorecard = function () {
     return BANDS[BANDS.length-1];
   }
   var TREND_Z = 2;       // sigmas a move must clear before it is called a change
+  // A COMPARISON needs more evidence than a single measurement. At the 250-mile
+  // ranking floor the previous window can be almost empty — one driver sat at
+  // 251 miles with no events, and any later month reads as a huge increase off
+  // that base. Twice the floor before a trend is computed at all.
+  var TREND_MIN_MILES = MIN_MILES * 2;
   var PAGE_CAP  = 25000; // Trip hard-caps here; ExceptionEvent truncates AT resultsLimit
   var ROW_LIMIT = 25000;
   var KM_TO_MI  = 0.621371;
@@ -337,7 +343,12 @@ geotab.addin.driverScorecard = function () {
   // that on individuals — 4 "worse" for every 1 "better". Trending position
   // instead comes out 1.4:1, which is what individual variation looks like.
   function trendOf(d, prev, curMed, prevMed){
-    if(!prev || prev.miles < MIN_MILES) return {key:'new', label:'—', title:'No comparable previous period'};
+    if(!prev || prev.miles < TREND_MIN_MILES){
+      return {key:'new', label:'—',
+              title:'No comparable previous period'+
+                    (prev && prev.miles ? ' — only '+f0(prev.miles)+' miles, and a comparison needs '+
+                     TREND_MIN_MILES+'+' : '')};
+    }
     var e1 = weightedEvents(d),    m1 = d.miles/1000;
     var e2 = weightedEvents(prev), m2 = prev.miles/1000;
     if(!m1 || !m2 || !curMed || !prevMed) return {key:'new', label:'—', title:'Not enough history'};
@@ -349,15 +360,19 @@ geotab.addin.driverScorecard = function () {
       Math.max(weightedVar(d),    1e-9)/(m1*m1*curMed*curMed) +
       Math.max(weightedVar(prev), 1e-9)/(m2*m2*prevMed*prevMed));
     var z  = se ? (r1-r2)/se : 0;
-    var pctMove = r2 ? Math.round(100*(r1-r2)/r2) : 0;
     var t = Math.abs(z) < TREND_Z ? 'steady' : (z > 0 ? 'worse' : 'better');
+    // A driver still comfortably below the fleet is not a concern whichever way
+    // they moved, so the movement is reported without alarm styling.
+    var cls = (t === 'worse' && r1 < 1) ? 'worse-lo' : t;
     return {
-      key: t,
-      label: t==='steady' ? 'steady' : (z>0 ? '▲ ' : '▼ ')+Math.abs(pctMove)+'%',
-      title: 'Position vs fleet: '+r2.toFixed(2)+'x → '+r1.toFixed(2)+'x ('+
-             (pctMove>=0?'+':'')+pctMove+'%, '+Math.abs(z).toFixed(1)+' sigma). '+
-             (t==='steady' ? 'Inside normal variation for '+f0(d.miles)+' miles.'
-                           : 'Larger than noise at this mileage.')
+      key: t, cls: cls,
+      label: t==='steady' ? 'steady'
+                          : (z>0 ? '▲ +' : '▼ −')+Math.abs(r1-r2).toFixed(2)+'×',
+      title: 'Position vs the fleet moved '+r2.toFixed(2)+'× → '+r1.toFixed(2)+'× ('+
+             Math.abs(z).toFixed(1)+' sigma over '+f0(d.miles)+' miles). '+
+             (t==='steady' ? 'Inside normal variation.'
+              : cls==='worse-lo' ? 'Still below the fleet median, so not a concern by itself.'
+              : 'Larger than noise at this mileage.')
     };
   }
 
@@ -657,6 +672,13 @@ geotab.addin.driverScorecard = function () {
       'near even. An arrow only appears when the move is larger than Poisson noise at that '+
       'driver\'s mileage; below that it says steady, and with no comparable previous period it '+
       'says nothing at all.</p>'+
+      '<p><b>The movement is shown in multiples, not per cent.</b> A driver who was at 0.15&times; '+
+      'and is now at 0.36&times; has more than doubled in percentage terms while remaining one of '+
+      'the safest people in the company &mdash; per cent off a small base is arithmetically large '+
+      'and practically meaningless. A trend needs <b>'+TREND_MIN_MILES+'+ miles in the previous '+
+      'period</b>, twice the ranking floor, because a comparison needs more evidence than a single '+
+      'measurement. And an upward move on someone still below the fleet median is shown in grey, '+
+      'not red &mdash; they are not a concern whichever way they drifted.</p>'+
       '<p><b>Offices are ranked on their MEDIAN driver</b>, not their total, so one bad week '+
       'from one person cannot drag a branch down the table and a large branch is not penalised '+
       'for having more people. It is the same unit as the driver column &mdash; 1.30&times; means '+
