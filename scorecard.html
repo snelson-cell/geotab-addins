@@ -35,9 +35,13 @@
   <div class="ds-card" id="ds-offwrap"></div>
 
   <div class="ds-tablehead">
+    <div class="ds-tabletitle" id="ds-extitle">Worked example</div>
+  </div>
+  <div class="ds-card" id="ds-example"></div>
+
+  <div class="ds-tablehead">
     <div class="ds-tabletitle" id="ds-title">Ranked drivers</div>
     <div class="ds-tools">
-      <button type="button" id="ds-tier">Priority only</button>
       <button type="button" id="ds-csv">Export CSV</button>
     </div>
   </div>
@@ -127,21 +131,18 @@ geotab.addin.driverScorecard = function () {
     // red = worse. Sequential would have been wrong here — the meaning is
     // polarity around a midpoint, not magnitude from zero.
     'td.mcell{text-align:center;font-weight:650;border-radius:0;}',
-    // The vs-fleet column is gone, so priority rows carry the signal instead —
-    // otherwise the Priority count at the top has nothing on the row explaining it.
-    'table.ds-t tr.prio td{background:#fdf0ee;}',
-    'table.ds-t tr.prio td.name{color:var(--bad-ink);}',
     'table.ds-t tr.sel td{background:#eaf2fc;}',
     'table.ds-t tr.sel td:first-child{box-shadow:inset 3px 0 0 var(--accent);}',
     'table.ds-t tr.sel td.name{color:var(--accent);}',
-    '.ds-band{display:inline-block;font-size:12px;font-weight:700;padding:2px 8px;border-radius:20px;}',
-    '.ds-band.low{background:#e6f0fb;color:#1c5cab;}',
-    '.ds-band.typ{background:#f0efec;color:var(--ink-2);}',
-    '.ds-band.elev{background:#fdf1e8;color:#8a4b1d;}',
-    '.ds-band.prio{background:#fbece8;color:var(--bad-ink);}',
-    '.ds-prov{display:inline-block;font-size:10px;font-weight:700;letter-spacing:.05em;',
-    '  text-transform:uppercase;padding:1px 6px;border-radius:20px;margin-left:6px;',
-    '  background:var(--grid);color:var(--ink-3);vertical-align:1px;}',
+    '.ds-ex{padding:16px 18px 17px;}',
+    '.ds-ex h4{margin:0;font-size:15px;font-weight:650;color:var(--ink-1);}',
+    '.ds-ex .lede{font-size:12.5px;color:var(--ink-2);margin:6px 0 0;max-width:78ch;line-height:1.55;}',
+    '.ds-ex table{margin:13px 0 0;}',
+    '.ds-ex .say{font-size:12.5px;color:var(--ink-2);line-height:1.5;}',
+    '.ds-ex .sum{margin:13px 0 0;padding:11px 13px;background:var(--grid);border-radius:7px;',
+    '  font-size:13px;color:var(--ink-1);font-variant-numeric:tabular-nums;}',
+    '.ds-ex .sum b{font-weight:680;}',
+    '.ds-ex .foot2{font-size:12px;color:var(--ink-3);margin:11px 0 0;line-height:1.5;max-width:80ch;}',
     '.ds-trend{display:inline-block;font-size:12px;font-weight:650;}',
     '.ds-trend.worse{color:var(--bad-ink);} .ds-trend.better{color:var(--good-ink);}',
     '.ds-trend.worse-lo{color:var(--ink-3);font-weight:500;}',
@@ -226,22 +227,6 @@ geotab.addin.driverScorecard = function () {
   // Under this, the median still supplies a quarter or more of the score.
   var PROVISIONAL_MILES = 750;
 
-  // Bands are ABSOLUTE multiples of the fleet MEDIAN, not rank quantiles.
-  // A rank tier is a treadmill: exactly 20% are bottom-fifth forever, however
-  // much the fleet improves, so coaching can never show up as progress. With
-  // an absolute band the list shrinks when driving gets better. Median rather
-  // than mean because the distribution is heavily right-skewed — the mean sits
-  // at roughly the 68th percentile of drivers.
-  var BANDS = [
-    {max:0.50, key:'low',  label:'Well below'},
-    {max:1.50, key:'typ',  label:'Typical'},
-    {max:2.50, key:'elev', label:'Elevated'},
-    {max:1e9,  key:'prio', label:'Priority'}
-  ];
-  function bandFor(ratio){
-    for(var i=0;i<BANDS.length;i++){ if(ratio < BANDS[i].max) return BANDS[i]; }
-    return BANDS[BANDS.length-1];
-  }
   var TREND_Z = 2;       // sigmas a move must clear before it is called a change
   // A COMPARISON needs more evidence than a single measurement. At the 250-mile
   // ranking floor the previous window can be almost empty — one driver sat at
@@ -292,7 +277,7 @@ geotab.addin.driverScorecard = function () {
   // it started with — which is exactly how two logins ended up disagreeing
   // after the benchmark shipped. If two people see different numbers, compare
   // this stamp first: it settles it in one glance.
-  var BUILD = '2026-08-25.4';
+  var BUILD = '2026-08-25.6';
 
   // Where a value sits in the company distribution. Counts breakpoints below
   // and at-or-below and averages the two, which is the same tie rule the old
@@ -313,7 +298,7 @@ geotab.addin.driverScorecard = function () {
   }
 
   // ── State (declared above every use) ─────────────────────────────────────
-  var days = 30, apiRef = null, DATA = null, officeFilter = '', coachOnly = false;
+  var days = 30, apiRef = null, DATA = null, officeFilter = '';
   var lastRanked = [], lastUnranked = [];
 
   // ── Small helpers ────────────────────────────────────────────────────────
@@ -415,13 +400,7 @@ geotab.addin.driverScorecard = function () {
       var bad = 0;
       METRICS.forEach(function(m){ bad += m.w * d.pct[m.id]; });
       d.score = Math.round(100 - bad);
-      d.wRate = weightedRate(d);
-      // Band is against the company median weighted rate, so "Priority" means
-      // the same thing at every branch.
-      d.ratio = BENCHMARK.medianWeighted > 0 ? d.wRate/BENCHMARK.medianWeighted : 1;
-      d.band  = bandFor(d.ratio);
     });
-    var med = BENCHMARK.medianWeighted;
     drivers.sort(function(a,b){ return b.score-a.score || b.miles-a.miles; });
     drivers.forEach(function(d,i){
       d.localRank = i+1;
@@ -430,7 +409,7 @@ geotab.addin.driverScorecard = function () {
       d.rank = companyRank(d.score) || (i+1);
       d.provisional = d.miles < PROVISIONAL_MILES;
     });
-    return {drivers:drivers, median:med};
+    return {drivers:drivers};
   }
 
   function weightedEvents(d){
@@ -645,8 +624,7 @@ geotab.addin.driverScorecard = function () {
     // back out of step — which is the whole problem this benchmark exists to
     // remove. They carry the snapshot date instead.
     var standings = BENCHMARK.offices.map(function(o){
-      return {office:o.office, n:o.drivers, med:o.median, prio:o.priority,
-              rank:o.rank, dist:o.dist};
+      return {office:o.office, n:o.drivers, med:o.median, rank:o.rank, dist:o.dist};
     });
     var unscored = [];
     var rankOfOffice = {};
@@ -691,22 +669,18 @@ geotab.addin.driverScorecard = function () {
         'lately; use <b>30 days</b> for anything you intend to say out loud.');
     } else if(nOff===1){
       note('ds-warn','ds-note--warn',
-        'Your login shows only <b>'+esc(Object.keys(offices)[0])+'</b>, but scores, ranks and the '+
-        'Priority band are measured against all '+f0(BENCHMARK.drivers)+' drivers in the company '+
+        'Your login shows only <b>'+esc(Object.keys(offices)[0])+'</b>, but scores and ranks '+
+        'are measured against all '+f0(BENCHMARK.drivers)+' drivers in the company '+
         '&mdash; so they match exactly what an all-branch login sees for the same person. Your login '+
         'limits <b>who appears</b>, not how they are scored. Office standings need the other '+
         'branches and cannot be shown here.');
     }
 
-    var priority = view.filter(function(d){ return d.band.key==='prio'; });
     var totMi = view.reduce(function(s,d){ return s+d.miles; }, 0);
     var totEv = view.reduce(function(s,d){
       return s + METRICS.reduce(function(a,m){ return a+(d.ev[m.id]||0); }, 0); }, 0);
 
     el('ds-kpis').innerHTML =
-      kpi('Priority', String(priority.length),
-          'over '+BANDS[2].max+'&times; the company median &middot; <span class="muted">'+
-          (myOffice ? esc(myOffice) : 'all branches')+'</span>') +
       kpi('Drivers ranked', String(view.length),
           unranked.length+' below '+MIN_MILES+' mi'+
           (goneCount ? ' &middot; <span class="muted">'+goneCount+' left the company, excluded</span>'
@@ -739,7 +713,7 @@ geotab.addin.driverScorecard = function () {
       ' <span style="font-weight:400;color:var(--ink-3)">&middot; company snapshot '+
         esc(String(BENCHMARK.generated).slice(0,10))+'</span>';
     var oh = '<table class="ds-t"><thead><tr><th class="r">#</th><th>Office</th>'+
-      '<th class="r">Drivers</th><th class="c">Typical driver</th><th class="r">Priority</th>'+
+      '<th class="r">Drivers</th><th class="c">Typical driver</th>'+
       METRICS.map(function(m){ return '<th class="c">'+esc(m.id)+'</th>'; }).join('')+
       '</tr></thead><tbody>';
     // Share of an office's drivers falling in each colour band, per metric.
@@ -763,18 +737,16 @@ geotab.addin.driverScorecard = function () {
         }).join('')+'</span></td>';
     }
     var ob = standings.map(function(s){
-      var b = bandFor(s.med);
       return '<tr'+(s.office===myOffice?' class="sel"':'')+'>'+
         '<td class="rank">'+s.rank+'</td>'+
         '<td class="name">'+esc(s.office)+'</td>'+
         '<td class="r">'+s.n+'</td>'+
-        '<td class="c"><span class="ds-band '+b.key+'">'+s.med.toFixed(2)+'&times;</span></td>'+
-        '<td class="r"'+(s.prio?' style="color:var(--bad-ink);font-weight:600"':'')+'>'+s.prio+'</td>'+
+        '<td class="c">'+s.med.toFixed(2)+'&times;</td>'+
         METRICS.map(function(m){ return distCell(s, m); }).join('')+'</tr>';
     }).join('') + unscored.map(function(o){
       return '<tr'+(o===officeFilter?' class="sel"':'')+'><td class="rank">&mdash;</td>'+
         '<td class="name">'+esc(o)+'</td><td class="r">0</td>'+
-        '<td class="c" colspan="'+(2+METRICS.length)+'" style="color:var(--warn-ink)">no driver with '+
+        '<td class="c" colspan="'+(1+METRICS.length)+'" style="color:var(--warn-ink)">no driver with '+
         MIN_MILES+'+ attributed miles &mdash; unmeasured, not clean</td></tr>';
     }).join('');
     el('ds-offwrap').innerHTML = (standings.length + unscored.length) > 1
@@ -783,10 +755,11 @@ geotab.addin.driverScorecard = function () {
         'available.</div>';
 
     // ── Ranked table ──────────────────────────────────────────────────────
-    var rows = coachOnly ? view.filter(function(d){ return d.band.key==='prio'; }) : view;
-    el('ds-title').textContent = coachOnly
-      ? 'Priority list ('+rows.length+')'
-      : 'Ranked drivers ('+rows.length+')';
+    // Worked example sits between the standings and the table it explains.
+    renderExample(view);
+
+    var rows = view;
+    el('ds-title').textContent = 'Ranked drivers ('+rows.length+')';
 
     var head = '<table class="ds-t"><thead><tr>'+
       '<th class="r">#</th><th>Driver</th><th>Location</th>'+
@@ -794,7 +767,7 @@ geotab.addin.driverScorecard = function () {
       METRICS.map(function(m){ return '<th class="c">'+esc(m.id)+'</th>'; }).join('')+
       '<th class="c">In office</th></tr></thead><tbody>';
     var body = rows.map(function(d){
-      return '<tr'+(d.band.key==='prio' ? ' class="prio"' : '')+'>'+
+      return '<tr>'+
         '<td class="rank">'+d.rank+'</td>'+
         '<td class="name">'+esc(d.name)+
           (d.provisional ? ' <span class="ds-prov" title="Only '+f0(d.miles)+' miles in this window — '+
@@ -836,15 +809,86 @@ geotab.addin.driverScorecard = function () {
     renderFoot(companyN, goneCount);
   }
 
+  // One driver, taken apart line by line. Shows the arithmetic on somebody real
+  // rather than describing it, because "your score is a weighted percentile"
+  // means nothing to a manager and "17 speeding events is better than 72% of
+  // the company" means everything.
+  function renderExample(view){
+    if(!view.length){ el('ds-example').innerHTML=''; el('ds-extitle').textContent='Worked example'; return; }
+    var d = view[0];   // the top of whatever is currently on screen
+    el('ds-extitle').innerHTML = 'Worked example <span style="font-weight:400;color:var(--ink-3)">'+
+      '&mdash; how '+esc(d.name)+'&rsquo;s score of '+d.score+' is built</span>';
+    var lost = 0;
+    var rows = METRICS.map(function(m){
+      var pct = d.pct[m.id], better = Math.round(100-pct), off = m.w*pct, n = d.ev[m.id]||0;
+      lost += off;
+      var f = fillFor(d.rawPct[m.id]);
+      var sentence = n===0
+        ? 'No '+m.id.toLowerCase()+' events at all over '+f0(d.miles)+' miles.'
+        : f0(n)+' '+m.id.toLowerCase()+' event'+(n===1?'':'s')+' over '+f0(d.miles)+
+          ' miles is '+d.rate[m.id].toFixed(1)+' per 1,000.';
+      sentence += ' Better than <b>'+better+'%</b> of the company.';
+      return '<tr>'+
+        '<td class="name">'+esc(m.id)+'</td>'+
+        '<td class="r">'+f0(n)+'</td>'+
+        '<td class="mcell" style="background:'+f.bg+';color:'+f.fg+'">'+d.rate[m.id].toFixed(1)+'</td>'+
+        '<td class="c">better than '+better+'%</td>'+
+        '<td class="c">'+Math.round(m.w*100)+'%</td>'+
+        '<td class="r"><b>'+off.toFixed(1)+'</b></td>'+
+        '<td class="say">'+sentence+'</td></tr>';
+    }).join('');
+    var trendSay;
+    if(d.trend.key==='new'){
+      trendSay = '<b>Trend &mdash; nothing yet.</b> A trend needs '+TREND_MIN_MILES+
+        '+ miles in the previous '+days+' days to compare against, and '+esc(d.name.split(' ')[0])+
+        ' does not have that much history yet. It fills in on its own.';
+    } else if(d.trend.key==='steady'){
+      trendSay = '<b>Trend &mdash; steady.</b> Their position against the rest of the company has '+
+        'not moved by more than normal week-to-week variation would produce at this mileage.';
+    } else {
+      trendSay = '<b>Trend &mdash; '+(d.trend.key==='worse'?'moving the wrong way':'improving')+
+        '.</b> Their position against the company shifted by '+esc(d.trend.label.replace(/[▲▼]/,'').trim())+
+        ', which is larger than chance would produce at '+f0(d.miles)+' miles. This compares their '+
+        'position, not their raw count, so a fleet-wide change does not show up here as a personal one.';
+    }
+    el('ds-example').innerHTML =
+      '<div class="ds-ex">'+
+      '<h4>'+esc(d.name)+' &middot; '+esc(d.office)+' &middot; '+f0(d.miles)+' miles'+
+        (d.provisional?' <span class="ds-prov">thin</span>':'')+'</h4>'+
+      '<p class="lede">Each of the four metrics is turned into a position against all '+
+        f0(BENCHMARK.drivers)+' drivers in the company. That position is multiplied by the '+
+        'metric&rsquo;s weight, and the total is subtracted from 100.</p>'+
+      '<div style="overflow-x:auto"><table class="ds-t"><thead><tr>'+
+      '<th>Metric</th><th class="r">Events</th><th class="c">Per 1,000 mi</th>'+
+      '<th class="c">Where that sits</th><th class="c">Weight</th><th class="r">Points off</th>'+
+      '<th>In plain terms</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
+      '<div class="sum">'+
+        METRICS.map(function(m){ return (m.w*d.pct[m.id]).toFixed(1); }).join(' &nbsp;+&nbsp; ')+
+        ' &nbsp;=&nbsp; <b>'+lost.toFixed(1)+'</b> points off &nbsp;&rarr;&nbsp; 100 &minus; '+
+        lost.toFixed(1)+' = <b>'+d.score+'</b>'+
+        '<span style="color:var(--ink-3)"> &middot; '+f0(d.rank)+
+        (d.rank===1?'st':d.rank===2?'nd':d.rank===3?'rd':'th')+' of '+f0(BENCHMARK.drivers)+
+        ' company-wide, '+d.officeRank+' of '+d.officeN+' in '+esc(d.office)+'</span>'+
+      '</div>'+
+      '<p class="foot2">'+trendSay+'</p>'+
+      '<p class="foot2"><b>Why the numbers in the table are not exactly what is scored.</b> Before '+
+        'ranking, each rate is blended with the typical driver&rsquo;s, by about '+(SHRINK_K*1000)+
+        ' miles worth &mdash; so a short window is not read as fact. At '+f0(d.miles)+' miles that '+
+        (d.miles>=2000?'barely moves '+esc(d.name.split(' ')[0])+'&rsquo;s numbers'
+                     :'still pulls '+esc(d.name.split(' ')[0])+'&rsquo;s numbers noticeably toward the middle')+
+        '. The colours above show the raw rate; the percentage beside it is after the blend.</p>'+
+      '<p class="foot2">This example follows whatever is on screen &mdash; pick a different office '+
+        'or time range and it re-works itself for the top driver there.</p>'+
+      '</div>';
+  }
+
   function kpi(label, value, sub){
     return '<div class="ds-kpi"><div class="ds-kpi-label">'+esc(label)+'</div>'+
       '<div class="ds-kpi-value">'+value+'</div><div class="ds-kpi-sub">'+sub+'</div></div>';
   }
 
   function renderFoot(companyN, goneCount){
-    var legend = '<div class="ds-legend"><span>vs fleet bands:</span>'+
-      BANDS.map(function(b){ return '<span class="ds-band '+b.key+'">'+esc(b.label)+'</span>'; }).join('')+
-      '</div>';
+    var legend = '';
     var w = METRICS.map(function(m){ return esc(m.id)+' '+Math.round(m.w*100)+'%'; }).join(' &middot; ');
     var crossed = DATA && DATA.from.getTime() < RULE_CHANGE;
     el('ds-foot').innerHTML = legend +
@@ -859,14 +903,18 @@ geotab.addin.driverScorecard = function () {
       'against every ranked driver in the company, then they are weighted ('+w+') and '+
       'subtracted from 100. Percentiles rather than raw rates, because cornering fires far '+
       'more often than speeding and would otherwise decide the score by itself.</p>'+
+      '<p><b>There is no Priority flag on this page.</b> There was one &mdash; anything over '+
+      '2.5&times; the median driver&rsquo;s event rate &mdash; and it was removed because the '+
+      'threshold was arbitrary and it disagreed with the score in ways nobody could defend: a '+
+      'driver setting off a speeding event every 8 miles was flagged Priority while scoring 60, '+
+      'because percentile scoring caps what any single metric can cost. Until there is a defensible '+
+      'way to draw that line, the table is simply sorted worst-last and the judgement is yours.</p>'+
       '<p><b>The score is a judgement, not just a tally.</b> It accounts for how much a driver '+
       'has shown you: someone with 450 miles and one event might be excellent or might be lucky, '+
       'and the score says so by sitting them nearer the middle. That is why a driver can have four '+
       'blue cells and a mid-table score. Rows marked <span class="ds-prov">thin</span> are where '+
       'that gap is largest &mdash; under '+PROVISIONAL_MILES+' miles the typical-driver baseline '+
-      'still supplies a quarter or more of the score. <b>Rows tinted red are Priority</b>: more '+
-      'than '+BANDS[2].max+'&times; the median driver&rsquo;s rate &mdash; an absolute measure, so '+
-      'it does not shift as the fleet re-ranks around them.</p>'+
+      'still supplies a quarter or more of the score.</p>'+
       '<p><b>Cell colours show the raw rate, not the adjusted one</b>, so zero events always reads '+
       'as good. The score may still place that driver mid-table; the cells tell you what they did, '+
       'the score tells you how confident the ranking is.</p>'+
@@ -904,8 +952,8 @@ geotab.addin.driverScorecard = function () {
       'about 20 places of each other are not distinguishable &mdash; act on the <b>tier</b>, '+
       'and treat the number beside it as rough position. A 30-day window is roughly four times '+
       'steadier than a 7-day one.</p>'+
-      '<p><b>Every login scores against the same company yardstick.</b> Scores, ranks and the '+
-      'Priority band are measured against a stored snapshot of the whole company &mdash; '+
+      '<p><b>Every login scores against the same company yardstick.</b> Scores and ranks are '+
+      'measured against a stored snapshot of the whole company &mdash; '+
       f0(BENCHMARK.drivers)+' drivers as of '+esc(String(BENCHMARK.generated).slice(0,10))+' &mdash; '+
       'not against whoever the login happens to see. A branch manager and an all-branch login read '+
       'the identical number for the same driver, which is the point: the two of them look at it '+
@@ -962,12 +1010,6 @@ geotab.addin.driverScorecard = function () {
       officeFilter = e.target.value || '';
       render();                      // pure re-render, no API call
     });
-    el('ds-tier').addEventListener('click', function(){
-      coachOnly = !coachOnly;
-      el('ds-tier').className = coachOnly ? 'on' : '';
-      el('ds-tier').textContent = coachOnly ? 'Show everyone' : 'Priority only';
-      render();
-    });
     el('ds-toggle').addEventListener('click', function(){
       var w = el('ds-unranked'), on = w.classList.toggle('on');
       el('ds-toggle').className = on ? 'on' : '';
@@ -984,12 +1026,12 @@ geotab.addin.driverScorecard = function () {
 
   function exportCsv(){
     if(!lastRanked.length) return;
-    var head = ['Rank','Driver','Location','Miles','Score','VsFleetMedian','Band','Trend','Provisional','OfficeRank','OfficeSize']
+    var head = ['Rank','Driver','Location','Miles','Score','Trend','Provisional','OfficeRank','OfficeSize']
       .concat(METRICS.map(function(m){ return m.id+' per 1000mi'; }))
       .concat(METRICS.map(function(m){ return m.id+' events'; }));
     var lines = [head.join(',')].concat(lastRanked.map(function(d){
       return [d.rank, '"'+String(d.name).replace(/"/g,'""')+'"', '"'+d.office+'"',
-              Math.round(d.miles), d.score, d.ratio.toFixed(2), d.band.key,
+              Math.round(d.miles), d.score,
               d.trend.key, d.provisional?'yes':'no', d.officeRank, d.officeN]
         .concat(METRICS.map(function(m){ return d.rate[m.id].toFixed(2); }))
         .concat(METRICS.map(function(m){ return d.ev[m.id]||0; })).join(',');
