@@ -26,6 +26,8 @@
 
   <div class="ds-kpis" id="ds-kpis"></div>
 
+  <div class="ds-key" id="ds-key"></div>
+
   <div class="ds-tablehead">
     <div class="ds-tabletitle" id="ds-offtitle">Office standings</div>
     <div class="ds-tools"><button type="button" id="ds-offtoggle" class="on">Hide</button></div>
@@ -143,6 +145,21 @@ geotab.addin.driverScorecard = function () {
     '.ds-legend{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:11.5px;',
     '  color:var(--ink-3);margin:11px 2px 0;}',
     '.ds-legend i{width:26px;height:11px;border-radius:2px;display:inline-block;}',
+    // Key sits directly under the KPI row: it explains both the metric cells
+    // and the distribution bars in the standings table immediately below it.
+    '.ds-key{display:flex;flex-wrap:wrap;align-items:center;gap:14px;margin:14px 0 0;',
+    '  background:var(--surface-1);border:1px solid var(--hairline);border-radius:9px;',
+    '  padding:11px 15px;font-size:12px;color:var(--ink-2);}',
+    '.ds-key-t{font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;',
+    '  color:var(--ink-3);}',
+    '.ds-key-s{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;}',
+    '.ds-key-s i{width:19px;height:11px;border-radius:3px;display:inline-block;flex:none;}',
+    '.ds-key-n{color:var(--ink-3);}',
+    // Per-metric distribution: one stacked bar per office per metric, segments
+    // in the same five colours as the driver cells.
+    '.ds-dist{display:flex;height:11px;width:100%;min-width:74px;border-radius:3px;overflow:hidden;',
+    '  background:var(--grid);}',
+    '.ds-dist span{display:block;height:100%;}',
     '.ds-foot{font-size:12px;color:var(--ink-3);margin:16px 2px 0;line-height:1.55;}',
     '.ds-foot b{color:var(--ink-2);font-weight:600;}',
     '.ds-foot p{margin:0 0 9px;}'
@@ -165,7 +182,12 @@ geotab.addin.driverScorecard = function () {
   METRICS.forEach(function(m){ RULE_TO_METRIC[m.rule] = m.id; });
 
   var PERIODS   = [7, 30];
-  var MIN_MILES = 250;   // below this a rate is too jumpy to rank on
+  // Only 7 drivers in the whole fleet sit under 250 miles, so this floor was
+  // excluding almost nobody while hiding the occasional real case — one of the
+  // four it was suppressing runs at 4.2x the fleet median. Dropping it to 100
+  // moves every existing driver by a median of 0.1 points. Below 100 there is
+  // nobody left to add.
+  var MIN_MILES = 100;
   // Prior strength, in thousands of miles: how much imaginary TYPICAL driving
   // is blended in before ranking, so a short window is not read as fact.
   //
@@ -214,7 +236,11 @@ geotab.addin.driverScorecard = function () {
   // ranking floor the previous window can be almost empty — one driver sat at
   // 251 miles with no events, and any later month reads as a huge increase off
   // that base. Twice the floor before a trend is computed at all.
-  var TREND_MIN_MILES = MIN_MILES * 2;
+  // Absolute, NOT derived from MIN_MILES. It was MIN_MILES*2, which quietly
+  // fell from 500 to 200 when the floor dropped — and 200 miles in the previous
+  // window is exactly the near-empty base that made a top-3 driver read as
+  // "+142% worse" before this was fixed the first time.
+  var TREND_MIN_MILES = 500;
   var PAGE_CAP  = 25000; // Trip hard-caps here; ExceptionEvent truncates AT resultsLimit
   var ROW_LIMIT = 25000;
   var KM_TO_MI  = 0.621371;
@@ -595,11 +621,9 @@ geotab.addin.driverScorecard = function () {
     }
 
     var priority = view.filter(function(d){ return d.band.key==='prio'; });
-    var moving   = view.filter(function(d){ return d.trend.key==='worse'; });
     var totMi = view.reduce(function(s,d){ return s+d.miles; }, 0);
     var totEv = view.reduce(function(s,d){
       return s + METRICS.reduce(function(a,m){ return a+(d.ev[m.id]||0); }, 0); }, 0);
-    var noHist = view.filter(function(d){ return d.trend.key==='new'; }).length;
 
     el('ds-kpis').innerHTML =
       kpi('Priority', String(priority.length),
@@ -611,9 +635,6 @@ geotab.addin.driverScorecard = function () {
                      : ' &middot; <span class="muted">not scored</span>')) +
       kpi('Events per 1,000 mi', totMi ? (totEv/(totMi/1000)).toFixed(1) : '—',
           f0(totEv)+' events over '+f0(totMi)+' mi') +
-      kpi('Slipping', String(moving.length),
-          'moved against the fleet by more than noise'+
-          (noHist ? ' &middot; <span class="muted">'+noHist+' too new to tell</span>' : '')) +
       (officeFilter && rankOfOffice[officeFilter]
         ? kpi('Office rank',
               rankOfOffice[officeFilter].rank+'<span style="font-size:17px;color:var(--ink-3)"> of '+
@@ -625,13 +646,38 @@ geotab.addin.driverScorecard = function () {
               standings.length ? esc(standings[0].office)+' best &middot; <span class="muted">'+
                 esc(standings[standings.length-1].office)+' worst</span>' : '&mdash;'));
 
+    // ── Colour key, directly above the standings it also explains ─────────
+    el('ds-key').innerHTML =
+      '<span class="ds-key-t">Colour</span>'+
+      FILL.map(function(f,i){
+        return '<span class="ds-key-s"><i style="background:'+f.bg+'"></i>'+
+          ['Best 10%','Next 20%','Middle 40%','Worse than 70%','Worst 10%'][i]+'</span>';
+      }).join('')+
+      '<span class="ds-key-n">of all '+f0(companyN)+' scored drivers, on that metric&rsquo;s raw rate</span>';
+
     // ── Office standings ──────────────────────────────────────────────────
     el('ds-offtitle').innerHTML = 'Office standings' + (officeFilter
       ? ' <span style="font-weight:400;color:var(--ink-3)">&mdash; all offices shown, '+
         esc(officeFilter)+' highlighted</span>' : '');
     var oh = '<table class="ds-t"><thead><tr><th class="r">#</th><th>Office</th>'+
-      '<th class="r">Drivers scored</th><th class="c">Typical driver</th>'+
-      '<th class="r">Priority</th></tr></thead><tbody>';
+      '<th class="r">Drivers</th><th class="c">Typical driver</th><th class="r">Priority</th>'+
+      METRICS.map(function(m){ return '<th class="c">'+esc(m.id)+'</th>'; }).join('')+
+      '</tr></thead><tbody>';
+    // Share of an office's drivers falling in each colour band, per metric.
+    function distCell(list, m){
+      var n=list.length, cnt=[0,0,0,0,0];
+      list.forEach(function(d){
+        var p=d.rawPct[m.id];
+        for(var i=0;i<FILL.length;i++){ if(p<FILL[i].max){ cnt[i]++; break; } }
+      });
+      var tip=list.length ? esc(m.id)+' across '+n+' driver'+(n===1?'':'s')+': '+
+        cnt.map(function(c,i){ return Math.round(100*c/n)+'% '+
+          ['best 10%','next 20%','middle 40%','worse than 70%','worst 10%'][i]; }).join(', ') : '';
+      return '<td class="c"><span class="ds-dist" title="'+tip+'">'+
+        cnt.map(function(c,i){
+          return c ? '<span style="width:'+(100*c/n)+'%;background:'+FILL[i].bg+'"></span>' : '';
+        }).join('')+'</span></td>';
+    }
     var ob = standings.map(function(s){
       var b = bandFor(s.med);
       return '<tr'+(s.office===officeFilter?' class="sel"':'')+'>'+
@@ -639,12 +685,13 @@ geotab.addin.driverScorecard = function () {
         '<td class="name">'+esc(s.office)+'</td>'+
         '<td class="r">'+s.n+'</td>'+
         '<td class="c"><span class="ds-band '+b.key+'">'+s.med.toFixed(2)+'&times;</span></td>'+
-        '<td class="r"'+(s.prio?' style="color:var(--bad-ink);font-weight:600"':'')+'>'+s.prio+'</td></tr>';
+        '<td class="r"'+(s.prio?' style="color:var(--bad-ink);font-weight:600"':'')+'>'+s.prio+'</td>'+
+        METRICS.map(function(m){ return distCell(byOffice[s.office], m); }).join('')+'</tr>';
     }).join('') + unscored.map(function(o){
       return '<tr'+(o===officeFilter?' class="sel"':'')+'><td class="rank">&mdash;</td>'+
         '<td class="name">'+esc(o)+'</td><td class="r">0</td>'+
-        '<td class="c" colspan="2" style="color:var(--warn-ink)">no driver with '+MIN_MILES+
-        '+ attributed miles &mdash; unmeasured, not clean</td></tr>';
+        '<td class="c" colspan="'+(2+METRICS.length)+'" style="color:var(--warn-ink)">no driver with '+
+        MIN_MILES+'+ attributed miles &mdash; unmeasured, not clean</td></tr>';
     }).join('');
     el('ds-offwrap').innerHTML = (standings.length + unscored.length) > 1
       ? oh+ob+'</tbody></table>'
@@ -715,11 +762,8 @@ geotab.addin.driverScorecard = function () {
   }
 
   function renderFoot(companyN, goneCount){
-    var legend = '<div class="ds-legend"><span>Cell colour:</span>'+
-      FILL.map(function(f){ return '<i style="background:'+f.bg+'"></i>'; }).join('')+
-      '<span>better than typical &rarr; worse</span>'+
-      '<span style="margin-left:14px">Bands:</span>'+
-      BANDS.map(function(b,i){ return '<span class="ds-band '+b.key+'">'+esc(b.label)+'</span>'; }).join('')+
+    var legend = '<div class="ds-legend"><span>vs fleet bands:</span>'+
+      BANDS.map(function(b){ return '<span class="ds-band '+b.key+'">'+esc(b.label)+'</span>'; }).join('')+
       '</div>';
     var w = METRICS.map(function(m){ return esc(m.id)+' '+Math.round(m.w*100)+'%'; }).join(' &middot; ');
     var crossed = DATA && DATA.from.getTime() < RULE_CHANGE;
