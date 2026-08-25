@@ -133,6 +133,9 @@ geotab.addin.driverScorecard = function () {
     '.ds-band.typ{background:#f0efec;color:var(--ink-2);}',
     '.ds-band.elev{background:#fdf1e8;color:#8a4b1d;}',
     '.ds-band.prio{background:#fbece8;color:var(--bad-ink);}',
+    '.ds-prov{display:inline-block;font-size:10px;font-weight:700;letter-spacing:.05em;',
+    '  text-transform:uppercase;padding:1px 6px;border-radius:20px;margin-left:6px;',
+    '  background:var(--grid);color:var(--ink-3);vertical-align:1px;}',
     '.ds-trend{display:inline-block;font-size:12px;font-weight:650;}',
     '.ds-trend.worse{color:var(--bad-ink);} .ds-trend.better{color:var(--good-ink);}',
     '.ds-trend.worse-lo{color:var(--ink-3);font-weight:500;}',
@@ -163,7 +166,16 @@ geotab.addin.driverScorecard = function () {
 
   var PERIODS   = [7, 30];
   var MIN_MILES = 250;   // below this a rate is too jumpy to rank on
-  var SHRINK_K  = 2;     // prior strength, in thousands of miles
+  // Prior strength, in thousands of miles. Was 2. At 2,000 miles against a
+  // 250-mile floor the prior supplied 83% of a qualifying driver's score, and
+  // NO driver under 500 miles could score above 57 however cleanly they drove.
+  // Split-half reliability was measured across K and plateaus at 0.5 (rho 0.73,
+  // identical to K=2) — so 2 bought nothing and cost the whole low-mileage half
+  // of the fleet any ability to look good.
+  var SHRINK_K  = 0.5;
+  // Below this the prior still supplies 40%+ of the score, so the row is marked
+  // provisional rather than presented as a settled judgement.
+  var PROVISIONAL_MILES = 750;
 
   // Bands are ABSOLUTE multiples of the fleet MEDIAN, not rank quantiles.
   // A rank tier is a treadmill: exactly 20% are bottom-fifth forever, however
@@ -288,14 +300,24 @@ geotab.addin.driverScorecard = function () {
     });
     var pct = {};
     METRICS.forEach(function(m){
-      var raw = drivers.map(function(d){
+      // Shrunk percentile — drives the SCORE, which is a judgement and has to
+      // account for how little some drivers have shown us.
+      var adj = drivers.map(function(d){
         return ((d.ev[m.id]||0) + SHRINK_K*fleetRate[m.id]) / (d.miles/1000 + SHRINK_K);
       });
-      var r = rankAsc(raw), n = drivers.length;
-      pct[m.id] = r.map(function(x){ return n>1 ? 100*(x-1)/(n-1) : 50; });
+      var ra = rankAsc(adj), n = drivers.length;
+      pct[m.id] = ra.map(function(x){ return n>1 ? 100*(x-1)/(n-1) : 50; });
+      // Raw percentile — drives the CELL COLOUR, which reports what happened.
+      // Colouring cells by the shrunk value put 80 of 145 zero-event cells in
+      // the grey "typical" band and two of them in RED: a driver with no harsh
+      // acceleration at all rendered as a problem. A zero is now always a zero.
+      var rawRate = drivers.map(function(d){ return (d.ev[m.id]||0) / (d.miles/1000); });
+      var rr = rankAsc(rawRate);
       drivers.forEach(function(d,i){
-        d.rate[m.id] = (d.ev[m.id]||0) / (d.miles/1000);
-        d.pct[m.id]  = pct[m.id][i];
+        if(!d.rawPct) d.rawPct = {};
+        d.rate[m.id]   = rawRate[i];
+        d.pct[m.id]    = pct[m.id][i];
+        d.rawPct[m.id] = n>1 ? 100*(rr[i]-1)/(n-1) : 50;
       });
     });
     drivers.forEach(function(d){
@@ -313,7 +335,7 @@ geotab.addin.driverScorecard = function () {
       d.band  = bandFor(d.ratio);
     });
     drivers.sort(function(a,b){ return b.score-a.score || b.miles-a.miles; });
-    drivers.forEach(function(d,i){ d.rank = i+1; });
+    drivers.forEach(function(d,i){ d.rank = i+1; d.provisional = d.miles < PROVISIONAL_MILES; });
     return {drivers:drivers, median:med};
   }
 
@@ -433,7 +455,7 @@ geotab.addin.driverScorecard = function () {
         var drv = {}, unattributed = 0;
         function ensure(id, office){
           if(!drv[id]) drv[id] = {id:id, name:uname[id]||id, office:office,
-                                  archived:!!gone[id], miles:0, ev:{}, rate:{}, pct:{}};
+                                  archived:!!gone[id], miles:0, ev:{}, rate:{}, pct:{}, rawPct:{}};
           return drv[id];
         }
         trips.forEach(function(t){
@@ -625,7 +647,10 @@ geotab.addin.driverScorecard = function () {
     var body = rows.map(function(d){
       return '<tr>'+
         '<td class="rank">'+d.rank+'</td>'+
-        '<td class="name">'+esc(d.name)+'</td>'+
+        '<td class="name">'+esc(d.name)+
+          (d.provisional ? ' <span class="ds-prov" title="Only '+f0(d.miles)+' miles in this window — '+
+            'the score still leans on the fleet average, so treat it as provisional">thin</span>' : '')+
+        '</td>'+
         '<td>'+esc(d.office)+'</td>'+
         '<td class="r">'+f0(d.miles)+'</td>'+
         '<td class="c"><span class="ds-score">'+d.score+'</span></td>'+
@@ -635,10 +660,12 @@ geotab.addin.driverScorecard = function () {
         '<td class="c"><span class="ds-trend '+d.trend.key+'" title="'+esc(d.trend.title)+'">'+
           d.trend.label+'</span></td>'+
         METRICS.map(function(m){
-          var f = fillFor(d.pct[m.id]);
+          var f = fillFor(d.rawPct[m.id]);
           return '<td class="mcell" style="background:'+f.bg+';color:'+f.fg+'" title="'+
             esc(d.name)+' — '+esc(m.id)+': '+d.rate[m.id].toFixed(1)+' per 1,000 mi ('+
-            (d.ev[m.id]||0)+' events)">'+d.rate[m.id].toFixed(1)+'</td>';
+            (d.ev[m.id]||0)+' events over '+f0(d.miles)+' mi). Colour is this raw rate against '+
+            'the fleet; the score also allows for how few miles they have driven.">'+
+            d.rate[m.id].toFixed(1)+'</td>';
         }).join('')+
         '<td class="c">'+d.officeRank+' of '+d.officeN+'</td></tr>';
     }).join('');
@@ -689,6 +716,17 @@ geotab.addin.driverScorecard = function () {
       'against every ranked driver in the company, then they are weighted ('+w+') and '+
       'subtracted from 100. Percentiles rather than raw rates, because cornering fires far '+
       'more often than speeding and would otherwise decide the score by itself.</p>'+
+      '<p><b>Score and “vs fleet” are deliberately different measurements, and can disagree.</b> '+
+      '“vs fleet” is the driver\'s raw event rate &mdash; what actually happened. The <b>score</b> '+
+      'is a judgement, and a judgement has to account for how much a driver has shown you: someone '+
+      'with 450 miles and one event might be excellent or might be lucky, and the score says so by '+
+      'sitting them nearer the middle. So a light-mileage driver can show a very low multiple and '+
+      'still score mid-table. Rows marked <span class="ds-prov">thin</span> are the ones where that '+
+      'gap is largest &mdash; under '+PROVISIONAL_MILES+' miles, the fleet average still supplies '+
+      '40% or more of the score.</p>'+
+      '<p><b>Cell colours show the raw rate, not the adjusted one</b>, so zero events always reads '+
+      'as good. The score may still place that driver mid-table; the cells tell you what they did, '+
+      'the score tells you how confident the ranking is.</p>'+
       '<p><b>Thin mileage is pulled toward the fleet average</b> before ranking, by about '+
       SHRINK_K+',000 miles worth. A driver with 300 miles and four events has not shown you '+
       'a rate yet, and without this they would swing between best and worst week to week. '+
@@ -799,13 +837,13 @@ geotab.addin.driverScorecard = function () {
 
   function exportCsv(){
     if(!lastRanked.length) return;
-    var head = ['Rank','Driver','Location','Miles','Score','VsFleetMedian','Band','Trend','OfficeRank','OfficeSize']
+    var head = ['Rank','Driver','Location','Miles','Score','VsFleetMedian','Band','Trend','Provisional','OfficeRank','OfficeSize']
       .concat(METRICS.map(function(m){ return m.id+' per 1000mi'; }))
       .concat(METRICS.map(function(m){ return m.id+' events'; }));
     var lines = [head.join(',')].concat(lastRanked.map(function(d){
       return [d.rank, '"'+String(d.name).replace(/"/g,'""')+'"', '"'+d.office+'"',
               Math.round(d.miles), d.score, d.ratio.toFixed(2), d.band.key,
-              d.trend.key, d.officeRank, d.officeN]
+              d.trend.key, d.provisional?'yes':'no', d.officeRank, d.officeN]
         .concat(METRICS.map(function(m){ return d.rate[m.id].toFixed(2); }))
         .concat(METRICS.map(function(m){ return d.ev[m.id]||0; })).join(',');
     }));
