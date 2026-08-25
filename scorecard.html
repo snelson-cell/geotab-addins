@@ -127,6 +127,10 @@ geotab.addin.driverScorecard = function () {
     // red = worse. Sequential would have been wrong here — the meaning is
     // polarity around a midpoint, not magnitude from zero.
     'td.mcell{text-align:center;font-weight:650;border-radius:0;}',
+    // The vs-fleet column is gone, so priority rows carry the signal instead —
+    // otherwise the Priority count at the top has nothing on the row explaining it.
+    'table.ds-t tr.prio td{background:#fdf0ee;}',
+    'table.ds-t tr.prio td.name{color:var(--bad-ink);}',
     'table.ds-t tr.sel td{background:#eaf2fc;}',
     'table.ds-t tr.sel td:first-child{box-shadow:inset 3px 0 0 var(--accent);}',
     'table.ds-t tr.sel td.name{color:var(--accent);}',
@@ -706,12 +710,11 @@ geotab.addin.driverScorecard = function () {
 
     var head = '<table class="ds-t"><thead><tr>'+
       '<th class="r">#</th><th>Driver</th><th>Location</th>'+
-      '<th class="r">Miles</th><th class="c">Score</th>'+
-      '<th class="c">vs fleet</th><th class="c">Trend</th>'+
+      '<th class="r">Miles</th><th class="c">Score</th><th class="c">Trend</th>'+
       METRICS.map(function(m){ return '<th class="c">'+esc(m.id)+'</th>'; }).join('')+
       '<th class="c">In office</th></tr></thead><tbody>';
     var body = rows.map(function(d){
-      return '<tr>'+
+      return '<tr'+(d.band.key==='prio' ? ' class="prio"' : '')+'>'+
         '<td class="rank">'+d.rank+'</td>'+
         '<td class="name">'+esc(d.name)+
           (d.provisional ? ' <span class="ds-prov" title="Only '+f0(d.miles)+' miles in this window — '+
@@ -720,9 +723,6 @@ geotab.addin.driverScorecard = function () {
         '<td>'+esc(d.office)+'</td>'+
         '<td class="r">'+f0(d.miles)+'</td>'+
         '<td class="c"><span class="ds-score">'+d.score+'</span></td>'+
-        '<td class="c"><span class="ds-band '+d.band.key+'" title="'+esc(d.band.label)+
-          ' — '+d.ratio.toFixed(2)+' times the fleet median weighted event rate">'+
-          d.ratio.toFixed(2)+'&times;</span></td>'+
         '<td class="c"><span class="ds-trend '+d.trend.key+'" title="'+esc(d.trend.title)+'">'+
           d.trend.label+'</span></td>'+
         METRICS.map(function(m){
@@ -779,14 +779,14 @@ geotab.addin.driverScorecard = function () {
       'against every ranked driver in the company, then they are weighted ('+w+') and '+
       'subtracted from 100. Percentiles rather than raw rates, because cornering fires far '+
       'more often than speeding and would otherwise decide the score by itself.</p>'+
-      '<p><b>Score and “vs fleet” are deliberately different measurements, and can disagree.</b> '+
-      '“vs fleet” is the driver\'s raw event rate &mdash; what actually happened. The <b>score</b> '+
-      'is a judgement, and a judgement has to account for how much a driver has shown you: someone '+
-      'with 450 miles and one event might be excellent or might be lucky, and the score says so by '+
-      'sitting them nearer the middle. So a light-mileage driver can show a very low multiple and '+
-      'still score mid-table. Rows marked <span class="ds-prov">thin</span> are the ones where that '+
-      'gap is largest &mdash; under '+PROVISIONAL_MILES+' miles, the fleet average still supplies '+
-      'a quarter or more of the score.</p>'+
+      '<p><b>The score is a judgement, not just a tally.</b> It accounts for how much a driver '+
+      'has shown you: someone with 450 miles and one event might be excellent or might be lucky, '+
+      'and the score says so by sitting them nearer the middle. That is why a driver can have four '+
+      'blue cells and a mid-table score. Rows marked <span class="ds-prov">thin</span> are where '+
+      'that gap is largest &mdash; under '+PROVISIONAL_MILES+' miles the typical-driver baseline '+
+      'still supplies a quarter or more of the score. <b>Rows tinted red are Priority</b>: more '+
+      'than '+BANDS[2].max+'&times; the median driver&rsquo;s rate &mdash; an absolute measure, so '+
+      'it does not shift as the fleet re-ranks around them.</p>'+
       '<p><b>Cell colours show the raw rate, not the adjusted one</b>, so zero events always reads '+
       'as good. The score may still place that driver mid-table; the cells tell you what they did, '+
       'the score tells you how confident the ranking is.</p>'+
