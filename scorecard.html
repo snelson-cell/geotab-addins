@@ -139,6 +139,21 @@ geotab.addin.driverScorecard = function () {
     '.ds-ex .lede{font-size:12.5px;color:var(--ink-2);margin:6px 0 0;max-width:78ch;line-height:1.55;}',
     '.ds-ex table{margin:13px 0 0;}',
     '.ds-ex .say{font-size:12.5px;color:var(--ink-2);line-height:1.5;}',
+    // The 100 points, bitten into. Each metric's bite is capped at its weight,
+    // which is the thing the table of numbers cannot show: why a mid-pack
+    // speeding result costs three times a near-best braking one, and why no
+    // single metric can ever take more than its share however bad it gets.
+    '.ds-budget{display:flex;height:34px;width:100%;border-radius:7px;overflow:hidden;',
+    '  background:var(--grid);margin:15px 0 0;position:relative;}',
+    '.ds-budget i{display:flex;align-items:center;justify-content:center;height:100%;',
+    '  font-size:11px;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;',
+    '  border-right:2px solid var(--surface-1);font-style:normal;}',
+    '.ds-budget i.keep{background:var(--accent);border-right:0;}',
+    '.ds-budget i.off{background:#d98b8b;}',
+    '.ds-budget i.off:nth-of-type(even){background:#c97b7b;}',
+    '.ds-tick{position:absolute;top:-4px;bottom:-4px;width:2px;background:var(--ink-1);opacity:.55;}',
+    '.ds-budget-key{display:flex;justify-content:space-between;font-size:11.5px;',
+    '  color:var(--ink-3);margin:6px 2px 0;}',
     '.ds-ex .sum{margin:13px 0 0;padding:11px 13px;background:var(--grid);border-radius:7px;',
     '  font-size:13px;color:var(--ink-1);font-variant-numeric:tabular-nums;}',
     '.ds-ex .sum b{font-weight:680;}',
@@ -277,7 +292,7 @@ geotab.addin.driverScorecard = function () {
   // it started with — which is exactly how two logins ended up disagreeing
   // after the benchmark shipped. If two people see different numbers, compare
   // this stamp first: it settles it in one glance.
-  var BUILD = '2026-08-25.6';
+  var BUILD = '2026-08-25.8';
 
   // Where a value sits in the company distribution. Counts breakpoints below
   // and at-or-below and averages the two, which is the same tie rule the old
@@ -815,9 +830,15 @@ geotab.addin.driverScorecard = function () {
   // the company" means everything.
   function renderExample(view){
     if(!view.length){ el('ds-example').innerHTML=''; el('ds-extitle').textContent='Worked example'; return; }
-    var d = view[0];   // the top of whatever is currently on screen
+    // The MEDIAN driver in the current view, not the best one. An example is
+    // meant to be representative: the top driver's bar is almost entirely one
+    // colour, which demonstrates nothing about how the points come off. The
+    // middle of the board shows all four bites at a readable size.
+    var byScore = view.slice().sort(function(a,b){ return a.score-b.score; });
+    var d = byScore[Math.floor(byScore.length/2)];
     el('ds-extitle').innerHTML = 'Worked example <span style="font-weight:400;color:var(--ink-3)">'+
       '&mdash; how '+esc(d.name)+'&rsquo;s score of '+d.score+' is built</span>';
+    // note in the card itself that this is the middle of the board
     var lost = 0;
     var rows = METRICS.map(function(m){
       var pct = d.pct[m.id], better = Math.round(100-pct), off = m.w*pct, n = d.ev[m.id]||0;
@@ -855,13 +876,16 @@ geotab.addin.driverScorecard = function () {
       '<div class="ds-ex">'+
       '<h4>'+esc(d.name)+' &middot; '+esc(d.office)+' &middot; '+f0(d.miles)+' miles'+
         (d.provisional?' <span class="ds-prov">thin</span>':'')+'</h4>'+
-      '<p class="lede">Each of the four metrics is turned into a position against all '+
+      '<p class="lede">This is the driver sitting in the middle of whatever is on screen, so the '+
+        'arithmetic is visible at a normal size rather than a near-perfect one. Each of the four '+
+        'metrics is turned into a position against all '+
         f0(BENCHMARK.drivers)+' drivers in the company. That position is multiplied by the '+
         'metric&rsquo;s weight, and the total is subtracted from 100.</p>'+
       '<div style="overflow-x:auto"><table class="ds-t"><thead><tr>'+
       '<th>Metric</th><th class="r">Events</th><th class="c">Per 1,000 mi</th>'+
       '<th class="c">Where that sits</th><th class="c">Weight</th><th class="r">Points off</th>'+
       '<th>In plain terms</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
+      budgetBar(d, lost)+
       '<div class="sum">'+
         METRICS.map(function(m){ return (m.w*d.pct[m.id]).toFixed(1); }).join(' &nbsp;+&nbsp; ')+
         ' &nbsp;=&nbsp; <b>'+lost.toFixed(1)+'</b> points off &nbsp;&rarr;&nbsp; 100 &minus; '+
@@ -878,8 +902,42 @@ geotab.addin.driverScorecard = function () {
                      :'still pulls '+esc(d.name.split(' ')[0])+'&rsquo;s numbers noticeably toward the middle')+
         '. The colours above show the raw rate; the percentage beside it is after the blend.</p>'+
       '<p class="foot2">This example follows whatever is on screen &mdash; pick a different office '+
-        'or time range and it re-works itself for the top driver there.</p>'+
+        'or time range and it re-works itself for the middle driver there.</p>'+
       '</div>';
+  }
+
+  // 100 points, one bite per metric, capped at that metric's weight. Whatever
+  // survives on the right IS the score, at the same scale — so the bar can be
+  // read without doing any arithmetic.
+  function budgetBar(d, lost){
+    var segs = METRICS.map(function(m){
+      return {id:m.id, off:m.w*d.pct[m.id], cap:m.w*100};
+    }).filter(function(x){ return x.off > 0.05; });
+    var kept = Math.max(0, 100-lost);
+    var bites = segs.map(function(x){
+      var label = x.off >= 9 ? esc(x.id)+' &minus;'+x.off.toFixed(1)
+                : x.off >= 4.5 ? '&minus;'+x.off.toFixed(1) : '';
+      return '<i class="off" style="width:'+x.off+'%" title="'+esc(x.id)+' took '+x.off.toFixed(1)+
+        ' of the '+x.cap+' it could ever take, because this driver sits '+
+        Math.round(d.pct[x.id])+'% of the way up the company on it">'+label+'</i>';
+    }).join('');
+    return '<div class="ds-budget">'+bites+
+      '<i class="keep" style="width:'+kept+'%" title="What is left after every metric has taken '+
+      'its share. This is the score.">'+(kept>=12 ? 'SCORE '+d.score : d.score)+'</i>'+
+      '<span class="ds-tick" style="left:50%" title="A driver sitting exactly at the company '+
+      'median on all four metrics keeps 50"></span></div>'+
+      '<div class="ds-budget-key"><span>0</span>'+
+      '<span>&#9650; a driver at the company median on everything keeps 50</span>'+
+      '<span>100</span></div>'+
+      '<p class="foot2" style="margin-top:9px"><b>Each metric can only ever take its own weight.</b> '+
+      'Speeding and braking can take 35 points each, cornering and acceleration 15 each &mdash; '+
+      '100 between them. How much of its share a metric actually takes is how far up the company '+
+      'that driver sits on it. '+esc(d.name.split(' ')[0])+'&rsquo;s speeding bite is the widest '+
+      'not because it is his worst habit in absolute terms, but because speeding carries the '+
+      'largest budget and he is mid-pack on it, while on the other three he is near the top of '+
+      'the company and barely gives anything up. <b>A metric that is already full cannot take '+
+      'more</b>, however much worse it gets &mdash; which is why the score can say &ldquo;worst&rdquo; '+
+      'but never &ldquo;catastrophic&rdquo;.</p>';
   }
 
   function kpi(label, value, sub){
