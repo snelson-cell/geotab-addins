@@ -185,7 +185,14 @@ geotab.addin.driverScorecard = function () {
   var RULE_TO_METRIC = {};
   METRICS.forEach(function(m){ RULE_TO_METRIC[m.rule] = m.id; });
 
-  var PERIODS   = [7, 30];
+  // 7 / 14 / 30 days. Every mileage threshold below is ABSOLUTE and does not
+  // scale with the window, deliberately: 400 miles is thin evidence whether it
+  // was collected over a week or a month. That means the shorter the window,
+  // the more drivers are marked thin -- 94% at 7 days, 44% at 14, 30% at 30 --
+  // which is the truth about how much you are looking at, not a bug. Scaling
+  // the thresholds would relabel 175 miles as "full evidence" purely because
+  // the window was short.
+  var PERIODS   = [7, 14, 30];
   // Only 7 drivers in the whole fleet sit under 250 miles, so this floor was
   // excluding almost nobody while hiding the occasional real case — one of the
   // four it was suppressing runs at 4.2x the fleet median. Dropping it to 100
@@ -616,6 +623,16 @@ geotab.addin.driverScorecard = function () {
                 : nOff+' locations in your data scope')+
       (officeFilter && nOff>1 ? ' &middot; showing '+esc(officeFilter) : '')+
       ' &middot; previous '+days+' days &middot; '+MIN_MILES+'+ mi to qualify';
+    // Short windows genuinely carry less evidence. Say so, so a wall of "thin"
+    // tags on the 7-day view reads as expected rather than broken.
+    if(days < 30){
+      var thinShare = view.length ? Math.round(100*view.filter(function(d){ return d.provisional; }).length/view.length) : 0;
+      note('ds-warn','ds-note--warn',
+        'Over '+days+' days a typical driver covers only a few hundred miles, so <b>'+thinShare+
+        '% of this view is marked <span class="ds-prov">thin</span></b> &mdash; the score is leaning '+
+        'on the typical-driver baseline for most people here. Useful for spotting what happened '+
+        'lately; use <b>30 days</b> for anything you intend to say out loud.');
+    }
     if(nOff===1){
       note('ds-warn','ds-note--warn',
         'Your MyGeotab login is scoped to <b>'+esc(Object.keys(offices)[0])+'</b>, so every number '+
