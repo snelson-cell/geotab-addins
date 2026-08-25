@@ -11,6 +11,10 @@ scorecard/
 NOTES.md
 *.json
 !config/*.json
+# The company benchmark is the score's reference distribution and must be
+# diffable — it is 110 rate breakpoints with no names, vehicles or branch
+# labels in it, so it is safe in a public repo. Everything else stays ignored.
+!benchmark/company-30d.json
 *.csv
 .env
 .DS_Store
