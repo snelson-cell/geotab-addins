@@ -158,6 +158,13 @@ geotab.addin.driverScorecard = function () {
     '  font-size:13px;color:var(--ink-1);font-variant-numeric:tabular-nums;}',
     '.ds-ex .sum b{font-weight:680;}',
     '.ds-ex .foot2{font-size:12px;color:var(--ink-3);margin:11px 0 0;line-height:1.5;max-width:80ch;}',
+    // Restored: this rule sat between the Priority band styles and .ds-trend,
+    // and was cut as collateral when the band styles were removed by range.
+    // Losing it does not break anything loudly — the tag just renders as bare
+    // lowercase text next to the name, which is why it survived a full test run.
+    '.ds-prov{display:inline-block;font-size:10px;font-weight:700;letter-spacing:.05em;',
+    '  text-transform:uppercase;padding:1px 6px;border-radius:20px;margin-left:6px;',
+    '  background:var(--grid);color:var(--ink-3);vertical-align:1px;}',
     '.ds-trend{display:inline-block;font-size:12px;font-weight:650;}',
     '.ds-trend.worse{color:var(--bad-ink);} .ds-trend.better{color:var(--good-ink);}',
     '.ds-trend.worse-lo{color:var(--ink-3);font-weight:500;}',
@@ -292,7 +299,7 @@ geotab.addin.driverScorecard = function () {
   // it started with — which is exactly how two logins ended up disagreeing
   // after the benchmark shipped. If two people see different numbers, compare
   // this stamp first: it settles it in one glance.
-  var BUILD = '2026-08-25.8';
+  var BUILD = '2026-08-25.9';
 
   // Where a value sits in the company distribution. Counts breakpoints below
   // and at-or-below and averages the two, which is the same tie rule the old
