@@ -166,33 +166,31 @@ geotab.addin.driverScorecard = function () {
 
   var PERIODS   = [7, 30];
   var MIN_MILES = 250;   // below this a rate is too jumpy to rank on
-  // Prior strength, in thousands of miles: how much imaginary fleet-average
-  // driving is blended in before ranking, to stop a short window reading as
-  // fact. Was 2, then 0.5. Both were picked, not derived. Derived properly:
+  // Prior strength, in thousands of miles: how much imaginary TYPICAL driving
+  // is blended in before ranking, so a short window is not read as fact.
   //
-  //   Split-half reliability is FLAT across K -- rho 0.795 at K=0 through 0.808
-  //   at K=0.5 to 0.804 at K=2, a 0.013 spread that is pure noise. So the
-  //   reliability argument originally used to justify K=2 does not exist.
+  // This was 2, then 0.5, then 0.25 -- all of them fighting the wrong problem.
+  // The real defect was the shrink TARGET, not its strength. Shrinking pulled
+  // toward the fleet MEAN, and the rate distribution is heavily right-skewed,
+  // so the mean sits at the 66th percentile overall and the 81st for
+  // acceleration (mean 5.5, median 1.1). A thin driver behaving EXACTLY like a
+  // typical driver was pushed to the 66th percentile and scored 34. Being
+  // perfectly average read as below average, purely for driving less.
   //
-  //   Poisson-Gamma empirical Bayes puts K at mu/sigma^2. Drivers differ FAR
-  //   more than chance does -- for speeding the between-driver variance is
-  //   1,206 against a Poisson component of 25.8, a 47x ratio -- which implies
-  //   K = 0.067, i.e. barely shrink at all.
+  // Target is now the MEDIAN rate per metric -- the neutral point of a
+  // percentile scale. A thin driver at exactly median behaviour now scores
+  // exactly 50; one with no events at all scores 79, credited but not vaulted.
+  // Because the target no longer carries a built-in penalty, K can go back up:
+  // at 1.0 the best-evidenced driver holds #1, 13 of the top 15 have 750+
+  // miles, and every risky thin driver still caps at 47.
   //
-  //   But 0.067 over-corrects: it puts six sub-750-mile drivers in the top 15
-  //   and drops the best-evidenced driver in the fleet to 10th. The model only
-  //   accounts for Poisson noise; it cannot see that a thin window may be
-  //   unrepresentative for other reasons (light duty, one area, one week of
-  //   routes). 0.25 is roughly 4x the derived value, keeps the top of the board
-  //   evidenced (2 of the top 15 under 750 mi), and still credits a genuinely
-  //   clean short window: a driver with 1 speeding event in 448 miles is about
-  //   3 sigma below a fleet-average driver, which is signal, not luck.
-  //
-  //   The coaching list is unaffected by K at any value tested -- shrinkage
-  //   changes who gets CREDIT, never who gets flagged.
-  var SHRINK_K  = 0.25;
-  // At K=0.25 this is the point where the fleet average still supplies a
-  // quarter or more of the score, so the row is marked provisional.
+  // Measured on 280 drivers: split-half reliability is FLAT across K (rho 0.795
+  // at K=0 to 0.808 at K=0.5), so reliability justifies no particular value.
+  // Poisson-Gamma empirical Bayes implies K=0.067 -- drivers differ ~47x more
+  // than sampling noise -- but that alone over-corrects. At every value tested,
+  // shrinkage changed who got CREDIT and never who got FLAGGED.
+  var SHRINK_K  = 1.0;
+  // Under this, the median still supplies a quarter or more of the score.
   var PROVISIONAL_MILES = 750;
 
   // Bands are ABSOLUTE multiples of the fleet MEDIAN, not rank quantiles.
@@ -310,11 +308,14 @@ geotab.addin.driverScorecard = function () {
   // Without the shrink a 260-mile driver's three events read as a real rate.
   function scoreAll(drivers){
     if(!drivers.length) return [];
+    // Shrink target: the MEDIAN driver's rate per metric, not the fleet mean.
+    // On a percentile scale the median is the neutral point; the mean is not,
+    // because a handful of heavy offenders drag it past two thirds of the fleet.
     var fleetRate = {};
     METRICS.forEach(function(m){
-      var ev=0, mi=0;
-      drivers.forEach(function(d){ ev += d.ev[m.id]||0; mi += d.miles; });
-      fleetRate[m.id] = mi > 0 ? ev/(mi/1000) : 0;
+      fleetRate[m.id] = median(drivers.map(function(d){
+        return d.miles > 0 ? (d.ev[m.id]||0)/(d.miles/1000) : 0;
+      }));
     });
     var pct = {};
     METRICS.forEach(function(m){
