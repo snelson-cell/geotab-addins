@@ -166,15 +166,33 @@ geotab.addin.driverScorecard = function () {
 
   var PERIODS   = [7, 30];
   var MIN_MILES = 250;   // below this a rate is too jumpy to rank on
-  // Prior strength, in thousands of miles. Was 2. At 2,000 miles against a
-  // 250-mile floor the prior supplied 83% of a qualifying driver's score, and
-  // NO driver under 500 miles could score above 57 however cleanly they drove.
-  // Split-half reliability was measured across K and plateaus at 0.5 (rho 0.73,
-  // identical to K=2) — so 2 bought nothing and cost the whole low-mileage half
-  // of the fleet any ability to look good.
-  var SHRINK_K  = 0.5;
-  // Below this the prior still supplies 40%+ of the score, so the row is marked
-  // provisional rather than presented as a settled judgement.
+  // Prior strength, in thousands of miles: how much imaginary fleet-average
+  // driving is blended in before ranking, to stop a short window reading as
+  // fact. Was 2, then 0.5. Both were picked, not derived. Derived properly:
+  //
+  //   Split-half reliability is FLAT across K -- rho 0.795 at K=0 through 0.808
+  //   at K=0.5 to 0.804 at K=2, a 0.013 spread that is pure noise. So the
+  //   reliability argument originally used to justify K=2 does not exist.
+  //
+  //   Poisson-Gamma empirical Bayes puts K at mu/sigma^2. Drivers differ FAR
+  //   more than chance does -- for speeding the between-driver variance is
+  //   1,206 against a Poisson component of 25.8, a 47x ratio -- which implies
+  //   K = 0.067, i.e. barely shrink at all.
+  //
+  //   But 0.067 over-corrects: it puts six sub-750-mile drivers in the top 15
+  //   and drops the best-evidenced driver in the fleet to 10th. The model only
+  //   accounts for Poisson noise; it cannot see that a thin window may be
+  //   unrepresentative for other reasons (light duty, one area, one week of
+  //   routes). 0.25 is roughly 4x the derived value, keeps the top of the board
+  //   evidenced (2 of the top 15 under 750 mi), and still credits a genuinely
+  //   clean short window: a driver with 1 speeding event in 448 miles is about
+  //   3 sigma below a fleet-average driver, which is signal, not luck.
+  //
+  //   The coaching list is unaffected by K at any value tested -- shrinkage
+  //   changes who gets CREDIT, never who gets flagged.
+  var SHRINK_K  = 0.25;
+  // At K=0.25 this is the point where the fleet average still supplies a
+  // quarter or more of the score, so the row is marked provisional.
   var PROVISIONAL_MILES = 750;
 
   // Bands are ABSOLUTE multiples of the fleet MEDIAN, not rank quantiles.
@@ -723,7 +741,7 @@ geotab.addin.driverScorecard = function () {
       'sitting them nearer the middle. So a light-mileage driver can show a very low multiple and '+
       'still score mid-table. Rows marked <span class="ds-prov">thin</span> are the ones where that '+
       'gap is largest &mdash; under '+PROVISIONAL_MILES+' miles, the fleet average still supplies '+
-      '40% or more of the score.</p>'+
+      'a quarter or more of the score.</p>'+
       '<p><b>Cell colours show the raw rate, not the adjusted one</b>, so zero events always reads '+
       'as good. The score may still place that driver mid-table; the cells tell you what they did, '+
       'the score tells you how confident the ranking is.</p>'+
