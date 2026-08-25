@@ -272,6 +272,42 @@ geotab.addin.driverScorecard = function () {
     return FILL[FILL.length-1];
   }
 
+  // ── Company benchmark ────────────────────────────────────────────────────
+  // A branch-scoped login can only see its own drivers, so left to itself it
+  // ranks them against each other -- which centres EVERY branch on ~50 and
+  // makes the scores disagree with what an all-branch login sees for the same
+  // person. Measured before this was added: Chicago's own login showed its
+  // median driver at 52 where the company view said 19, and ATL North's showed
+  // 47 where the company view said 61. Correlation between how bad a branch is
+  // and how much its own view flattered it: r = 0.87.
+  //
+  // This is the company distribution, so every login scores against the same
+  // yardstick and Chad, Megan and a branch manager all read identical numbers
+  // in a 1:1. It holds no names, no vehicles and no branch labels -- only rate
+  // breakpoints. Regenerate it whenever this file is redeployed.
+  var BENCHMARK = {"generated":"2026-08-25T16:59:26.254272Z","windowDays":30,"drivers":285,"shrinkK":1.0,"steps":[0,5,10,15,20,25,30,35,40,45,50,55,60,65,70,75,80,85,90,95,100],"medianRate":{"Speeding":12.0745,"Braking":4.8601,"Cornering":15.1644,"Acceleration":1.1459},"medianWeighted":11.0306,"adjusted":{"Speeding":[3.486,5.2841,6.4549,7.2369,7.9388,8.3426,9.2521,9.847,10.4274,11.3134,12.0745,13.7292,15.0083,16.4038,17.6681,21.6129,24.3104,33.6142,47.3699,61.8059,141.0016],"Braking":[1.2917,2.7463,2.9882,3.1779,3.4369,3.6721,3.8823,4.0865,4.3779,4.5819,4.8601,5.3039,6.0828,6.946,7.5953,8.2229,9.0185,10.2722,13.3155,19.3267,38.9405],"Cornering":[5.4333,8.5974,9.6814,10.7227,11.7566,12.3802,12.6882,13.3855,14.0394,14.5644,15.1644,16.1489,16.8922,17.6665,19.1266,20.8447,22.4003,24.7957,28.2593,32.8292,81.1961],"Acceleration":[0.2574,0.4658,0.5403,0.5888,0.6338,0.6842,0.7437,0.7818,0.8663,0.9859,1.1459,1.3117,1.5442,1.769,2.2373,2.7583,3.3211,4.5263,6.8205,15.1538,50.1429]},"scoreAtPct":[2.75,16.59,21.15,26.91,31.63,34.88,38.57,41.83,45.39,47.02,50.83,54.17,57.25,59.75,61.64,64.08,66.67,71.28,76.45,85.87,94.88]};
+  var BENCHMARK_STALE_DAYS = 45;
+
+  // Where a value sits in the company distribution, interpolating between the
+  // stored breakpoints.
+  function pctFromBreaks(breaks, steps, x){
+    if(!breaks || !breaks.length) return null;
+    if(x <= breaks[0]) return steps[0];
+    for(var i=1;i<breaks.length;i++){
+      if(x <= breaks[i]){
+        var span = breaks[i]-breaks[i-1];
+        return steps[i-1] + (span>0 ? (x-breaks[i-1])/span : 0)*(steps[i]-steps[i-1]);
+      }
+    }
+    return steps[steps.length-1];
+  }
+  // Company rank implied by a score, for logins that cannot count the company.
+  function companyRank(score){
+    var p = pctFromBreaks(BENCHMARK.scoreAtPct, BENCHMARK.steps, score);
+    if(p == null) return null;
+    return Math.max(1, Math.min(BENCHMARK.drivers, Math.round((1-p/100)*BENCHMARK.drivers)+1));
+  }
+
   // ── State (declared above every use) ─────────────────────────────────────
   var days = 30, apiRef = null, DATA = null, officeFilter = '', coachOnly = false;
   var lastRanked = [], lastUnranked = [];
@@ -345,53 +381,50 @@ geotab.addin.driverScorecard = function () {
   // Without the shrink a 260-mile driver's three events read as a real rate.
   function scoreAll(drivers){
     if(!drivers.length) return [];
-    // Shrink target: the MEDIAN driver's rate per metric, not the fleet mean.
-    // On a percentile scale the median is the neutral point; the mean is not,
-    // because a handful of heavy offenders drag it past two thirds of the fleet.
+    // Shrink target and percentile base both come from the COMPANY benchmark,
+    // never from whoever happens to be visible. Without this a branch-scoped
+    // login ranks its drivers against each other, which centres every branch on
+    // ~50 and makes the same driver score differently for a branch manager than
+    // for Chad or Megan — the two people who need to read the same row in a 1:1.
     var fleetRate = {};
     METRICS.forEach(function(m){
-      fleetRate[m.id] = median(drivers.map(function(d){
-        return d.miles > 0 ? (d.ev[m.id]||0)/(d.miles/1000) : 0;
-      }));
+      fleetRate[m.id] = BENCHMARK.medianRate[m.id];
     });
-    var pct = {};
+
     METRICS.forEach(function(m){
-      // Shrunk percentile — drives the SCORE, which is a judgement and has to
-      // account for how little some drivers have shown us.
-      var adj = drivers.map(function(d){
-        return ((d.ev[m.id]||0) + SHRINK_K*fleetRate[m.id]) / (d.miles/1000 + SHRINK_K);
-      });
-      var ra = rankAsc(adj), n = drivers.length;
-      pct[m.id] = ra.map(function(x){ return n>1 ? 100*(x-1)/(n-1) : 50; });
-      // Raw percentile — drives the CELL COLOUR, which reports what happened.
-      // Colouring cells by the shrunk value put 80 of 145 zero-event cells in
-      // the grey "typical" band and two of them in RED: a driver with no harsh
-      // acceleration at all rendered as a problem. A zero is now always a zero.
       var rawRate = drivers.map(function(d){ return (d.ev[m.id]||0) / (d.miles/1000); });
-      var rr = rankAsc(rawRate);
+      var rr = rankAsc(rawRate), n = drivers.length;
       drivers.forEach(function(d,i){
         if(!d.rawPct) d.rawPct = {};
-        d.rate[m.id]   = rawRate[i];
-        d.pct[m.id]    = pct[m.id][i];
+        d.rate[m.id] = rawRate[i];
+        // Adjusted rate, then its position in the COMPANY distribution.
+        var adj = ((d.ev[m.id]||0) + SHRINK_K*fleetRate[m.id]) / (d.miles/1000 + SHRINK_K);
+        d.pct[m.id] = pctFromBreaks(BENCHMARK.adjusted[m.id], BENCHMARK.steps, adj);
+        // Cell colour stays relative to the people on screen: it answers
+        // "who here is worst at this", which is the branch manager's question.
         d.rawPct[m.id] = n>1 ? 100*(rr[i]-1)/(n-1) : 50;
       });
     });
+
     drivers.forEach(function(d){
       var bad = 0;
       METRICS.forEach(function(m){ bad += m.w * d.pct[m.id]; });
-      d.score = Math.round(100 - bad);   // higher is better
-      // Weighted event RATE, separate from the score. The score says where a
-      // driver ranks among peers; this says how often they set something off
-      // compared with a typical driver, and unlike a rank it can improve.
+      d.score = Math.round(100 - bad);
       d.wRate = weightedRate(d);
-    });
-    var med = median(drivers.map(function(d){ return d.wRate; }));
-    drivers.forEach(function(d){
-      d.ratio = med > 0 ? d.wRate/med : 1;
+      // Band is against the company median weighted rate, so "Priority" means
+      // the same thing at every branch.
+      d.ratio = BENCHMARK.medianWeighted > 0 ? d.wRate/BENCHMARK.medianWeighted : 1;
       d.band  = bandFor(d.ratio);
     });
+    var med = BENCHMARK.medianWeighted;
     drivers.sort(function(a,b){ return b.score-a.score || b.miles-a.miles; });
-    drivers.forEach(function(d,i){ d.rank = i+1; d.provisional = d.miles < PROVISIONAL_MILES; });
+    drivers.forEach(function(d,i){
+      d.localRank = i+1;
+      // Company position implied by the score. A login that can see everyone
+      // and one that can see one branch now report the same number.
+      d.rank = companyRank(d.score) || (i+1);
+      d.provisional = d.miles < PROVISIONAL_MILES;
+    });
     return {drivers:drivers, median:med};
   }
 
@@ -618,27 +651,34 @@ geotab.addin.driverScorecard = function () {
     // is actually visible.
     var nOff = Object.keys(offices).length;
     el('ds-scope').innerHTML =
-      f0(companyN)+' drivers ranked across '+
-      (nOff===1 ? '<b>'+esc(Object.keys(offices)[0])+'</b> &mdash; everything your login can see'
-                : nOff+' locations in your data scope')+
-      (officeFilter && nOff>1 ? ' &middot; showing '+esc(officeFilter) : '')+
+      f0(view.length)+' driver'+(view.length===1?'':'s')+' shown &middot; '+
+      (nOff===1 ? '<b>'+esc(Object.keys(offices)[0])+'</b>'
+                : (officeFilter ? esc(officeFilter) : nOff+' locations in your data scope'))+
+      ' &middot; scored against all '+f0(BENCHMARK.drivers)+' drivers company-wide'+
       ' &middot; previous '+days+' days &middot; '+MIN_MILES+'+ mi to qualify';
-    // Short windows genuinely carry less evidence. Say so, so a wall of "thin"
-    // tags on the 7-day view reads as expected rather than broken.
-    if(days < 30){
+
+    var bmAge = (Date.now() - new Date(BENCHMARK.generated).getTime())/86400000;
+    if(bmAge > BENCHMARK_STALE_DAYS){
+      note('ds-warn','ds-note--warn',
+        'The company benchmark these scores are measured against was built '+Math.round(bmAge)+
+        ' days ago. Every login still agrees with every other, but the fleet has moved on since '+
+        '&mdash; worth refreshing it.');
+    } else if(days < 30){
+      // Short windows genuinely carry less evidence. Say so, so a wall of "thin"
+      // tags on the 7-day view reads as expected rather than broken.
       var thinShare = view.length ? Math.round(100*view.filter(function(d){ return d.provisional; }).length/view.length) : 0;
       note('ds-warn','ds-note--warn',
         'Over '+days+' days a typical driver covers only a few hundred miles, so <b>'+thinShare+
         '% of this view is marked <span class="ds-prov">thin</span></b> &mdash; the score is leaning '+
         'on the typical-driver baseline for most people here. Useful for spotting what happened '+
         'lately; use <b>30 days</b> for anything you intend to say out loud.');
-    }
-    if(nOff===1){
+    } else if(nOff===1){
       note('ds-warn','ds-note--warn',
-        'Your MyGeotab login is scoped to <b>'+esc(Object.keys(offices)[0])+'</b>, so every number '+
-        'here is measured against that office alone. &ldquo;1.20&times;&rdquo; means 1.20&times; the '+
-        'typical '+esc(Object.keys(offices)[0])+' driver, not the typical Mira driver, and the '+
-        'ranks are positions within your branch. Office standings cannot be shown.');
+        'Your login shows only <b>'+esc(Object.keys(offices)[0])+'</b>, but scores, ranks and the '+
+        'Priority band are measured against all '+f0(BENCHMARK.drivers)+' drivers in the company '+
+        '&mdash; so they match exactly what an all-branch login sees for the same person. Your login '+
+        'limits <b>who appears</b>, not how they are scored. Office standings need the other '+
+        'branches and cannot be shown here.');
     }
 
     var priority = view.filter(function(d){ return d.band.key==='prio'; });
@@ -841,13 +881,16 @@ geotab.addin.driverScorecard = function () {
       'about 20 places of each other are not distinguishable &mdash; act on the <b>tier</b>, '+
       'and treat the number beside it as rough position. A 30-day window is roughly four times '+
       'steadier than a 7-day one.</p>'+
-      '<p><b>Ranking covers everything your login can see</b> ('+f0(companyN)+' drivers), and the '+
-      'office picker narrows who is listed without ever re-ranking them. A login scoped to a single '+
-      'branch produces a ranking within that branch &mdash; the arithmetic is identical, but every '+
-      '&ldquo;&times; the median&rdquo; is then relative to that branch, not to Mira as a whole. Route mix still differs by '+
-      'location &mdash; dense residential work produces more cornering per mile regardless of '+
-      'who is driving &mdash; which is why cornering carries the lowest weight and the '+
-      '&ldquo;in office&rdquo; column is there beside it.</p>'+
+      '<p><b>Every login scores against the same company yardstick.</b> Scores, ranks and the '+
+      'Priority band are measured against a stored snapshot of the whole company &mdash; '+
+      f0(BENCHMARK.drivers)+' drivers as of '+esc(String(BENCHMARK.generated).slice(0,10))+' &mdash; '+
+      'not against whoever the login happens to see. A branch manager and an all-branch login read '+
+      'the identical number for the same driver, which is the point: the two of them look at it '+
+      'together. Left to rank only its own people a branch centres itself on 50 whatever its real '+
+      'standing &mdash; measured before this was fixed, Chicago&rsquo;s own view put its median '+
+      'driver at 52 where the company view said 19. <b>Cell colours are the exception</b> and stay '+
+      'relative to the people on screen, because &ldquo;who here is worst at braking&rdquo; is a '+
+      'branch manager&rsquo;s question.</p>'+
       '<p><b>Drivers archived in Geotab are excluded entirely</b>'+
       (goneCount ? ' &mdash; '+goneCount+' in this window' : '')+'. Geotab returns archived users '+
       'from the same call as everyone else and their trips keep their driver id, so without this '+
