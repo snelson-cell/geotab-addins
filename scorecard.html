@@ -312,7 +312,7 @@ geotab.addin.driverScorecard = function () {
   // it started with — which is exactly how two logins ended up disagreeing
   // after the benchmark shipped. If two people see different numbers, compare
   // this stamp first: it settles it in one glance.
-  var BUILD = '2026-08-26.3';
+  var BUILD = '2026-08-26.4';
 
   // Where a value sits in the company distribution. Counts breakpoints below
   // and at-or-below and averages the two, which is the same tie rule the old
@@ -370,6 +370,12 @@ geotab.addin.driverScorecard = function () {
     'text-transform:uppercase!important;padding:1px 6px!important;'+
     'border-radius:20px!important;margin-left:6px!important;'+
     'background:#e1e0d9!important;color:#898781!important;vertical-align:1px!important;';
+  function ordSuffix(n){
+    var t=n%100;
+    if(t>=11 && t<=13) return 'th';
+    return ({1:'st',2:'nd',3:'rd'})[n%10] || 'th';
+  }
+
   function provTag(title){
     return ' <span class="ds-prov" style="'+PROV_CSS+'"'+
            (title ? ' title="'+title+'"' : '')+'>thin</span>';
@@ -853,7 +859,10 @@ geotab.addin.driverScorecard = function () {
       ' <span style="font-weight:400;color:var(--ink-3)">&middot; company snapshot '+
         esc(String(BENCHMARK.generated).slice(0,10))+'</span>';
     var oh = '<table class="ds-t"><thead><tr><th class="r">#</th><th>Office</th>'+
-      '<th class="r">Drivers</th><th class="c">Typical driver</th>'+
+      '<th class="r" title="How many drivers this office had when the benchmark was built on '+
+      esc(String(BENCHMARK.generated).slice(0,10))+'. The live number moves as people cross the '+
+      MIN_MILES+'-mile floor, so it can differ from a count taken today.">Drivers</th>'+
+      '<th class="c">Typical driver</th>'+
       METRICS.map(function(m){ return '<th class="c">'+esc(m.id)+'</th>'; }).join('')+
       '</tr></thead><tbody>';
     // Share of an office's drivers falling in each colour band, per metric.
@@ -986,7 +995,7 @@ geotab.addin.driverScorecard = function () {
     var trendSay;
     if(d.trend.key==='new'){
       trendSay = '<b>Trend &mdash; nothing yet.</b> A trend needs '+TREND_MIN_MILES+
-        '+ miles in the previous '+days+' days to compare against, and '+esc(d.name.split(' ')[0])+
+        '+ miles in the previous '+effDays+' days to compare against, and '+esc(d.name.split(' ')[0])+
         ' does not have that much history yet. It fills in on its own.';
     } else if(d.trend.key==='steady'){
       trendSay = '<b>Trend &mdash; steady.</b> Their position against the rest of the company has '+
@@ -1011,14 +1020,24 @@ geotab.addin.driverScorecard = function () {
       '<th class="c">Where that sits</th><th class="c">Weight</th><th class="r">Points off</th>'+
       '<th>In plain terms</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
       budgetBar(d, lost)+
-      '<div class="sum">'+
-        METRICS.map(function(m){ return (m.w*d.pct[m.id]).toFixed(1); }).join(' &nbsp;+&nbsp; ')+
-        ' &nbsp;=&nbsp; <b>'+lost.toFixed(1)+'</b> points off &nbsp;&rarr;&nbsp; 100 &minus; '+
-        lost.toFixed(1)+' = <b>'+d.score+'</b>'+
-        '<span style="color:var(--ink-3)"> &middot; '+f0(d.rank)+
-        (d.rank===1?'st':d.rank===2?'nd':d.rank===3?'rd':'th')+' of '+f0(BENCHMARK.drivers)+
-        ' company-wide, '+d.officeRank+' of '+d.officeN+' in '+esc(d.office)+'</span>'+
-      '</div>'+
+      // Each term is rounded for display, so the printed total has to be the sum of
+      // the ROUNDED terms or the arithmetic on screen does not add up -- which is
+      // exactly the kind of thing a manager checks in front of a driver. The score
+      // is then shown to one decimal as well, so every step of the line is true.
+      (function(){
+        var terms = METRICS.map(function(m){ return Math.round(m.w*d.pct[m.id]*10)/10; });
+        var shown = Math.round(terms.reduce(function(a,b){ return a+b; },0)*10)/10;
+        var kept  = Math.round((100-shown)*10)/10;
+        return '<div class="sum">'+
+          terms.map(function(t){ return t.toFixed(1); }).join(' &nbsp;+&nbsp; ')+
+          ' &nbsp;=&nbsp; <b>'+shown.toFixed(1)+'</b> points off &nbsp;&rarr;&nbsp; 100 &minus; '+
+          shown.toFixed(1)+' = '+kept.toFixed(1)+', shown as <b>'+d.score+'</b>'+
+          '<span style="color:var(--ink-3)"> &middot; '+f0(d.rank)+
+          (d.rank===1?'st':d.rank===2?'nd':d.rank===3?'rd':'th')+' of '+f0(BENCHMARK.drivers)+
+          ' company-wide, '+d.officeRank+ordSuffix(d.officeRank)+' of the '+d.officeN+
+          ' '+esc(d.office)+' drivers in this view</span>'+
+        '</div>';
+      })()+
       '<p class="foot2">'+trendSay+'</p>'+
       '<p class="foot2"><b>Why the numbers in the table are not exactly what is scored.</b> Before '+
         'ranking, each rate is blended with the typical driver&rsquo;s, by about '+(SHRINK_K*1000)+
@@ -1054,15 +1073,45 @@ geotab.addin.driverScorecard = function () {
       '<div class="ds-budget-key"><span>0</span>'+
       '<span>&#9650; a driver at the company median on everything keeps 50</span>'+
       '<span>100</span></div>'+
-      '<p class="foot2" style="margin-top:9px"><b>Each metric can only ever take its own weight.</b> '+
-      'Speeding and braking can take 35 points each, cornering and acceleration 15 each &mdash; '+
-      '100 between them. How much of its share a metric actually takes is how far up the company '+
-      'that driver sits on it. '+esc(d.name.split(' ')[0])+'&rsquo;s speeding bite is the widest '+
-      'not because it is his worst habit in absolute terms, but because speeding carries the '+
-      'largest budget and he is mid-pack on it, while on the other three he is near the top of '+
-      'the company and barely gives anything up. <b>A metric that is already full cannot take '+
-      'more</b>, however much worse it gets &mdash; which is why the score can say &ldquo;worst&rdquo; '+
-      'but never &ldquo;catastrophic&rdquo;.</p>';
+      // Was a static paragraph with only the name swapped in. It asserted the driver
+      // was mid-pack on speeding and near the top on everything else, which is false
+      // for most people it was shown for -- and it said "he" about every driver on the
+      // board. Both halves are now derived from this driver's own numbers, and nothing
+      // here assumes a pronoun.
+      (function(){
+        var first = esc(d.name.split(' ')[0]);
+        var budget = METRICS.map(function(m){
+          return {id:m.id, cap:Math.round(m.w*100), off:m.w*d.pct[m.id], pct:d.pct[m.id]};
+        });
+        var widest = budget.slice().sort(function(a,b){ return b.off-a.off; })[0];
+        var worst  = budget.slice().sort(function(a,b){ return b.pct-a.pct; })[0];
+        var lowest = budget.slice().sort(function(a,b){ return a.pct-b.pct; })[0];
+        function nm(x){ return x.id.toLowerCase(); }
+        function betterThan(x){ return Math.round(100-x.pct); }
+        var caps = METRICS.map(function(m){
+          return m.id.toLowerCase()+' '+Math.round(m.w*100);
+        }).join(', ');
+        var body;
+        if(widest.id === worst.id){
+          body = 'For '+first+' the widest bar and the worst habit are the same one: '+
+            nm(worst)+', worse than '+Math.round(worst.pct)+'% of the company, taking '+
+            worst.off.toFixed(1)+' of the '+worst.cap+' it can.';
+        } else {
+          body = 'The widest bar is not always the worst habit. '+first+'&rsquo;s widest is '+
+            nm(widest)+' at '+widest.off.toFixed(1)+' of '+widest.cap+' &mdash; but that is a big '+
+            'budget and a middling position (better than '+betterThan(widest)+'% of the company). '+
+            'The worst habit is '+nm(worst)+', worse than '+Math.round(worst.pct)+
+            '% of the company and already '+Math.round(100*worst.off/worst.cap)+'% of the way '+
+            'through its smaller '+worst.cap+'-point budget.';
+        }
+        return '<p class="foot2" style="margin-top:9px"><b>Each metric can only ever take its '+
+          'own weight.</b> The most each can take is '+caps+' &mdash; 100 between them. How much '+
+          'of that a metric actually takes is how far up the company this driver sits on it. '+
+          body+' The lightest touch here is '+nm(lowest)+', better than '+betterThan(lowest)+
+          '% of the company. <b>A metric that is already full cannot take more</b>, however much '+
+          'worse it gets &mdash; which is why the score can say &ldquo;worst&rdquo; but never '+
+          '&ldquo;catastrophic&rdquo;.</p>';
+      })();
   }
 
   function kpi(label, value, sub){
