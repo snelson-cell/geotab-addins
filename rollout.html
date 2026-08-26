@@ -272,6 +272,23 @@ geotab.addin.rollout = function () {
     });
     var officeIds={}; offices.forEach(function(o){ officeIds[o.id]=o.name; });
 
+    // Same scope trap as onOrder: if the caller cannot see the placeholder
+    // group, stamps stay null. Fall back to the newest "created <date>" found
+    // on the placeholder devices themselves, which every viewer can read.
+    function stampFallback(list){
+      var owned=null, rental=null;
+      (list||[]).forEach(function(d){
+        if(!d || d.deviceType!==NONE) return;
+        var m=String(d.comment||'').match(/PLACEHOLDER · ([a-z ]+) ·.*?created (\d{4}-\d{2}-\d{2})/i);
+        if(!m) return;
+        if(m[1].trim().toLowerCase()==='rental'){ if(!rental||m[2]>rental) rental=m[2]; }
+        else { if(!owned||m[2]>owned) owned=m[2]; }
+      });
+      if(!stamps.owned)  stamps.owned=owned;
+      if(!stamps.rental) stamps.rental=rental;
+    }
+    stampFallback(devices);
+
     var vehicles=[], spares=0, sparesLive=0, unassignedDevices=0;
 
     (devices||[]).forEach(function(d){
@@ -297,7 +314,23 @@ geotab.addin.rollout = function () {
       }
 
       var isPlaceholder = (type===NONE);
-      var onOrder = orderId && grp.indexOf(orderId)>=0;
+
+      // On-order state is read from the device's own comment first, and only
+      // then from group membership.
+      //
+      // Group membership is NOT reliable here: `Get Group` returns only the
+      // groups inside the calling user's data scope, so a user scoped below
+      // the level these groups live at gets `orderId === null` and every
+      // on-order truck silently falls into Owned. That is exactly what
+      // happened on 2026-08-26 — Tampa reported 43 owned instead of 33,
+      // because its 10 on-order Colorados could not be identified.
+      //
+      // `comment` is a field on the device itself, so anyone who can see the
+      // vehicle can see its state. The group check stays as a second signal
+      // for anything created outside this pipeline.
+      var cmt = String(d.comment||'');
+      var onOrder = /·\s*on order\s*·/i.test(cmt) ||
+                    !!(orderId && grp.indexOf(orderId)>=0);
       var own = ownershipOf(d);
       var hasCam = !!(serial && camSerial[serial]);
 
