@@ -312,7 +312,7 @@ geotab.addin.driverScorecard = function () {
   // it started with — which is exactly how two logins ended up disagreeing
   // after the benchmark shipped. If two people see different numbers, compare
   // this stamp first: it settles it in one glance.
-  var BUILD = '2026-08-26.2';
+  var BUILD = '2026-08-26.3';
 
   // Where a value sits in the company distribution. Counts breakpoints below
   // and at-or-below and averages the two, which is the same tie rule the old
@@ -355,6 +355,24 @@ geotab.addin.driverScorecard = function () {
     return off.length ? off.map(function(m){
       return m.id+' '+Math.round(m.w*100)+'% vs benchmark '+Math.round((bw[m.id]||0)*100)+'%';
     }).join(', ') : null;
+  }
+
+  // The thin tag has now rendered as bare lowercase text twice in MyGeotab while
+  // rendering correctly in the harness, with the .ds-prov rule verifiably present,
+  // balanced and parsed in the shipped file both times. Rather than keep guessing at
+  // a host environment we cannot observe, the tag no longer DEPENDS on the rule:
+  // every declaration that gives it its shape is written inline on the element.
+  // Inline beats any host stylesheet on specificity, !important covers a host rule
+  // that also shouts, and neither can be lost by a future edit to the CSS array.
+  // The class stays so the rule can still refine it where it does apply.
+  var PROV_CSS = 'display:inline-block!important;font-size:10px!important;'+
+    'font-weight:700!important;letter-spacing:.05em!important;'+
+    'text-transform:uppercase!important;padding:1px 6px!important;'+
+    'border-radius:20px!important;margin-left:6px!important;'+
+    'background:#e1e0d9!important;color:#898781!important;vertical-align:1px!important;';
+  function provTag(title){
+    return ' <span class="ds-prov" style="'+PROV_CSS+'"'+
+           (title ? ' title="'+title+'"' : '')+'>thin</span>';
   }
 
   // Company rank implied by a score, for logins that cannot count the company.
@@ -786,7 +804,7 @@ geotab.addin.driverScorecard = function () {
       var thinShare = view.length ? Math.round(100*view.filter(function(d){ return d.provisional; }).length/view.length) : 0;
       note('ds-warn','ds-note--warn',
         'Over '+days+' days a typical driver covers only a few hundred miles, so <b>'+thinShare+
-        '% of this view is marked <span class="ds-prov">thin</span></b> &mdash; the score is leaning '+
+        '% of this view is marked'+provTag('')+'</b> &mdash; the score is leaning '+
         'on the typical-driver baseline for most people here. Useful for spotting what happened '+
         'lately; use <b>30 days</b> for anything you intend to say out loud.');
     } else if(nOff===1){
@@ -892,8 +910,8 @@ geotab.addin.driverScorecard = function () {
       return '<tr>'+
         '<td class="rank">'+d.rank+'</td>'+
         '<td class="name">'+esc(d.name)+
-          (d.provisional ? ' <span class="ds-prov" title="Only '+f0(d.miles)+' miles in this window — '+
-            'the score still leans on the fleet average, so treat it as provisional">thin</span>' : '')+
+          (d.provisional ? provTag('Only '+f0(d.miles)+' miles in this window \u2014 the score '+
+            'still leans on the fleet average, so treat it as provisional') : '')+
         '</td>'+
         '<td>'+esc(d.office)+'</td>'+
         '<td class="r">'+f0(d.miles)+'</td>'+
@@ -982,7 +1000,7 @@ geotab.addin.driverScorecard = function () {
     el('ds-example').innerHTML =
       '<div class="ds-ex">'+
       '<h4>'+esc(d.name)+' &middot; '+esc(d.office)+' &middot; '+f0(d.miles)+' miles'+
-        (d.provisional?' <span class="ds-prov">thin</span>':'')+'</h4>'+
+        (d.provisional?provTag(''):'')+'</h4>'+
       '<p class="lede">This is the driver sitting in the middle of whatever is on screen, so the '+
         'arithmetic is visible at a normal size rather than a near-perfect one. Each of the four '+
         'metrics is turned into a position against all '+
@@ -1077,7 +1095,7 @@ geotab.addin.driverScorecard = function () {
       '<p><b>The score is a judgement, not just a tally.</b> It accounts for how much a driver '+
       'has shown you: someone with 450 miles and one event might be excellent or might be lucky, '+
       'and the score says so by sitting them nearer the middle. That is why a driver can have four '+
-      'blue cells and a mid-table score. Rows marked <span class="ds-prov">thin</span> are where '+
+      'blue cells and a mid-table score. Rows marked'+provTag('')+' are where '+
       'that gap is largest &mdash; under '+PROVISIONAL_MILES+' miles the typical-driver baseline '+
       'still supplies a quarter or more of the score.</p>'+
       '<p><b>Cell colours show the raw rate, not the adjusted one</b>, so zero events always reads '+
