@@ -189,6 +189,19 @@ geotab.addin.rollout = function () {
     if(msg){ n.innerHTML=msg; n.className='rl-note on'; } else { n.className='rl-note'; n.textContent=''; } }
   function gradeColor(p){ return p>=80?C.good : p>=40?C.watch : C.bad; }
 
+  // Geotab's VIN decoder is not consistent about case: 132 Chevrolets come
+  // back as "Chevrolet" and 3 as "CHEVROLET". Normalise for display only —
+  // the field is derived from the VIN, so writing to it just gets re-decoded.
+  // Words of 3 letters or fewer stay as they are, or GMC becomes "Gmc".
+  function titleish(s){
+    s=String(s==null?'':s).trim();
+    if(!s) return '';
+    return s.split(/\s+/).map(function(w){
+      if(w.length<=3 || w!==w.toUpperCase()) return w;   // GMC, Ram, F-150, 1500
+      return w.charAt(0)+w.slice(1).toLowerCase();
+    }).join(' ');
+  }
+
   var apiRef=null, stateRef=null, chart=null, model=null, lastWidth=0;
   var resizeObs=null, resizeTimer=null, pollTimer=null, pointerInChart=false;
   var current='__all__';
@@ -522,7 +535,7 @@ geotab.addin.rollout = function () {
       showCam ? '<th>Camera</th>' : '<th>Device</th>',
       '</tr></thead><tbody>'];
     list.forEach(function(v){
-      var mm=[v.make, v.modelName].filter(Boolean).join(' ');
+      var mm=[titleish(v.make), titleish(v.modelName)].filter(Boolean).join(' ');
       h.push('<tr>' +
         '<td><a class="rl-link rl-tn" data-d="' + esc(v.id) + '">' + esc(v.name||'—') + '</a></td>' +
         '<td>' + esc(mm||'—') + '</td>' +
@@ -637,7 +650,7 @@ geotab.addin.rollout = function () {
       model.vehicles.filter(function(v){ return v.office===current; }).forEach(function(v){
         var sect=v.onOrder?'On order':(v.ownership==='Rental'?'Rental':'Owned');
         var st=v.onOrder?'On order':v.placeholder?'No device':v.camera?'Camera':'GO9 only';
-        lines.push(csvRow([current,sect,v.name,[v.make,v.modelName].filter(Boolean).join(' '),v.year,v.vin,v.plate,st]));
+        lines.push(csvRow([current,sect,v.name,[titleish(v.make),titleish(v.modelName)].filter(Boolean).join(' '),v.year,v.vin,v.plate,st]));
       });
       name='fleet-'+current.toLowerCase().replace(/[^a-z0-9]+/g,'-')+'.csv';
     }
