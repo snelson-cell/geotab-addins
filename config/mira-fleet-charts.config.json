@@ -1,7 +1,7 @@
 {
   "name": "Mira Fleet Charts",
   "supportEmail": "snelson@thegrit.com",
-  "version": "1.14.8",
+  "version": "1.15.0",
   "items": [
     {
       "url": "https://snelson-cell.github.io/geotab-addins/scorecard.html?v=2026-08-26.5",
@@ -32,10 +32,10 @@
       }
     },
     {
-      "url": "https://snelson-cell.github.io/geotab-addins/rollout.html",
+      "url": "https://snelson-cell.github.io/geotab-addins/rollout.html?v=2026-08-26.6",
       "path": "ActivityLink/",
       "menuName": {
-        "en": "GO9 & Camera Rollout"
+        "en": "Fleet & Camera Coverage"
       }
     },
     {
