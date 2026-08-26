@@ -8,16 +8,19 @@
 <div id="rl-root">
   <div class="rl-topbar">
     <div>
-      <h2 class="rl-h1">GO9 &amp; camera rollout</h2>
-      <div class="rl-scope" id="rl-scope">Loading…</div>
+      <h2 class="rl-h1">Fleet &amp; camera coverage</h2>
+      <div class="rl-scope" id="rl-scope">Loading&hellip;</div>
     </div>
     <div class="rl-tools">
-      <label class="rl-field">Sort
+      <label class="rl-field">Location
+        <select id="rl-branch"><option value="__all__">All locations</option></select>
+      </label>
+      <label class="rl-field" id="rl-sortwrap">Sort
         <select id="rl-sort">
           <option value="pct">Least complete first</option>
           <option value="pctd">Most complete first</option>
-          <option value="ordered">Most shipped first</option>
-          <option value="name">Office name</option>
+          <option value="fleet">Largest fleet first</option>
+          <option value="name">Location name</option>
         </select>
       </label>
       <button type="button" id="rl-csv">Export CSV</button>
@@ -27,57 +30,71 @@
   <div class="rl-note" id="rl-stop"></div>
   <div class="rl-note" id="rl-warn"></div>
 
-  <div class="rl-hero" id="rl-hero"></div>
-  <div class="rl-kpis" id="rl-kpis"></div>
-
-  <div class="rl-chartcard">
-    <div class="rl-legend" id="rl-legend"></div>
-    <div id="rl-chart"></div>
+  <div id="rl-master">
+    <div class="rl-hero" id="rl-hero"></div>
+    <div class="rl-kpis" id="rl-kpis"></div>
+    <div class="rl-chartcard">
+      <div class="rl-legend" id="rl-legend"></div>
+      <div id="rl-chart"></div>
+    </div>
+    <div class="rl-tablehead"><div class="rl-tabletitle">Every location</div></div>
+    <div class="rl-tablewrap" id="rl-tablewrap"></div>
   </div>
+
+  <div id="rl-detail" style="display:none"></div>
+
   <div class="rl-foot" id="rl-foot"></div>
-
-  <div class="rl-tablehead">
-    <div class="rl-tabletitle">Every location</div>
-  </div>
-  <div class="rl-tablewrap" id="rl-tablewrap"></div>
 </div>
 
 <script>
 geotab.addin.rollout = function () {
   'use strict';
 
-  // ── Shipment table ───────────────────────────────────────────────────────
-  // This is the ONE input that does not come from Geotab. It is what ops
-  // shipped to each location. Everything else on this page is read live.
-  // UPDATE THIS when a new shipment goes out, or the "remaining" column lies.
-  // Last updated 2026-08-01 (506 units).
-  var ORDERED = [
-    { id:'b27AD', office:'ATL North',    place:'Norcross, GA',           ordered:57 },
-    { id:'b27B3', office:'Detroit',      place:'Ann Arbor, MI',          ordered:56 },
-    { id:'b27AC', office:'Tampa',        place:'Tampa, FL',              ordered:52 },
-    { id:'b27B7', office:'Columbus',     place:'Columbus, OH',           ordered:39 },
-    { id:'b27AE', office:'ATL South',    place:'Riverdale, GA',          ordered:37 },
-    { id:'b27B5', office:'Cincinnati',   place:'Sharonville, OH',        ordered:36 },
-    { id:'b27B6', office:'Cleveland',    place:'Brecksville, OH',        ordered:36 },
-    { id:'b27AF', office:'Chicago',      place:'Elgin, IL',              ordered:35 },
-    { id:'b27B0', office:'Indianapolis', place:'Indianapolis, IN',       ordered:35 },
-    { id:'b27AB', office:'Orlando',      place:'Orlando, FL',            ordered:33 },
-    { id:'b27B1', office:'Northern IN',  place:'Merrillville, IN',       ordered:30 },
-    { id:'b27B8', office:'Utah',         place:'American Fork + Lindon', ordered:23 },
-    { id:'b27B4', office:'Grand Rapids', place:'Grand Rapids, MI',       ordered:20 },
-    { id:'b27B2', office:'Louisville',   place:'Crestwood, KY',          ordered:17 }
-  ];
-  var FLEET_TOTAL = 506;      // sanity check against what Geotab returns
-  var GO9 = 'GO9B';           // productId 124
+  // ─────────────────────────────────────────────────────────────────────────
+  // WHAT THIS PAGE COUNTS
+  //
+  // A VEHICLE is any Geotab asset carrying a VIN. Two kinds exist:
+  //   deviceType 'GO9B'  a real GO9 is fitted
+  //   deviceType 'None'  a PLACEHOLDER, created from the Enterprise export so
+  //                      that a truck we own shows up here even with no
+  //                      hardware in it. Lives in the "Placeholder · No Device"
+  //                      group. Deleted automatically once a real GO9 reports
+  //                      the same VIN.
+  //
+  // A SPARE is a GO9 with no VIN that has never reported — a unit still in its
+  // box. Spares are NOT vehicles and never enter a coverage denominator. This
+  // is the bug the previous version had: it divided by units shipped, so a
+  // location with more devices than trucks scored under 50% while being fully
+  // covered.
+  //
+  // DENOMINATOR = owned vehicles at the location, excluding On Order.
+  // Rentals are reported separately and never count toward camera coverage —
+  // rentals do not get cameras.
+  // ─────────────────────────────────────────────────────────────────────────
 
-  // Sequential single-hue ramp + gray. Deliberately NOT a red/green scale:
-  // the four stages are ordered, so lightness carries the meaning and nothing
-  // depends on telling two hues apart (see README, CVD notes).
+  var GO9 = 'GO9B', NONE = 'None';
+  var G_PLACEHOLDER = 'Placeholder · No Device';
+  var G_ONORDER     = 'On Order';
+
+  // Office groups are resolved from Geotab at runtime by name, so a new branch
+  // appears here the moment its group exists. Only the display address is
+  // local, and a missing entry degrades to a blank cell rather than a drop.
+  var PLACE = {
+    'ATL North':'Norcross, GA',      'ATL South':'Riverdale, GA',
+    'American Fork':'American Fork, UT','Chicago':'Elgin, IL',
+    'Cincinnati':'Sharonville, OH',  'Cleveland':'Brecksville, OH',
+    'Columbus':'Columbus, OH',       'Detroit':'Ann Arbor, MI',
+    'Grand Rapids':'Grand Rapids, MI','Indianapolis':'Indianapolis, IN',
+    'Louisville':'Crestwood, KY',    'Northern Indy':'Merrillville, IN',
+    'Orlando':'Orlando, FL',         'Tampa':'Tampa, FL'
+  };
+
   var C = {
     camera:  '#185FA5',
-    vinned:  '#378ADD',
-    atSite:  '#B5D4F4',
-    remain:  '#DAD8CF',
+    go9:     '#378ADD',
+    nodev:   '#DAD8CF',
+    rental:  '#7C6BB0',
+    order:   '#B5D4F4',
     ink:     '#0b0b0b',
     sub:     '#52514e',
     line:    '#e1e0d9',
@@ -109,7 +126,7 @@ geotab.addin.rollout = function () {
     '.rl-hero-n{font-size:44px;font-weight:600;line-height:1;letter-spacing:-.5px;font-variant-numeric:tabular-nums;}',
     '.rl-hero-of{font-size:17px;color:' + C.sub + ';}',
     '.rl-hero-sub{font-size:13px;color:' + C.sub + ';margin-top:7px;line-height:1.5;}',
-    '.rl-bar{margin-top:13px;height:14px;border-radius:7px;overflow:hidden;display:flex;background:' + C.remain + ';}',
+    '.rl-bar{margin-top:13px;height:14px;border-radius:7px;overflow:hidden;display:flex;background:' + C.nodev + ';}',
     '.rl-bar span{display:block;height:100%;}',
     '.rl-kpis{display:flex;flex-wrap:wrap;gap:12px;margin:14px 0 0;}',
     '.rl-kpi{flex:1 1 170px;border:1px solid ' + C.line + ';border-radius:10px;padding:11px 13px;background:#fff;}',
@@ -120,10 +137,10 @@ geotab.addin.rollout = function () {
     '  border-radius:12px;background:#fff;overflow:visible;}',
     '.rl-legend{display:flex;flex-wrap:wrap;gap:14px;padding:0 4px 8px;font-size:12px;color:' + C.sub + ';}',
     '.rl-legend i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;vertical-align:-1px;}',
-    '.rl-foot{font-size:12px;color:' + C.sub + ';line-height:1.6;margin:10px 2px 0;}',
+    '.rl-foot{font-size:12px;color:' + C.sub + ';line-height:1.6;margin:16px 2px 0;}',
     '.rl-tablehead{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;margin:24px 0 8px;}',
     '.rl-tabletitle{font-size:15px;font-weight:600;}',
-    '.rl-tablewrap{border:1px solid ' + C.line + ';border-radius:10px;background:#fff;}',
+    '.rl-tablewrap{border:1px solid ' + C.line + ';border-radius:10px;background:#fff;overflow-x:auto;}',
     'table.rl-t{width:100%;border-collapse:collapse;font-size:13px;}',
     'table.rl-t th,table.rl-t td{padding:8px 11px;text-align:left;border-bottom:1px solid #eeede7;white-space:nowrap;}',
     'table.rl-t th{position:sticky;top:0;background:#faf9f5;font-weight:600;font-size:12px;color:' + C.sub + ';z-index:1;}',
@@ -134,6 +151,22 @@ geotab.addin.rollout = function () {
     '.rl-pill{display:inline-block;padding:1px 7px;border-radius:20px;font-size:11px;font-weight:600;color:#fff;}',
     '.rl-link{color:#185FA5;cursor:pointer;text-decoration:none;}',
     '.rl-link:hover{text-decoration:underline;}',
+    // ── vehicle-state chips ────────────────────────────────────────────────
+    '.rl-chip{display:inline-block;padding:2px 9px;border-radius:20px;font-size:11px;font-weight:600;',
+    '  white-space:nowrap;border:1px solid transparent;}',
+    '.rl-chip.cam{background:#e6f2e6;color:#0a6b0a;border-color:#bfe0bf;}',
+    '.rl-chip.go9{background:#fdf3dd;color:#7a5a08;border-color:#eeddb0;}',
+    '.rl-chip.nod{background:#f2f1ec;color:#5a5852;border-color:#dedcd3;}',
+    '.rl-chip.ord{background:#eaf3fd;color:#1b4f83;border-color:#c6ddf5;}',
+    // ── branch detail ──────────────────────────────────────────────────────
+    '.rl-sec{margin:22px 0 0;}',
+    '.rl-sech{display:flex;flex-wrap:wrap;gap:10px;align-items:baseline;justify-content:space-between;margin:0 2px 8px;}',
+    '.rl-sect{font-size:15px;font-weight:600;}',
+    '.rl-secn{font-size:12px;color:' + C.sub + ';}',
+    '.rl-vin{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;color:' + C.sub + ';}',
+    '.rl-tn{font-weight:600;}',
+    '.rl-empty{padding:14px 12px;font-size:13px;color:' + C.sub + ';}',
+    '.rl-back{margin:0 0 2px;}',
     '@media (max-width:700px){',
     '  #rl-root{padding:14px 12px 22px;}',
     '  .rl-hero-n{font-size:36px;}',
@@ -156,309 +189,468 @@ geotab.addin.rollout = function () {
     if(msg){ n.innerHTML=msg; n.className='rl-note on'; } else { n.className='rl-note'; n.textContent=''; } }
   function gradeColor(p){ return p>=80?C.good : p>=40?C.watch : C.bad; }
 
-  var apiRef=null, stateRef=null, chart=null, lastRows=null, lastWidth=0;
+  var apiRef=null, stateRef=null, chart=null, model=null, lastWidth=0;
   var resizeObs=null, resizeTimer=null, pollTimer=null, pointerInChart=false;
+  var current='__all__';
 
   // ── data ─────────────────────────────────────────────────────────────────
   function load(){
     apiRef.multiCall([
-      ['Get', { typeName:'Device' }],
-      ['Get', { typeName:'Camera' }],
-      ['Get', { typeName:'Group' }]
+      ['Get', { typeName:'Device', resultsLimit:50000 }],
+      ['Get', { typeName:'Camera', resultsLimit:50000 }],
+      ['Get', { typeName:'Group',  resultsLimit:5000 }],
+      ['Get', { typeName:'Property', resultsLimit:5000 }]
     ], function(res){
-      try { build(res[0]||[], res[1]||[], res[2]||[]); }
-      catch(e){ note('rl-stop','Could not build the rollout view: '+esc(e && e.message || e)); }
+      try { model=build(res[0]||[], res[1]||[], res[2]||[], res[3]||[]); render(); }
+      catch(e){ note('rl-stop','Could not build the coverage view: '+esc(e && e.message || e)); }
     }, function(err){
       note('rl-stop','Geotab call failed: '+esc(err && err.message || err));
     });
   }
 
-  function build(devices, cameras, groups){
-    var gname={}; (groups||[]).forEach(function(g){ if(g && g.id) gname[g.id]=g.name; });
+  function build(devices, cameras, groups, props){
+    // Resolve group ids by NAME. Ids differ between databases and a wrong id
+    // fails silently as a permanently-empty column.
+    var gname={}, byName={};
+    (groups||[]).forEach(function(g){
+      if(!g || !g.id) return;
+      gname[g.id]=g.name;
+      if(g.name) byName[String(g.name).trim()]=g;
+    });
+    var phId    = byName[G_PLACEHOLDER] ? byName[G_PLACEHOLDER].id : null;
+    var orderId = byName[G_ONORDER]     ? byName[G_ONORDER].id     : null;
 
-    // camera records key off the GO device serial, not the device id
+    // Export dates ride in the placeholder group's comments field — the only
+    // writable free-text the add-in can read without baking data into a public
+    // repo. Format: "owned=YYYY-MM-DD rental=YYYY-MM-DD | <description>"
+    var stamps={owned:null, rental:null};
+    if(byName[G_PLACEHOLDER]){
+      var cm=String(byName[G_PLACEHOLDER].comments||'');
+      var mo=cm.match(/owned=(\d{4}-\d{2}-\d{2})/); if(mo) stamps.owned=mo[1];
+      var mr=cm.match(/rental=(\d{4}-\d{2}-\d{2})/); if(mr) stamps.rental=mr[1];
+    }
+
+    // Ownership property, matched by name.
+    var ownPropId=null;
+    (props||[]).forEach(function(p){
+      if(p && String(p.name||'').trim()==='Ownership') ownPropId=p.id;
+    });
+    function ownershipOf(d){
+      var cp=d.customProperties||[];
+      for(var i=0;i<cp.length;i++){
+        var c=cp[i];
+        if(c && c.property && c.property.id===ownPropId && c.value) return String(c.value);
+      }
+      return '';
+    }
+
+    // Cameras key off the GO serial, not the device id. A placeholder has no
+    // serial, so it can never match one — which is correct.
     var camSerial={};
     (cameras||[]).forEach(function(cm){
       var s=(cm && cm.deviceSerialNumber || '').trim();
-      if(s) camSerial[s]=cm;
+      if(s) camSerial[s]=true;
     });
 
-    var go9=(devices||[]).filter(function(d){ return d && d.deviceType===GO9; });
-    if(!go9.length){
-      note('rl-stop','No GO9 devices are visible to your account. Nothing to report.');
-      return;
-    }
-
-    var byOffice={}, officeIds={};
-    ORDERED.forEach(function(o){
-      officeIds[o.id]=true;
-      byOffice[o.id]={ atSite:0, vinned:0, camera:0, dupe:0 };
+    // Which office groups actually exist, in the order we want to show them.
+    var offices=[];
+    Object.keys(PLACE).forEach(function(n){
+      if(byName[n]) offices.push({ id:byName[n].id, name:n, place:PLACE[n] });
     });
+    var officeIds={}; offices.forEach(function(o){ officeIds[o.id]=o.name; });
 
-    var loose={ total:0, vinned:0, camera:0, named:0 };
-    var multi=0;
-    go9.forEach(function(d){
+    var vehicles=[], spares=0, sparesLive=0, unassignedDevices=0;
+
+    (devices||[]).forEach(function(d){
+      if(!d) return;
+      var type=d.deviceType;
+      if(type!==GO9 && type!==NONE) return;
+
       var serial=(d.serialNumber||'').trim();
-      var vin=(d.vehicleIdentificationNumber||'').trim();
-      var hasCam=!!(serial && camSerial[serial]);
-      var mine=[];
-      (d.groups||[]).forEach(function(g){ if(g && officeIds[g.id]) mine.push(g.id); });
-      if(mine.length){
-        if(mine.length>1) multi++;
-        var r=byOffice[mine[0]];          // count each device once
-        r.atSite++;
-        if(vin) r.vinned++;
-        if(hasCam) r.camera++;
-      } else {
-        loose.total++;
-        if(vin) loose.vinned++;
-        if(hasCam) loose.camera++;
-        // a device still named after its serial has never been commissioned
-        if(serial && d.name && d.name.trim()!==serial) loose.named++;
+      var vin=(d.vehicleIdentificationNumber||'').trim().toUpperCase();
+      var grp=(d.groups||[]).map(function(g){ return g && g.id; });
+      var office=null;
+      for(var i=0;i<grp.length;i++){ if(officeIds[grp[i]]){ office=officeIds[grp[i]]; break; } }
+
+      // No VIN = not a vehicle. A GO9 with no VIN is either a spare in its box
+      // or a unit fitted but never identified. Counted, never listed.
+      if(!vin){
+        if(type===GO9){
+          spares++;
+          if(office) sparesLive++;      // sitting at a branch, likely fitted
+          else unassignedDevices++;     // no location group at all
+        }
+        return;
       }
+
+      var isPlaceholder = (type===NONE);
+      var onOrder = orderId && grp.indexOf(orderId)>=0;
+      var own = ownershipOf(d);
+      var hasCam = !!(serial && camSerial[serial]);
+
+      var state = onOrder ? 'order'
+                : isPlaceholder ? 'nodev'
+                : hasCam ? 'camera' : 'go9';
+
+      vehicles.push({
+        id:d.id, name:(d.name||'').trim(), vin:vin, serial:serial,
+        office:office, ownership:own || (isPlaceholder?'':'Unconfirmed'),
+        year:d.vinInfoYear||'', make:d.vinInfoMake||'', modelName:d.vinInfoModel||'',
+        plate:(d.licensePlate||'').trim(),
+        placeholder:isPlaceholder, onOrder:!!onOrder, camera:hasCam, state:state
+      });
     });
 
-    // Role scoping: an office user sees only their own devices, so a zero row
-    // would be indistinguishable from "not started". Only claim a full-fleet
-    // view when we can actually see the whole fleet.
-    var full = go9.length >= FLEET_TOTAL*0.9;
-    var rows=ORDERED.map(function(o){
-      var r=byOffice[o.id];
-      var remain=Math.max(0, o.ordered - r.atSite);
+    // Per-office rollup. Denominator is OWNED, on-order excluded.
+    var rows=offices.map(function(o){
+      var mine=vehicles.filter(function(v){ return v.office===o.name; });
+      var owned  = mine.filter(function(v){ return v.ownership==='Owned' && !v.onOrder; });
+      var rental = mine.filter(function(v){ return v.ownership==='Rental' && !v.onOrder; });
+      var order  = mine.filter(function(v){ return v.onOrder; });
+      var withDev = owned.filter(function(v){ return !v.placeholder; });
+      var withCam = owned.filter(function(v){ return v.camera; });
       return {
-        id:o.id, office:o.office, place:o.place, ordered:o.ordered,
-        atSite:r.atSite, vinned:r.vinned, camera:r.camera,
-        pending:Math.max(0, r.atSite - r.vinned), remain:remain,
-        over:Math.max(0, r.atSite - o.ordered),
-        pct:pctOf(r.vinned, o.ordered),
-        camPct:pctOf(r.camera, r.vinned)
+        id:o.id, office:o.name, place:o.place,
+        fleet:owned.length,
+        device:withDev.length,
+        camera:withCam.length,
+        nodev:owned.length-withDev.length,
+        go9only:withDev.length-withCam.length,
+        rental:rental.length,
+        rentalDev:rental.filter(function(v){ return !v.placeholder; }).length,
+        order:order.length,
+        pct:pctOf(withCam.length, owned.length),
+        devPct:pctOf(withDev.length, owned.length)
       };
-    }).filter(function(r){ return full || r.atSite>0; });
+    });
 
-    lastRows={ rows:rows, loose:loose, full:full, go9:go9.length,
-               cameras:(cameras||[]).length, multi:multi };
-    render();
+    var t={fleet:0,device:0,camera:0,nodev:0,go9only:0,rental:0,rentalDev:0,order:0};
+    rows.forEach(function(r){
+      t.fleet+=r.fleet; t.device+=r.device; t.camera+=r.camera; t.nodev+=r.nodev;
+      t.go9only+=r.go9only; t.rental+=r.rental; t.rentalDev+=r.rentalDev; t.order+=r.order;
+    });
+
+    // Role scoping: an office user only sees their own assets, so a zero row is
+    // indistinguishable from "not started". Only claim a full-fleet view when
+    // more than one office is actually visible.
+    var visible=rows.filter(function(r){ return r.fleet||r.rental||r.order; });
+    return {
+      rows:rows, totals:t, vehicles:vehicles, offices:offices,
+      spares:spares, sparesLive:sparesLive, unassigned:unassignedDevices,
+      stamps:stamps, full:visible.length>1, visible:visible,
+      hasPlaceholderGroup:!!phId
+    };
   }
 
   // ── render ───────────────────────────────────────────────────────────────
   function render(){
-    if(!lastRows) return;
-    var rows=lastRows.rows.slice(), d=lastRows;
-    var mode=(el('rl-sort')||{}).value || 'pct';
+    if(!model) return;
+    syncBranchOptions();
+    if(current==='__all__'){
+      el('rl-master').style.display='';
+      el('rl-detail').style.display='none';
+      el('rl-sortwrap').style.display='';
+      renderMaster();
+    } else {
+      el('rl-master').style.display='none';
+      el('rl-detail').style.display='';
+      el('rl-sortwrap').style.display='none';
+      renderBranch(current);
+    }
+    renderFoot();
+  }
+
+  function syncBranchOptions(){
+    var sel=el('rl-branch');
+    if(sel.options.length>1) return;          // built once
+    model.visible.forEach(function(r){
+      var o=document.createElement('option');
+      o.value=r.office; o.textContent=r.office;
+      sel.appendChild(o);
+    });
+    // A scoped user sees exactly one office — open straight into it.
+    if(!model.full && model.visible.length===1){
+      current=model.visible[0].office;
+      sel.value=current;
+    }
+  }
+
+  function sortedRows(){
+    var how=el('rl-sort').value, rows=model.rows.slice();
     rows.sort(function(a,b){
-      if(mode==='pct')     return a.pct-b.pct || b.ordered-a.ordered;
-      if(mode==='pctd')    return b.pct-a.pct || b.ordered-a.ordered;
-      if(mode==='ordered') return b.ordered-a.ordered;
+      if(how==='pct')   return a.pct-b.pct || b.fleet-a.fleet;
+      if(how==='pctd')  return b.pct-a.pct || b.fleet-a.fleet;
+      if(how==='fleet') return b.fleet-a.fleet;
       return a.office.localeCompare(b.office);
     });
+    return rows;
+  }
 
-    var t={ ordered:0, atSite:0, vinned:0, camera:0, pending:0, remain:0 };
-    rows.forEach(function(r){
-      t.ordered+=r.ordered; t.atSite+=r.atSite; t.vinned+=r.vinned;
-      t.camera+=r.camera; t.pending+=r.pending; t.remain+=r.remain;
-    });
+  function renderMaster(){
+    var t=model.totals;
+    var pct=pctOf(t.camera,t.fleet);
+    el('rl-scope').textContent =
+      model.full
+        ? (f0(t.fleet)+' owned vehicles across '+model.visible.length+' locations · live from Geotab')
+        : 'Showing only the locations your account can see';
 
-    el('rl-scope').textContent = d.full
-      ? 'All ' + f0(d.go9) + ' GO9 units across ' + rows.length + ' locations · live from Geotab'
-      : 'Scoped to your access — ' + f0(d.go9) + ' GO9 units across ' + rows.length + ' location(s)';
-
-    var installPct = pctOf(t.vinned, t.ordered);
     el('rl-hero').innerHTML =
       '<div class="rl-hero-top">' +
-        '<div class="rl-hero-n">' + f0(t.vinned) + '</div>' +
-        '<div class="rl-hero-of">of ' + f0(t.ordered) + ' shipped units are installed and reporting a VIN</div>' +
+        '<div class="rl-hero-n">' + f0(t.camera) + '</div>' +
+        '<div class="rl-hero-of">of ' + f0(t.fleet) + ' owned vehicles have a camera</div>' +
+      '</div>' +
+      '<div class="rl-hero-sub">' +
+        pct.toFixed(0) + '% camera coverage. ' + f0(t.device) + ' of ' + f0(t.fleet) +
+        ' have a GO9 fitted (' + pctOf(t.device,t.fleet).toFixed(0) + '%). ' +
+        (t.nodev ? '<b>' + f0(t.nodev) + '</b> owned vehicles still have no device.' : 'Every owned vehicle has a device.') +
       '</div>' +
       '<div class="rl-bar">' +
-        '<span style="width:' + pctOf(t.camera,t.ordered).toFixed(2) + '%;background:' + C.camera + '"></span>' +
-        '<span style="width:' + pctOf(t.vinned-t.camera,t.ordered).toFixed(2) + '%;background:' + C.vinned + '"></span>' +
-        '<span style="width:' + pctOf(t.pending,t.ordered).toFixed(2) + '%;background:' + C.atSite + '"></span>' +
-      '</div>' +
-      '<div class="rl-hero-sub">' + installPct.toFixed(0) + '% installed. ' +
-        f0(t.camera) + ' of those also have a camera. ' +
-        f0(t.remain) + ' units are shipped but not yet assigned to a location in Geotab.' +
+        '<span style="width:' + pctOf(t.camera,t.fleet) + '%;background:' + C.camera + '"></span>' +
+        '<span style="width:' + pctOf(t.go9only,t.fleet) + '%;background:' + C.go9 + '"></span>' +
       '</div>';
 
-    var started=rows.filter(function(r){ return r.vinned>0; }).length;
     el('rl-kpis').innerHTML = [
-      kpi('Shipped', f0(t.ordered), 'from the ops shipment table'),
-      kpi('Installed', f0(t.vinned), installPct.toFixed(0) + '% of shipped'),
-      kpi('Cameras fitted', f0(t.camera), pctOf(t.camera,t.vinned).toFixed(0) + '% of installed units'),
-      kpi('Locations started', started + ' / ' + rows.length,
-          (rows.length-started) + ' with nothing installed')
+      kpi('Owned vehicles', f0(t.fleet), 'the coverage denominator'),
+      kpi('GO9 fitted', f0(t.device), pctOf(t.device,t.fleet).toFixed(0)+'% of owned'),
+      kpi('Cameras fitted', f0(t.camera), pctOf(t.camera,t.fleet).toFixed(0)+'% of owned · target 100%'),
+      kpi('No device yet', f0(t.nodev), 'owned vehicles awaiting a GO9'),
+      kpi('Rentals', f0(t.rental), t.rentalDev+' with a device · no cameras by design'),
+      kpi('Spare GO9s', f0(model.spares), model.unassigned+' unassigned to a location')
     ].join('');
 
     el('rl-legend').innerHTML =
-      '<span><i style="background:' + C.camera + '"></i>Installed + camera</span>' +
-      '<span><i style="background:' + C.vinned + '"></i>Installed, no camera</span>' +
-      '<span><i style="background:' + C.atSite + '"></i>Assigned, not yet installed</span>' +
-      '<span><i style="background:' + C.remain + '"></i>Shipped, not assigned</span>';
+      lg(C.camera,'GO9 + camera') + lg(C.go9,'GO9, no camera') +
+      lg(C.nodev,'No device') + lg(C.rental,'Rental') + lg(C.order,'On order');
 
-    renderChart(rows);
-    renderTable(rows, t);
-
-    var foot=[];
-    foot.push('<b>Installed</b> means the GO9 has decoded a VIN — it is plugged into a vehicle and reporting. ' +
-              '<b>Assigned</b> means it sits in that location&rsquo;s Geotab group but has not reported a VIN yet.');
-    if(d.loose.total){
-      foot.push(f0(d.loose.total) + ' GO9 units are in no location group at all' +
-        (d.loose.vinned ? ' (' + f0(d.loose.vinned) + ' of them have a VIN, so they are installed but ungrouped)'
-                        : ' and none has reported a VIN, so none is installed') + '.' +
-        (d.loose.named ? ' ' + f0(d.loose.named) + ' have been renamed off their serial number.' : ''));
-    }
-    if(d.multi) foot.push(d.multi + ' unit(s) belong to more than one location group and are counted once, under the first.');
-    if(!d.full) foot.push('Your account cannot see the whole fleet, so locations you have no access to are hidden rather than shown as zero.');
-    var over=rows.filter(function(r){ return r.over>0; });
-    if(over.length) foot.push('More units are assigned than were shipped at: ' +
-      over.map(function(r){ return esc(r.office)+' (+'+r.over+')'; }).join(', ') +
-      ' — the shipment table in this file is probably out of date.');
-    el('rl-foot').innerHTML = foot.join('<br>');
-
-    if(d.full && d.go9 !== FLEET_TOTAL){
-      note('rl-warn','Geotab reports ' + f0(d.go9) + ' GO9 units but the shipment table totals ' +
-        f0(FLEET_TOTAL) + '. Update <code>ORDERED</code> in rollout.html after each shipment.');
-    } else { note('rl-warn',''); }
+    renderChart(sortedRows());
+    renderMasterTable(sortedRows(), t);
   }
 
-  function kpi(label, val, sub){
-    return '<div class="rl-kpi"><div class="rl-kpi-l">' + esc(label) + '</div>' +
-           '<div class="rl-kpi-v">' + esc(val) + '</div>' +
-           '<div class="rl-kpi-s">' + esc(sub) + '</div></div>';
+  function kpi(l,v,s){
+    return '<div class="rl-kpi"><div class="rl-kpi-l">' + esc(l) + '</div>' +
+           '<div class="rl-kpi-v">' + v + '</div><div class="rl-kpi-s">' + esc(s) + '</div></div>';
   }
+  function lg(c,l){ return '<span><i style="background:' + c + '"></i>' + esc(l) + '</span>'; }
 
   function renderChart(rows){
-    var host=el('rl-chart'); if(!host) return;
-    var card=host.parentNode;
-    var avail=Math.max(320, (card.clientWidth||host.clientWidth||700) - 24);
-    var h=Math.max(260, rows.length*34 + 70);
-
+    var host=el('rl-chart'); if(!host || typeof ApexCharts==='undefined') return;
+    var card=host.parentNode, avail=card.clientWidth||700;
     var cats=rows.map(function(r){ return r.office; });
-    var series=[
-      { name:'Installed + camera',        data:rows.map(function(r){ return r.camera; }) },
-      { name:'Installed, no camera',      data:rows.map(function(r){ return r.vinned-r.camera; }) },
-      { name:'Assigned, not installed',   data:rows.map(function(r){ return r.pending; }) },
-      { name:'Shipped, not assigned',     data:rows.map(function(r){ return r.remain; }) }
-    ];
-
     var opts={
-      chart:{ type:'bar', stacked:true, height:h, width:avail,
-        toolbar:{show:false}, animations:{enabled:false},
-        fontFamily:'-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif',
-        events:{
-          dataPointSelection:function(e,ctx,cfg){
-            var r=rows[cfg.dataPointIndex]; if(r) goToDevices(r);
-          }
-        }
-      },
-      plotOptions:{ bar:{ horizontal:true, barHeight:'62%', borderRadius:3,
-        borderRadiusApplication:'end', borderRadiusWhenStacked:'last' } },
-      series:series,
-      colors:[C.camera, C.vinned, C.atSite, C.remain],
+      chart:{ type:'bar', stacked:true, height:Math.max(300, rows.length*34+90),
+              width:'100%', toolbar:{show:false}, animations:{enabled:false},
+              fontFamily:'inherit',
+              events:{ dataPointSelection:function(e,ctx,cfg){
+                var r=rows[cfg.dataPointIndex]; if(r){ current=r.office; el('rl-branch').value=r.office; render(); }
+              } } },
+      plotOptions:{ bar:{ horizontal:true, barHeight:'62%' } },
       dataLabels:{ enabled:false },
+      series:[
+        { name:'GO9 + camera',   data:rows.map(function(r){ return r.camera; }) },
+        { name:'GO9, no camera', data:rows.map(function(r){ return r.go9only; }) },
+        { name:'No device',      data:rows.map(function(r){ return r.nodev; }) },
+        { name:'On order',       data:rows.map(function(r){ return r.order; }) }
+      ],
+      colors:[C.camera, C.go9, C.nodev, C.order],
+      xaxis:{ categories:cats, title:{ text:'Owned vehicles', style:{fontSize:'11px',fontWeight:400,color:C.sub} },
+              labels:{ style:{colors:C.sub,fontSize:'11px'} } },
+      yaxis:{ labels:{ style:{colors:C.ink,fontSize:'12px'} } },
       legend:{ show:false },
-      grid:{ borderColor:C.line, strokeDashArray:0,
-        xaxis:{lines:{show:true}}, yaxis:{lines:{show:false}} },
-      // On a horizontal bar the CATEGORY axis is still xaxis.categories —
-      // omit it and Apex falls back to numeric indices, which also collapses
-      // the plot area because it auto-ranges instead of using the band scale.
-      xaxis:{ categories:cats,
-        title:{ text:'GO9 units', style:{fontSize:'11px', color:C.sub, fontWeight:400} },
-        labels:{ style:{colors:C.sub, fontSize:'11px'},
-          formatter:function(v){ return f0(v); } },
-        axisTicks:{show:false} },
-      yaxis:{ labels:{ style:{colors:C.ink, fontSize:'12px'}, minWidth:96 } },
+      grid:{ borderColor:'#eeede7' },
       tooltip:{ shared:true, intersect:false,
-        custom:function(o){
-          var r=rows[o.dataPointIndex]; if(!r) return '';
-          return '<div style="padding:9px 11px;font-size:12px;line-height:1.6;max-width:260px">' +
-            '<div style="font-weight:600;font-size:13px">' + esc(r.office) + '</div>' +
-            '<div style="color:' + C.sub + '">' + esc(r.place) + '</div>' +
-            '<div style="margin-top:6px">Shipped <b>' + f0(r.ordered) + '</b></div>' +
-            '<div>Installed <b>' + f0(r.vinned) + '</b> (' + r.pct.toFixed(0) + '%)</div>' +
-            '<div>Cameras <b>' + f0(r.camera) + '</b>' +
-              (r.vinned ? ' (' + r.camPct.toFixed(0) + '% of installed)' : '') + '</div>' +
-            (r.pending ? '<div>Assigned, awaiting install <b>' + f0(r.pending) + '</b></div>' : '') +
-            (r.remain ? '<div>Not yet assigned <b>' + f0(r.remain) + '</b></div>' : '') +
-            '<div style="margin-top:6px;color:' + C.sub + '">Click to open this location&rsquo;s assets</div>' +
-          '</div>';
-        }
-      },
+        y:{ formatter:function(v){ return f0(v)+' vehicles'; } },
+        custom:undefined },
       states:{ active:{ filter:{type:'none'} } }
     };
-
     if(chart){ try{ chart.destroy(); }catch(e){} chart=null; }
     host.innerHTML='';
     chart=new ApexCharts(host, opts);
     chart.render();
     lastWidth=card.clientWidth||avail;
-
     host.onmouseenter=function(){ pointerInChart=true; };
     host.onmouseleave=function(){ pointerInChart=false; };
   }
 
-  function renderTable(rows, t){
+  function renderMasterTable(rows,t){
     var h=['<table class="rl-t"><thead><tr>',
       '<th>Location</th><th>Site</th>',
-      '<th class="n">Shipped</th><th class="n">Assigned</th><th class="n">Installed</th>',
-      '<th class="n">Cameras</th><th class="n">Not assigned</th><th class="n">Installed %</th>',
+      '<th class="n">Owned</th><th class="n">GO9</th><th class="n">Cameras</th>',
+      '<th class="n">No device</th><th class="n">Rentals</th><th class="n">On order</th>',
+      '<th class="n">Camera %</th>',
       '</tr></thead><tbody>'];
     rows.forEach(function(r){
-      h.push('<tr class="' + (r.vinned?'':'rl-zero') + '">' +
-        '<td><a class="rl-link" data-g="' + esc(r.id) + '">' + esc(r.office) + '</a></td>' +
+      h.push('<tr class="' + (r.fleet?'':'rl-zero') + '">' +
+        '<td><a class="rl-link" data-b="' + esc(r.office) + '">' + esc(r.office) + '</a></td>' +
         '<td>' + esc(r.place) + '</td>' +
-        '<td class="n">' + f0(r.ordered) + '</td>' +
-        '<td class="n">' + f0(r.atSite) + '</td>' +
-        '<td class="n">' + f0(r.vinned) + '</td>' +
+        '<td class="n">' + f0(r.fleet) + '</td>' +
+        '<td class="n">' + f0(r.device) + '</td>' +
         '<td class="n">' + f0(r.camera) + '</td>' +
-        '<td class="n">' + f0(r.remain) + '</td>' +
+        '<td class="n">' + (r.nodev ? '<b>'+f0(r.nodev)+'</b>' : '0') + '</td>' +
+        '<td class="n">' + f0(r.rental) + '</td>' +
+        '<td class="n">' + f0(r.order) + '</td>' +
         '<td class="n"><span class="rl-pill" style="background:' + gradeColor(r.pct) + '">' +
           r.pct.toFixed(0) + '%</span></td></tr>');
     });
     h.push('<tr class="rl-tot"><td>Total</td><td></td>' +
-      '<td class="n">' + f0(t.ordered) + '</td>' +
-      '<td class="n">' + f0(t.atSite) + '</td>' +
-      '<td class="n">' + f0(t.vinned) + '</td>' +
-      '<td class="n">' + f0(t.camera) + '</td>' +
-      '<td class="n">' + f0(t.remain) + '</td>' +
-      '<td class="n">' + pctOf(t.vinned,t.ordered).toFixed(0) + '%</td></tr>');
+      '<td class="n">' + f0(t.fleet) + '</td><td class="n">' + f0(t.device) + '</td>' +
+      '<td class="n">' + f0(t.camera) + '</td><td class="n">' + f0(t.nodev) + '</td>' +
+      '<td class="n">' + f0(t.rental) + '</td><td class="n">' + f0(t.order) + '</td>' +
+      '<td class="n">' + pctOf(t.camera,t.fleet).toFixed(0) + '%</td></tr>');
     h.push('</tbody></table>');
     var wrap=el('rl-tablewrap');
     wrap.innerHTML=h.join('');
     Array.prototype.forEach.call(wrap.querySelectorAll('a.rl-link'), function(a){
-      a.onclick=function(){
-        var id=a.getAttribute('data-g');
-        var r=null;
-        lastRows.rows.forEach(function(x){ if(x.id===id) r=x; });
-        if(r) goToDevices(r);
-      };
+      a.onclick=function(){ current=a.getAttribute('data-b'); el('rl-branch').value=current; render(); };
     });
   }
 
-  // Drill through to the asset list filtered to this location's group.
-  // NOTE: unlike the tripsHistory contract in violin.html, these parameter
-  // names have NOT been verified against a URL MyGeotab wrote itself. If it
-  // lands on an unfiltered list, select a group by hand and diff the URL.
-  function goToDevices(r){
+  // ── one location ─────────────────────────────────────────────────────────
+  function chip(v){
+    if(v.onOrder)     return '<span class="rl-chip ord">On order</span>';
+    if(v.placeholder) return '<span class="rl-chip nod">No device</span>';
+    if(v.camera)      return '<span class="rl-chip cam">Camera</span>';
+    return '<span class="rl-chip go9">GO9 only</span>';
+  }
+  // Work first: no device, then GO9-without-camera, then done.
+  function workOrder(v){ return v.placeholder?0 : (!v.camera?1:2); }
+
+  function vehicleTable(list, opts){
+    if(!list.length) return '<div class="rl-tablewrap"><div class="rl-empty">' + esc(opts.empty) + '</div></div>';
+    var showCam = opts.showCamera !== false;
+    var h=['<div class="rl-tablewrap"><table class="rl-t"><thead><tr>',
+      '<th>Truck #</th><th>Model</th><th class="n">Year</th><th>VIN</th><th>Plate</th>',
+      showCam ? '<th>Camera</th>' : '<th>Device</th>',
+      '</tr></thead><tbody>'];
+    list.forEach(function(v){
+      var mm=[v.make, v.modelName].filter(Boolean).join(' ');
+      h.push('<tr>' +
+        '<td><a class="rl-link rl-tn" data-d="' + esc(v.id) + '">' + esc(v.name||'—') + '</a></td>' +
+        '<td>' + esc(mm||'—') + '</td>' +
+        '<td class="n">' + esc(v.year||'—') + '</td>' +
+        '<td class="rl-vin">' + esc(v.vin) + '</td>' +
+        '<td>' + esc(v.plate||'—') + '</td>' +
+        '<td>' + chip(v) + '</td>' +
+      '</tr>');
+    });
+    h.push('</tbody></table></div>');
+    return h.join('');
+  }
+
+  function renderBranch(name){
+    var r=null;
+    model.rows.forEach(function(x){ if(x.office===name) r=x; });
+    if(!r){ el('rl-detail').innerHTML='<div class="rl-empty">No data for '+esc(name)+'.</div>'; return; }
+
+    var mine=model.vehicles.filter(function(v){ return v.office===name; });
+    var owned  = mine.filter(function(v){ return v.ownership==='Owned' && !v.onOrder; }).sort(function(a,b){
+      return workOrder(a)-workOrder(b) || String(a.name).localeCompare(String(b.name)); });
+    var rental = mine.filter(function(v){ return v.ownership==='Rental' && !v.onOrder; }).sort(function(a,b){
+      return workOrder(a)-workOrder(b) || String(a.name).localeCompare(String(b.name)); });
+    var order  = mine.filter(function(v){ return v.onOrder; }).sort(function(a,b){
+      return String(a.name).localeCompare(String(b.name)); });
+
+    el('rl-scope').textContent = r.place + ' · live from Geotab';
+
+    var pct=r.pct;
+    var head =
+      '<div class="rl-back"><a class="rl-link" id="rl-all">&larr; All locations</a></div>' +
+      '<div class="rl-hero">' +
+        '<div class="rl-hero-top">' +
+          '<div class="rl-hero-n">' + f0(r.camera) + '</div>' +
+          '<div class="rl-hero-of">of ' + f0(r.fleet) + ' owned vehicles at ' + esc(name) + ' have a camera</div>' +
+        '</div>' +
+        '<div class="rl-hero-sub">' +
+          pct.toFixed(0) + '% camera coverage · ' + f0(r.device) + ' with a GO9 · ' +
+          (r.nodev ? '<b>' + f0(r.nodev) + ' with no device</b>' : 'all fitted') +
+          (r.order ? ' · ' + f0(r.order) + ' on order' : '') +
+        '</div>' +
+        '<div class="rl-bar">' +
+          '<span style="width:' + pctOf(r.camera,r.fleet) + '%;background:' + C.camera + '"></span>' +
+          '<span style="width:' + pctOf(r.go9only,r.fleet) + '%;background:' + C.go9 + '"></span>' +
+        '</div>' +
+      '</div>' +
+      '<div class="rl-kpis">' +
+        kpi('Owned', f0(r.fleet), 'vehicles on record here') +
+        kpi('Cameras', f0(r.camera), 'target is 100% of owned') +
+        kpi('Missing a camera', f0(r.fleet-r.camera), 'the work list below') +
+        kpi('Rentals', f0(r.rental), 'no cameras by design') +
+      '</div>';
+
+    var body =
+      sec('Owned vehicles', owned.length + ' · ' + r.camera + ' with a camera, ' +
+          r.go9only + ' GO9 only, ' + r.nodev + ' no device',
+          vehicleTable(owned,{empty:'No owned vehicles recorded at this location.'})) +
+      sec('Rentals', rental.length + ' currently on rent · rentals do not get cameras',
+          vehicleTable(rental,{empty:'No rentals at this location.'})) +
+      (order.length ? sec('On order', order.length + ' not yet delivered · excluded from coverage',
+          vehicleTable(order,{empty:''})) : '');
+
+    el('rl-detail').innerHTML = head + body;
+    var back=el('rl-all');
+    if(back) back.onclick=function(){ current='__all__'; el('rl-branch').value='__all__'; render(); };
+    Array.prototype.forEach.call(el('rl-detail').querySelectorAll('a[data-d]'), function(a){
+      a.onclick=function(){ goToDevice(a.getAttribute('data-d')); };
+    });
+  }
+
+  function sec(title,sub,inner){
+    return '<div class="rl-sec"><div class="rl-sech">' +
+      '<div class="rl-sect">' + esc(title) + '</div>' +
+      '<div class="rl-secn">' + esc(sub) + '</div>' +
+    '</div>' + inner + '</div>';
+  }
+
+  function renderFoot(){
+    var s=model.stamps;
+    var bits=[];
+    bits.push('<b>Owned vehicles</b> come from the Enterprise Fleet Management export' +
+      (s.owned ? ', last imported <b>'+esc(s.owned)+'</b>' : '') +
+      '. <b>Rentals</b> come from the weekly Open RA report' +
+      (s.rental ? ', last imported <b>'+esc(s.rental)+'</b>' : '') + '.');
+    bits.push('<b>No device</b> means the vehicle is on the Enterprise export but no GO9 has ever reported its VIN. ' +
+      'These are placeholder records in the &ldquo;' + esc(G_PLACEHOLDER) + '&rdquo; group and disappear on their own once hardware is fitted.');
+    bits.push('<b>Camera %</b> is cameras &divide; owned vehicles at that location — not units shipped. ' +
+      'Rentals and on-order vehicles are excluded from the denominator.');
+    bits.push('<b>Spare GO9s:</b> ' + f0(model.spares) + ' units carry no VIN and are not counted as vehicles' +
+      (model.unassigned ? ' — ' + f0(model.unassigned) + ' of them are not assigned to any location group' : '') +
+      (model.sparesLive ? ', and ' + f0(model.sparesLive) + ' sit in a location group but have never reported a VIN' : '') + '.');
+    if(!model.full) bits.push('Your account is scoped to a single location, so fleet-wide totals are not shown.');
+    el('rl-foot').innerHTML = bits.join('<br>');
+  }
+
+  function goToDevice(id){
     if(!(stateRef && typeof stateRef.gotoPage==='function')) return;
-    try {
-      stateRef.gotoPage('devices', { groups:[r.id] });
-    } catch(e){}
+    try { stateRef.gotoPage('device', { id:id }); } catch(e){}
   }
 
   function exportCsv(){
-    if(!lastRows) return;
-    var head=['Location','Site','Shipped','Assigned','Installed','Cameras','Not assigned','Installed %'];
-    var lines=[head.join(',')];
-    lastRows.rows.forEach(function(r){
-      lines.push([r.office, r.place, r.ordered, r.atSite, r.vinned, r.camera,
-                  r.remain, r.pct.toFixed(0)].map(function(v){
-        var s=String(v); return /[",]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s;
-      }).join(','));
-    });
+    if(!model) return;
+    var lines, name;
+    if(current==='__all__'){
+      lines=[['Location','Site','Owned','GO9','Cameras','No device','Rentals','On order','Camera %'].join(',')];
+      sortedRows().forEach(function(r){
+        lines.push(csvRow([r.office,r.place,r.fleet,r.device,r.camera,r.nodev,r.rental,r.order,r.pct.toFixed(0)]));
+      });
+      name='fleet-camera-coverage.csv';
+    } else {
+      lines=[['Location','Section','Truck #','Model','Year','VIN','Plate','State'].join(',')];
+      model.vehicles.filter(function(v){ return v.office===current; }).forEach(function(v){
+        var sect=v.onOrder?'On order':(v.ownership==='Rental'?'Rental':'Owned');
+        var st=v.onOrder?'On order':v.placeholder?'No device':v.camera?'Camera':'GO9 only';
+        lines.push(csvRow([current,sect,v.name,[v.make,v.modelName].filter(Boolean).join(' '),v.year,v.vin,v.plate,st]));
+      });
+      name='fleet-'+current.toLowerCase().replace(/[^a-z0-9]+/g,'-')+'.csv';
+    }
     var blob=new Blob([lines.join('\n')], {type:'text/csv;charset=utf-8;'});
     var a=document.createElement('a');
     a.href=URL.createObjectURL(blob);
-    a.download='go9-rollout.csv';
+    a.download=name;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  }
+  function csvRow(vals){
+    return vals.map(function(v){
+      var s=String(v==null?'':v); return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s;
+    }).join(',');
   }
 
   // ── resize (same self-healing pattern as violin/topSpeed) ────────────────
@@ -467,11 +659,11 @@ geotab.addin.rollout = function () {
     if(!card) return;
     function onResize(){
       var w=card.clientWidth;
-      if(!lastRows || !w || Math.abs(w-lastWidth)<16) return;
+      if(!model || current!=='__all__' || !w || Math.abs(w-lastWidth)<16) return;
       clearTimeout(resizeTimer);
       function attempt(){
         if(pointerInChart){ resizeTimer=setTimeout(attempt,250); return; }
-        render();
+        renderChart(sortedRows());
       }
       resizeTimer=setTimeout(attempt,140);
     }
@@ -488,8 +680,9 @@ geotab.addin.rollout = function () {
     initialize: function(api, state, cb){
       apiRef=api; stateRef=state;
       injectStyles();
-      var s=el('rl-sort'); if(s) s.onchange=render;
-      var c=el('rl-csv');  if(c) c.onclick=exportCsv;
+      var s=el('rl-sort');   if(s) s.onchange=render;
+      var b=el('rl-branch'); if(b) b.onchange=function(){ current=b.value; render(); };
+      var c=el('rl-csv');    if(c) c.onclick=exportCsv;
       watchResize();
       cb();
     },
