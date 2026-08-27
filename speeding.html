@@ -1,0 +1,690 @@
+<div id="sz-root">
+  <div class="sz-topbar">
+    <div>
+      <h1 class="sz-h1">Speeding by posted zone</h1>
+      <p class="sz-scope" id="sz-scope">Loading…</p>
+    </div>
+    <div class="sz-controls">
+      <label class="sz-lab">Location
+        <select id="sz-office"><option value="">All locations</option></select>
+      </label>
+      <label class="sz-lab">Period
+        <select id="sz-period"></select>
+      </label>
+      <button type="button" id="sz-csv" class="sz-btn">Export CSV</button>
+    </div>
+  </div>
+
+  <div id="sz-notes"></div>
+  <div id="sz-headline" class="sz-headline"></div>
+  <div id="sz-kpis" class="sz-kpis"></div>
+
+  <section class="sz-block">
+    <h2 class="sz-h2">Where it happens</h2>
+    <p class="sz-sub">Click a band to filter everything below it. Rates are events per 1,000 miles driven.</p>
+    <div id="sz-bands" class="sz-bands"></div>
+  </section>
+
+  <section class="sz-block">
+    <h2 class="sz-h2">How far over</h2>
+    <p class="sz-sub">Sustained speed as a multiple of the posted limit. The tail on the right is what matters.</p>
+    <div id="sz-hist" class="sz-hist"></div>
+  </section>
+
+  <section class="sz-block">
+    <h2 class="sz-h2">Drivers</h2>
+    <p class="sz-sub" id="sz-tablesub">Ranked by residential violations, because a total is dominated by highway miles.</p>
+    <div class="sz-tablewrap"><table id="sz-table" class="sz-table"></table></div>
+  </section>
+</div>
+
+<script>
+geotab.addin.speedingZones = function () {
+  'use strict';
+
+  // MyGeotab drops this file's <head>, so the stylesheet ships as a string and is
+  // injected from JS. Same reason as every other add-in here — do not move it back.
+  var STYLE_ID = 'sz-styles';
+  var CSS = [
+    '#sz-root{',
+    '  --page:#f9f9f7; --surface:#fcfcfb; --ink-1:#0b0b0b; --ink-2:#52514e; --ink-3:#898781;',
+    '  --grid:#e1e0d9; --hairline:rgba(11,11,11,.10);',
+    '  --good:#0ca30c; --warning:#fab219; --critical:#d03b3b;',
+    '  --good-ink:#0a6b18; --warning-ink:#7a5300; --critical-ink:#9b2626;',
+    '  --accent:#2a78d6;',
+    '  font-family:system-ui,-apple-system,"Segoe UI",sans-serif;',
+    '  color:var(--ink-1); background:var(--page); padding:18px 20px 32px; width:100%;',
+    '}',
+    '#sz-root, #sz-root *{box-sizing:border-box;}',
+    '#sz-root.busy{opacity:.55;}',
+    '.sz-topbar{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:12px;}',
+    '.sz-h1{font-size:19px;font-weight:650;margin:0;letter-spacing:-.01em;}',
+    '.sz-scope{font-size:12.5px;color:var(--ink-3);margin:3px 0 0;}',
+    '.sz-controls{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;}',
+    '.sz-lab{font-size:11px;color:var(--ink-3);display:flex;flex-direction:column;gap:3px;}',
+    '.sz-lab select{font-size:13px;padding:5px 8px;border:1px solid var(--grid);border-radius:6px;background:#fff;color:var(--ink-1);}',
+    '.sz-btn{font-size:12.5px;padding:6px 11px;border:1px solid var(--grid);border-radius:6px;background:#fff;color:var(--ink-2);cursor:pointer;}',
+    '.sz-btn:hover{border-color:var(--ink-3);}',
+
+    '.sz-note{font-size:12.5px;padding:9px 12px;border-radius:7px;margin:12px 0 0;',
+    '  background:#fdf6e3;border:1px solid #f0e2bd;color:#6b5316;}',
+    '.sz-note.err{background:#fdeceb;border-color:#f3c9c5;color:#8f2a22;}',
+
+    /* The headline is a sentence on purpose. "58 in a 25" is what goes into a
+       coaching conversation; an average ratio is not. */
+    '.sz-headline{margin:18px 0 0;padding:16px 18px;background:var(--surface);',
+    '  border:1px solid var(--grid);border-left:3px solid var(--critical);border-radius:0 9px 9px 0;}',
+    '.sz-headline .lbl{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);}',
+    '.sz-headline .say{font-size:26px;font-weight:680;letter-spacing:-.02em;margin:4px 0 2px;color:var(--ink-1);}',
+    '.sz-headline .who{font-size:13px;color:var(--ink-2);}',
+    '.sz-headline.none{border-left-color:var(--good);}',
+    '.sz-headline.none .say{font-size:19px;}',
+
+    '.sz-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:12px 0 0;}',
+    '.sz-kpi{background:var(--surface);border:1px solid var(--grid);border-radius:9px;padding:12px 14px;}',
+    '.sz-kpi .k{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);}',
+    '.sz-kpi .v{font-size:25px;font-weight:680;letter-spacing:-.02em;line-height:1.15;margin-top:2px;',
+    '  font-variant-numeric:tabular-nums;}',
+    '.sz-kpi .s{font-size:11.5px;color:var(--ink-3);margin-top:1px;}',
+
+    '.sz-block{margin:26px 0 0;}',
+    '.sz-h2{font-size:15px;font-weight:640;margin:0;letter-spacing:-.005em;}',
+    '.sz-sub{font-size:12.5px;color:var(--ink-3);margin:2px 0 11px;}',
+
+    '.sz-bands{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;}',
+    '.sz-band{background:var(--surface);border:1px solid var(--grid);border-radius:9px;padding:12px 14px;',
+    '  cursor:pointer;transition:border-color .12s,box-shadow .12s;}',
+    '.sz-band:hover{border-color:var(--ink-3);}',
+    '.sz-band.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent);}',
+    '.sz-band .z{font-size:13px;font-weight:620;color:var(--ink-1);}',
+    '.sz-band .n{font-size:22px;font-weight:680;letter-spacing:-.02em;margin-top:4px;font-variant-numeric:tabular-nums;}',
+    '.sz-band .r{font-size:11.5px;color:var(--ink-3);}',
+    '.sz-band .bar{height:4px;border-radius:2px;background:var(--grid);margin-top:8px;overflow:hidden;}',
+    '.sz-band .bar i{display:block;height:100%;border-radius:2px;}',
+
+    '.sz-hist{display:flex;align-items:flex-end;gap:5px;height:132px;padding:0 2px;',
+    '  border-bottom:1px solid var(--grid);}',
+    '.sz-hcol{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:100%;}',
+    '.sz-hcol i{display:block;width:100%;border-radius:3px 3px 0 0;min-height:2px;}',
+    '.sz-hcol b{font-size:11px;font-weight:600;color:var(--ink-2);margin-bottom:3px;font-variant-numeric:tabular-nums;}',
+    '.sz-hlab{display:flex;gap:5px;padding:5px 2px 0;}',
+    '.sz-hlab span{flex:1;text-align:center;font-size:10.5px;color:var(--ink-3);}',
+
+    '.sz-tablewrap{overflow-x:auto;border:1px solid var(--grid);border-radius:9px;background:var(--surface);}',
+    '.sz-table{border-collapse:collapse;width:100%;font-size:13px;min-width:640px;}',
+    '.sz-table th{text-align:left;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;',
+    '  color:var(--ink-3);font-weight:600;padding:9px 12px;border-bottom:1px solid var(--grid);',
+    '  background:#f4f4f1;white-space:nowrap;}',
+    '.sz-table td{padding:8px 12px;border-bottom:1px solid var(--hairline);vertical-align:middle;}',
+    '.sz-table tr:last-child td{border-bottom:0;}',
+    '.sz-table td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;}',
+    '.sz-table td.nm{font-weight:600;color:var(--ink-1);white-space:nowrap;}',
+    '.sz-table td.say{white-space:nowrap;font-variant-numeric:tabular-nums;}',
+    '.sz-empty{padding:26px 14px;text-align:center;color:var(--ink-3);font-size:13px;}',
+    '.sz-pill{display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.04em;',
+    '  padding:1px 7px;border-radius:20px;vertical-align:1px;}'
+  ].join('\n');
+
+  function injectStyles(){
+    if(document.getElementById(STYLE_ID)) return;
+    var s = document.createElement('style');
+    s.id = STYLE_ID; s.textContent = CSS;
+    document.head.appendChild(s);
+  }
+
+  var MPH = 0.621371;                 // km/h -> mph
+  var PAGE_CAP = 20000;               // ExceptionEvent honours resultsLimit
+  var TRIP_CAP = 25000;               // Trip hard-caps here regardless of resultsLimit
+  var WIN = {from:null, to:null};     // the window currently being resolved
+
+  // Two source rules, unioned. "Speeding (New)" fires at 20% over, which is
+  // stricter than policy in every residential zone but LOOSER above 50 mph
+  // (20% of 55 is 11 over, policy says 10). The 10-over rule closes that gap,
+  // and reaches back further in history. Overlapping events are merged.
+  var SOURCE_RULES = ['RuleGpsSpeedingWindowId', 'RulePostedSpeedingId'];
+
+  // Posted limits below this are parking lots, yards and map estimates. Left in,
+  // a 5 mph "zone" produces a 4.6x ratio and tops the list forever.
+  var POSTED_FLOOR = 20;
+
+  // The policy cut. Applied here rather than in the Geotab rule because the rule
+  // engine cannot branch on the posted limit -- SpeedLimit is only usable paired
+  // with Speed, so "when posted is under 30" is not expressible as a condition.
+  var POLICY = [
+    {key:'res',  name:'Residential', lo:20, hi:30,   over:7},
+    {key:'open', name:'Open road',   lo:35, hi:999,  over:10}
+  ];
+
+  var BANDS = [
+    {key:'b20', name:'20 – 25', lo:20, hi:25},
+    {key:'b30', name:'30 – 35', lo:30, hi:35},
+    {key:'b40', name:'40 – 45', lo:40, hi:45},
+    {key:'b50', name:'50 – 55', lo:50, hi:55},
+    {key:'b60', name:'60 +',    lo:60, hi:999}
+  ];
+
+  var PERIODS = [{d:7,n:'Last 7 days'},{d:14,n:'Last 14 days'},{d:30,n:'Last 30 days'}];
+
+  var apiRef=null, MODEL=null, bandFilter=null, officeFilter='', days=7, loading=false;
+
+  function el(id){ return document.getElementById(id); }
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+  function fmt(n,d){ return (n==null||!isFinite(n)) ? '–' : n.toFixed(d==null?1:d); }
+  function note(msg, isErr){
+    var d=document.createElement('div');
+    d.className='sz-note'+(isErr?' err':''); d.innerHTML=msg;
+    el('sz-notes').appendChild(d);
+  }
+  function clearNotes(){ el('sz-notes').innerHTML=''; }
+
+  function policyOf(posted){
+    for(var i=0;i<POLICY.length;i++){
+      if(posted>=POLICY[i].lo && posted<=POLICY[i].hi) return POLICY[i];
+    }
+    return null;   // 31-34 falls between the bands; counted as unclassified
+  }
+  function bandOf(posted){
+    for(var i=0;i<BANDS.length;i++){
+      if(posted>=BANDS[i].lo && posted<=BANDS[i].hi) return BANDS[i];
+    }
+    return null;
+  }
+  function tierColor(ratio){
+    if(ratio>=1.5) return {bg:'var(--critical)', ink:'var(--critical-ink)'};
+    if(ratio>=1.25) return {bg:'var(--warning)', ink:'var(--warning-ink)'};
+    return {bg:'var(--good)', ink:'var(--good-ink)'};
+  }
+
+  // ---- fetching -------------------------------------------------------------
+
+  // Geotab admits 300 API calls a minute and every multiCall sub-call counts, so
+  // resolving each event individually is not affordable: one office for one week
+  // is ~1,800 calls. Two things make it cheap instead.
+  //
+  //   1. GetRoadMaxSpeeds takes a date RANGE, so one call per device covers the
+  //      whole window -- ~40 calls for an office rather than one per event.
+  //   2. The event already carries distance and duration, so the speed comes free.
+  //      Measured against LogRecord across a day of events, distance/duration sits
+  //      within a few mph of the peak and tracks the median almost exactly. It is
+  //      also the better number: a sustained average cannot be manufactured by a
+  //      single bad GPS fix the way a peak can.
+
+  function fetchEvents(api, ruleId, a, b, depth, done, fail){
+    api.call('Get', {typeName:'ExceptionEvent', resultsLimit:PAGE_CAP,
+      search:{fromDate:a, toDate:b, ruleSearch:{id:ruleId}}}, function(rows){
+      rows = rows || [];
+      if(rows.length >= PAGE_CAP && depth < 6){
+        var mid = new Date((Date.parse(a)+Date.parse(b))/2).toISOString();
+        var acc = [], left = 2;
+        var step = function(part){ acc = acc.concat(part); if(--left===0) done(acc); };
+        fetchEvents(api, ruleId, a, mid, depth+1, step, fail);
+        fetchEvents(api, ruleId, mid, b, depth+1, step, fail);
+      } else { done(rows); }
+    }, fail);
+  }
+
+  function durSecs(d){
+    if(!d) return 0;
+    var p = String(d).split(':');
+    if(p.length !== 3) return 0;
+    return (+p[0])*3600 + (+p[1])*60 + parseFloat(p[2]);
+  }
+
+  // Same device, overlapping windows, two source rules -> one event. Distance and
+  // duration are summed so the merged event still yields a usable average speed.
+  function dedupe(events){
+    var byDev = {};
+    events.forEach(function(e){
+      var d = e.device && e.device.id;
+      if(!d || !e.activeFrom || !e.activeTo) return;
+      (byDev[d] = byDev[d] || []).push(e);
+    });
+    var out = [];
+    Object.keys(byDev).forEach(function(dev){
+      var list = byDev[dev].sort(function(x,y){
+        return Date.parse(x.activeFrom) - Date.parse(y.activeFrom); });
+      var cur = null;
+      list.forEach(function(e){
+        var a = Date.parse(e.activeFrom), b = Date.parse(e.activeTo);
+        var km = e.distance || 0, sec = durSecs(e.duration);
+        var drv = (e.driver && e.driver.id) || null;
+        if(cur && a <= cur.b){
+          // Overlap: keep the longer of the two rather than double-counting.
+          if(sec > cur.sec){ cur.km = km; cur.sec = sec; }
+          cur.b = Math.max(cur.b, b);
+          if(!cur.drv) cur.drv = drv;
+          return;
+        }
+        if(cur) out.push(cur);
+        cur = {dev:dev, a:a, b:b, km:km, sec:sec, drv:drv};
+      });
+      if(cur) out.push(cur);
+    });
+    return out;
+  }
+
+  // One call per device covering the whole window. Throttled below the 300/min
+  // ceiling, because a company-wide 30-day view touches every device in the fleet.
+  function fetchLimits(api, devIds, onProgress, done, fail){
+    var timelines = {}, i = 0, CHUNK = 40;
+    function step(){
+      if(i >= devIds.length){ done(timelines); return; }
+      var slice = devIds.slice(i, i+CHUNK);
+      var calls = slice.map(function(d){
+        return ['GetRoadMaxSpeeds', {deviceSearch:{id:d}, fromDate:WIN.from, toDate:WIN.to}];
+      });
+      api.multiCall(calls, function(res){
+        slice.forEach(function(d, k){
+          var rows = res[k] || [], tl = [];
+          for(var j=0;j<rows.length;j++){
+            // v <= 0 marks a stretch with no posted limit on file. Kept in the
+            // timeline as a null so those spans are reported, not silently filled
+            // in from whatever limit happened to precede them.
+            tl.push({t:Date.parse(rows[j].k), v: rows[j].v > 0 ? rows[j].v : null});
+          }
+          timelines[d] = tl;
+        });
+        i += CHUNK;
+        onProgress(Math.min(i, devIds.length), devIds.length);
+        // Stay under the per-minute ceiling on big windows.
+        setTimeout(step, devIds.length > 240 ? 9000 : 0);
+      }, fail);
+    }
+    step();
+  }
+
+  // The posted limit for an event is the one that covers the most of it. Taking
+  // the minimum would blame a 30 zone for a burst that happened while the truck
+  // was still on the 45 approaching it.
+  function dominantLimit(tl, a, b){
+    if(!tl || !tl.length) return null;
+    var spans = {}, unknown = 0, i;
+    for(i=0;i<tl.length;i++){
+      var s = Math.max(tl[i].t, a);
+      var e = (i+1 < tl.length) ? Math.min(tl[i+1].t, b) : b;
+      if(e <= s) continue;
+      if(tl[i].v == null){ unknown += e-s; continue; }
+      var key = Math.round(tl[i].v*100)/100;
+      spans[key] = (spans[key]||0) + (e-s);
+    }
+    var best = null, bestMs = 0;
+    Object.keys(spans).forEach(function(k){
+      if(spans[k] > bestMs){ bestMs = spans[k]; best = +k; }
+    });
+    if(best == null) return null;
+    if(unknown > bestMs) return null;   // mostly unmapped road: do not guess
+    return best;
+  }
+
+  function resolveAll(evts, timelines){
+    var out = [], noData = 0;
+    evts.forEach(function(e){
+      if(e.sec <= 0 || e.km <= 0){ noData++; return; }
+      var lim = dominantLimit(timelines[e.dev], e.a, e.b);
+      if(lim == null){ noData++; return; }
+      var pm = lim*MPH;
+      var sm = (e.km / (e.sec/3600)) * MPH;      // sustained average over the event
+      if(!(pm > 0) || !isFinite(sm)){ noData++; return; }
+      out.push({posted:Math.round(pm), peak:Math.round(sm),
+                over:Math.round(sm-pm), ratio:sm/pm,
+                at:e.a, secs:e.sec, dev:e.dev, driver:e.drv});
+    });
+    return {rows:out, noData:noData};
+  }
+
+  // ---- model ----------------------------------------------------------------
+
+  function build(resolved, noData, devices, users, miles){
+    var devById = {}, offOf = {};
+    devices.forEach(function(d){
+      devById[d.id] = d;
+      var g = (d.groups||[]).map(function(x){ return x.id; });
+      offOf[d.id] = OFFICES[g.find(function(x){ return OFFICES[x]; })] || null;
+    });
+    var nameOf = {};
+    users.forEach(function(u){
+      nameOf[u.id] = ((u.firstName||'')+' '+(u.lastName||'')).trim() || u.name || u.id;
+    });
+
+    var kept = [], belowFloor = 0, unclassified = 0, underPolicy = 0;
+    resolved.forEach(function(r){
+      r.office = offOf[r.dev] || null;
+      if(officeFilter && r.office !== officeFilter) return;
+      if(r.posted < POSTED_FLOOR){ belowFloor++; return; }
+      var p = policyOf(r.posted);
+      if(!p){ unclassified++; return; }
+      if(r.over < p.over){ underPolicy++; return; }
+      r.policy = p.key; r.policyName = p.name;
+      r.band = bandOf(r.posted);
+      r.driverName = r.driver ? (nameOf[r.driver] || 'Unknown driver') : 'No driver assigned';
+      r.vehicle = (devById[r.dev]||{}).name || r.dev;
+      kept.push(r);
+    });
+
+    var byBand = {}, byDriver = {};
+    BANDS.forEach(function(b){ byBand[b.key] = []; });
+    kept.forEach(function(r){
+      if(r.band) byBand[r.band.key].push(r);
+      var k = r.driver || ('veh:'+r.dev);
+      var d = byDriver[k] || (byDriver[k] = {name:r.driverName, office:r.office,
+                                            res:0, open:0, worst:null, miles:0});
+      if(r.policy==='res') d.res++; else d.open++;
+      if(!d.worst || r.ratio > d.worst.ratio) d.worst = r;
+    });
+    Object.keys(byDriver).forEach(function(k){
+      byDriver[k].miles = miles[k] || 0;
+      byDriver[k].total = byDriver[k].res + byDriver[k].open;
+    });
+
+    var totalMiles = miles.__total || 0;
+
+    var worst = null;
+    kept.forEach(function(r){ if(!worst || r.ratio > worst.ratio) worst = r; });
+
+    return {events:kept, byBand:byBand, byDriver:byDriver, worst:worst,
+            miles:totalMiles,
+            skipped:{noData:noData, belowFloor:belowFloor,
+                     unclassified:unclassified, underPolicy:underPolicy}};
+  }
+
+  // ---- render ---------------------------------------------------------------
+
+  function visible(){
+    if(!MODEL) return [];
+    if(!bandFilter) return MODEL.events;
+    return MODEL.events.filter(function(r){ return r.band && r.band.key===bandFilter; });
+  }
+
+  function renderHeadline(){
+    var h = el('sz-headline'), w = MODEL && MODEL.worst;
+    if(!w){
+      h.className = 'sz-headline none';
+      h.innerHTML = '<div class="lbl">Worst event</div>'+
+        '<div class="say">Nothing over the policy line in this window.</div>'+
+        '<div class="who">Every event that fired came in under the threshold for its zone.</div>';
+      return;
+    }
+    var d = new Date(w.at);
+    h.className = 'sz-headline';
+    h.innerHTML = '<div class="lbl">Worst event</div>'+
+      '<div class="say">'+w.peak+' in a '+w.posted+'</div>'+
+      '<div class="who">'+esc(w.driverName)+' &middot; '+esc(w.vehicle)+
+      (w.office ? ' &middot; '+esc(w.office) : '')+' &middot; '+
+      d.toLocaleDateString(undefined,{weekday:'long', month:'short', day:'numeric'})+
+      ' at '+d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'})+
+      ' &middot; '+fmt(w.ratio,2)+'&times; the limit</div>';
+  }
+
+  function renderKpis(){
+    var v = visible(), res=0, open=0;
+    v.forEach(function(r){ if(r.policy==='res') res++; else open++; });
+    var mi = MODEL.miles, rate = mi>0 ? v.length/(mi/1000) : null;
+    var sk = MODEL.skipped, attempted = v.length + sk.noData;
+    var unres = attempted>0 ? 100*sk.noData/(attempted) : 0;
+    function kpi(k,val,sub,col){
+      return '<div class="sz-kpi"><div class="k">'+k+'</div>'+
+             '<div class="v"'+(col?' style="color:'+col+'"':'')+'>'+val+'</div>'+
+             '<div class="s">'+sub+'</div></div>';
+    }
+    el('sz-kpis').innerHTML =
+      kpi('Residential', res, 'posted 20–30, over 7 mph', res>0?'var(--critical-ink)':'') +
+      kpi('Open road', open, 'posted 35+, over 10 mph') +
+      kpi('Rate', fmt(rate,1), 'per 1,000 miles driven') +
+      kpi('Unresolved', fmt(unres,0)+'%', 'no posted limit or GPS on file');
+  }
+
+  function renderBands(){
+    var host = el('sz-bands'), max = 0;
+    BANDS.forEach(function(b){ max = Math.max(max, (MODEL.byBand[b.key]||[]).length); });
+    host.innerHTML = BANDS.map(function(b){
+      var list = MODEL.byBand[b.key] || [], n = list.length;
+      var worst = null;
+      list.forEach(function(r){ if(!worst || r.ratio>worst.ratio) worst = r; });
+      var col = worst ? tierColor(worst.ratio) : {bg:'var(--grid)', ink:'var(--ink-3)'};
+      var pct = max>0 ? Math.round(100*n/max) : 0;
+      return '<div class="sz-band'+(bandFilter===b.key?' on':'')+'" data-band="'+b.key+'">'+
+        '<div class="z">'+b.name+' mph</div>'+
+        '<div class="n" style="color:'+(n?col.ink:'var(--ink-3)')+'">'+n+'</div>'+
+        '<div class="r">'+(worst ? worst.peak+' in a '+worst.posted+' worst' : 'none')+'</div>'+
+        '<div class="bar"><i style="width:'+pct+'%;background:'+col.bg+'"></i></div>'+
+        '</div>';
+    }).join('');
+    Array.prototype.forEach.call(host.querySelectorAll('.sz-band'), function(n){
+      n.addEventListener('click', function(){
+        var k = n.getAttribute('data-band');
+        bandFilter = (bandFilter===k) ? null : k;
+        renderBands(); renderKpis(); renderHist(); renderTable();
+      });
+    });
+  }
+
+  function renderHist(){
+    var v = visible();
+    var buckets = [[1.0,1.1],[1.1,1.2],[1.2,1.3],[1.3,1.4],[1.4,1.5],
+                   [1.5,1.75],[1.75,2.0],[2.0,99]];
+    var counts = buckets.map(function(){ return 0; });
+    v.forEach(function(r){
+      for(var i=0;i<buckets.length;i++){
+        if(r.ratio >= buckets[i][0] && r.ratio < buckets[i][1]){ counts[i]++; break; }
+      }
+    });
+    var max = Math.max.apply(null, counts.concat([1]));
+    el('sz-hist').innerHTML = counts.map(function(c,i){
+      var mid = (buckets[i][0]+buckets[i][1])/2;
+      var col = tierColor(buckets[i][0]).bg;
+      var h = Math.round(100*c/max);
+      return '<div class="sz-hcol">'+(c?'<b>'+c+'</b>':'')+
+             '<i style="height:'+h+'%;background:'+col+'"></i></div>';
+    }).join('');
+    var lab = document.getElementById('sz-hlab');
+    if(!lab){
+      lab = document.createElement('div'); lab.id='sz-hlab'; lab.className='sz-hlab';
+      el('sz-hist').parentNode.appendChild(lab);
+    }
+    lab.innerHTML = buckets.map(function(b){
+      return '<span>'+(b[1]>=99 ? '2.0×+' : b[0].toFixed(2).replace(/0$/,'')+'×')+'</span>';
+    }).join('');
+  }
+
+  function renderTable(){
+    var v = visible(), byDriver = {};
+    v.forEach(function(r){
+      var k = r.driver || ('veh:'+r.dev);
+      var d = byDriver[k] || (byDriver[k] = {name:r.driverName, office:r.office,
+                                             res:0, open:0, worst:null,
+                                             miles:(MODEL.byDriver[k]||{}).miles||0});
+      if(r.policy==='res') d.res++; else d.open++;
+      if(!d.worst || r.ratio>d.worst.ratio) d.worst = r;
+    });
+    var rows = Object.keys(byDriver).map(function(k){ return byDriver[k]; });
+    // Residential first, then open road. A raw total buries the residential
+    // offender under whoever drives the most motorway.
+    rows.sort(function(a,b){ return (b.res-a.res) || (b.open-a.open) ||
+                                    (b.worst.ratio-a.worst.ratio); });
+    var t = el('sz-table');
+    if(!rows.length){
+      t.innerHTML = '<tr><td class="sz-empty">No events over the policy line'+
+        (bandFilter?' in this band':'')+'.</td></tr>';
+      return;
+    }
+    t.innerHTML =
+      '<thead><tr><th>Driver</th><th>Location</th>'+
+      '<th style="text-align:right">Residential</th><th style="text-align:right">Open road</th>'+
+      '<th>Worst</th><th style="text-align:right">Miles</th></tr></thead><tbody>'+
+      rows.map(function(r){
+        var c = tierColor(r.worst.ratio);
+        return '<tr><td class="nm">'+esc(r.name)+'</td>'+
+          '<td>'+esc(r.office||'–')+'</td>'+
+          '<td class="num"'+(r.res?' style="color:var(--critical-ink);font-weight:650"':'')+'>'+(r.res||'–')+'</td>'+
+          '<td class="num">'+(r.open||'–')+'</td>'+
+          '<td class="say"><span class="sz-pill" style="background:'+c.bg+'22;color:'+c.ink+'">'+
+            r.worst.peak+' in a '+r.worst.posted+'</span></td>'+
+          '<td class="num">'+(r.miles?Math.round(r.miles).toLocaleString():'–')+'</td></tr>';
+      }).join('')+'</tbody>';
+  }
+
+  function renderSkipNotes(){
+    var s = MODEL.skipped, bits = [];
+    if(s.belowFloor) bits.push(s.belowFloor.toLocaleString()+' events sat in a zone posted under '+
+      POSTED_FLOOR+' mph — parking lots, yards and map estimates — and were excluded.');
+    if(s.underPolicy) bits.push(s.underPolicy.toLocaleString()+' events fired the Geotab rule but came in '+
+      'under the policy threshold for their zone.');
+    if(s.unclassified) bits.push(s.unclassified.toLocaleString()+' events were in a 31–34 mph zone, which '+
+      'falls between the residential and open-road bands.');
+    if(s.noData) bits.push(s.noData.toLocaleString()+' events happened mostly on road with no posted '+
+      'limit on file, or carried no distance, so they could not be placed in a zone.');
+    if(bits.length) note('<b>What is not on this page.</b> '+bits.join(' '));
+  }
+
+  function render(){
+    renderHeadline(); renderKpis(); renderBands(); renderHist(); renderTable();
+  }
+
+  // ---- office groups --------------------------------------------------------
+
+  var OFFICES = {
+    'b27AB':'Orlando','b27AC':'Tampa','b27AD':'Atlanta North','b27AE':'Atlanta South',
+    'b27AF':'Chicago','b27B0':'Indianapolis','b27B1':'Northern Indiana','b27B2':'Louisville',
+    'b27B3':'Detroit','b27B4':'Grand Rapids','b27B5':'Cincinnati','b27B6':'Cleveland',
+    'b27B7':'Columbus','b27B8':'American Fork'
+  };
+
+  // ---- load -----------------------------------------------------------------
+
+  function load(api){
+    if(loading) return;
+    loading = true; apiRef = api; clearNotes(); bandFilter = null;
+    el('sz-root').classList.add('busy');
+    el('sz-scope').textContent = 'Loading ' + days + ' days…';
+
+    var to = new Date(), from = new Date(to.getTime() - days*24*3600*1000);
+    WIN.from = from.toISOString(); WIN.to = to.toISOString();
+
+    function fail(e){
+      loading = false;
+      el('sz-root').classList.remove('busy');
+      el('sz-scope').textContent = 'Could not load.';
+      note('Could not load this dashboard: '+esc((e && (e.message||e.name)) || e)+'.', true);
+    }
+
+    api.multiCall([
+      ['Get', {typeName:'Device', resultsLimit:50000}],
+      ['Get', {typeName:'User', search:{isDriver:true}}]
+    ], function(base){
+      var devices = base[0]||[], users = base[1]||[];
+
+      // Which devices are in scope. Filtering here rather than after resolution
+      // keeps a single-office view from fetching limit timelines for the fleet.
+      var inScope = {};
+      devices.forEach(function(d){
+        var off = null, g = d.groups||[];
+        for(var i=0;i<g.length;i++){ if(OFFICES[g[i].id]){ off = OFFICES[g[i].id]; break; } }
+        if(!officeFilter || off === officeFilter) inScope[d.id] = true;
+      });
+
+      var got = [], left = SOURCE_RULES.length;
+      SOURCE_RULES.forEach(function(rid){
+        fetchEvents(api, rid, WIN.from, WIN.to, 0, function(rows){
+          got = got.concat(rows);
+          if(--left) return;
+
+          var evts = dedupe(got).filter(function(e){ return inScope[e.dev]; });
+          if(!evts.length){
+            MODEL = build([], 0, devices, users, {});
+            loading = false; el('sz-root').classList.remove('busy');
+            el('sz-scope').textContent = 'No speeding events in the last '+days+' days.';
+            render(); return;
+          }
+
+          var devIds = Object.keys(evts.reduce(function(m,e){ m[e.dev]=1; return m; }, {}));
+
+          fetchLimits(api, devIds, function(done_, total){
+            el('sz-scope').textContent = 'Reading posted limits… vehicle '+
+              done_.toLocaleString()+' of '+total.toLocaleString();
+          }, function(timelines){
+            var r = resolveAll(evts, timelines);
+
+            // Distance, for the rate. Trip hard-caps at TRIP_CAP rows regardless of
+            // resultsLimit, so a wide window is split rather than silently truncated.
+            fetchTrips(api, WIN.from, WIN.to, 0, function(trips){
+              var miles = {}, milesTotal = 0;
+              trips.forEach(function(t){
+                var dev = (t.device && t.device.id) || '';
+                if(!inScope[dev]) return;
+                var k = (t.driver && t.driver.id) || ('veh:'+dev);
+                var mi = (t.distance||0)*0.621371;
+                miles[k] = (miles[k]||0) + mi;
+                milesTotal += mi;
+              });
+              miles.__total = milesTotal;
+
+              MODEL = build(r.rows, r.noData, devices, users, miles);
+              loading = false;
+              el('sz-root').classList.remove('busy');
+              el('sz-scope').textContent =
+                (officeFilter || 'All locations')+' · last '+days+' days · '+
+                MODEL.events.length.toLocaleString()+' over the policy line · '+
+                'speed is the sustained average across each event, from Geotab’s '+
+                'Speeding and Speeding (New) rules';
+              render(); renderSkipNotes();
+            }, fail);
+          }, fail);
+        }, fail);
+      });
+    }, fail);
+  }
+
+  function fetchTrips(api, a, b, depth, done, fail){
+    api.call('Get', {typeName:'Trip', resultsLimit:TRIP_CAP,
+      search:{fromDate:a, toDate:b}}, function(rows){
+      rows = rows || [];
+      if(rows.length >= TRIP_CAP && depth < 6){
+        var mid = new Date((Date.parse(a)+Date.parse(b))/2).toISOString();
+        var acc = [], left = 2;
+        var step = function(part){ acc = acc.concat(part); if(--left===0) done(acc); };
+        fetchTrips(api, a, mid, depth+1, step, fail);
+        fetchTrips(api, mid, b, depth+1, step, fail);
+      } else { done(rows); }
+    }, fail);
+  }
+
+  // ---- controls -------------------------------------------------------------
+
+  function buildControls(){
+    var p = el('sz-period');
+    p.innerHTML = PERIODS.map(function(x){
+      return '<option value="'+x.d+'"'+(x.d===days?' selected':'')+'>'+x.n+'</option>'; }).join('');
+    p.addEventListener('change', function(){ days = +p.value; if(apiRef) load(apiRef); });
+
+    var o = el('sz-office');
+    o.innerHTML = '<option value="">All locations</option>'+
+      Object.keys(OFFICES).map(function(k){ return OFFICES[k]; }).sort()
+        .map(function(n){ return '<option value="'+esc(n)+'">'+esc(n)+'</option>'; }).join('');
+    o.addEventListener('change', function(){
+      officeFilter = o.value;
+      if(apiRef) load(apiRef);
+    });
+
+    el('sz-csv').addEventListener('click', function(){
+      if(!MODEL) return;
+      var rows = [['Driver','Vehicle','Location','When','Posted','Peak','Over','Ratio','Band']];
+      visible().forEach(function(r){
+        rows.push([r.driverName, r.vehicle, r.office||'', new Date(r.at).toISOString(),
+                   r.posted, r.peak, r.over, r.ratio.toFixed(3), r.policyName]);
+      });
+      var csv = rows.map(function(r){
+        return r.map(function(c){ return '"'+String(c).replace(/"/g,'""')+'"'; }).join(','); }).join('\n');
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'}));
+      a.download = 'speeding-by-zone.csv'; a.click();
+    });
+  }
+
+  return {
+    initialize: function(api, state, cb){ injectStyles(); buildControls(); cb(); },
+    focus: function(api){ load(api); },
+    blur: function(){}
+  };
+};
+</script>

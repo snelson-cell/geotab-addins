@@ -214,7 +214,16 @@ geotab.addin.rollout = function () {
       ['Get', { typeName:'Group',  resultsLimit:5000 }],
       ['Get', { typeName:'Property', resultsLimit:5000 }]
     ], function(res){
-      try { model=build(res[0]||[], res[1]||[], res[2]||[], res[3]||[]); render(); }
+      // Archiving a device does NOT remove it from a plain Get -- verified
+      // 2026-08-27 against LOU-R7. Without this filter a returned rental keeps
+      // counting toward its office's fleet and camera denominators forever, and
+      // the only way to get it off the page would be to strip its office group,
+      // which throws away where it used to live.
+      var live=(res[0]||[]).filter(function(d){
+        var to=d && d.activeTo;
+        return !to || new Date(to).getTime() > Date.now();
+      });
+      try { model=build(live, res[1]||[], res[2]||[], res[3]||[]); render(); }
       catch(e){ note('rl-stop','Could not build the coverage view: '+esc(e && e.message || e)); }
     }, function(err){
       note('rl-stop','Geotab call failed: '+esc(err && err.message || err));
