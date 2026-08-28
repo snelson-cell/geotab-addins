@@ -40,7 +40,7 @@
 
   <section class="sz-block">
     <h2 class="sz-h2">Drivers</h2>
-    <p class="sz-sub" id="sz-tablesub">Ranked by neighborhood violations first, because a total is dominated by highway miles.</p>
+    <p class="sz-sub" id="sz-tablesub">Ranked by violations in 20–30 zones first, because a raw total is dominated by highway miles.</p>
     <div class="sz-tablewrap"><table id="sz-table" class="sz-table"></table></div>
   </section>
 </div>
@@ -176,9 +176,9 @@ geotab.addin.speedingZones = function () {
   // gets steadily softer as speeds rise and would flag ordinary traffic flow on
   // a 55.
   var POLICY = [
-    {key:'nbr',  name:'Neighborhood', lo:20, hi:30,  over:7},
-    {key:'main', name:'Main road',    lo:31, hi:45,  over:10},
-    {key:'hwy',  name:'Highway',      lo:46, hi:999, over:12}
+    {key:'nbr',  name:'20–30 mph', lo:20, hi:30,  over:7},
+    {key:'main', name:'31–45 mph', lo:31, hi:45,  over:10},
+    {key:'hwy',  name:'46+ mph',   lo:46, hi:999, over:12}
   ];
 
   // Split finer than the policy for diagnosis, but never across a policy
@@ -344,11 +344,15 @@ geotab.addin.speedingZones = function () {
     if(best == null) return null;
     if(unknown > bestMs) return null;   // mostly unmapped road: do not guess
 
-    // A SHORT event whose posted limit sits far below the surrounding road is
-    // map-matching flicker, not a violation, and because the ratio comes out
-    // enormous it lands straight at the top of the page. Verified on CHI-116,
-    // 26 Aug: twelve minutes of 60-65 either side of a 23-second dip to 20,
-    // while the truck held a steady 62 up I-294. It rendered as "61 in a 20".
+    // A SHORT event whose posted limit sits far below the surrounding road MIGHT
+    // be map-matching flicker. Verified on CHI-116, 26 Aug: twelve minutes of
+    // 60-65 either side of a 23-second dip to 20 while the truck held a steady 62
+    // up I-294, which rendered as "61 in a 20".
+    //
+    // But this test alone is far too blunt: a truck working a neighbourhood beside
+    // a highway always has a fast limit within 90 seconds, so it condemned genuine
+    // residential events. Measured against GPS on 40 Detroit candidates, 31 were
+    // real. It only marks a suspect now; confirmVerdict decides.
     if((b-a)/1000 < 30){
       var nearMax = 0;
       for(i=0;i<tl.length;i++){
@@ -356,26 +360,76 @@ geotab.addin.speedingZones = function () {
           if(tl[i].v > nearMax) nearMax = tl[i].v;
         }
       }
-      if(nearMax > 0 && best < 0.6*nearMax) return -1;   // -1 marks a map artifact
+      // Only a SUSPICION at this point. Confirming it needs the speed of traffic
+      // around the event, which costs a call, so it is deferred to the few events
+      // that would actually be counted.
+      if(nearMax > 0 && best < 0.6*nearMax) return {v:best, suspect:true};
     }
     return best;
   }
 
   function resolveAll(evts, timelines){
-    var out = [], noData = 0, artifact = 0;
+    var out = [], noData = 0;
     evts.forEach(function(e){
       if(e.sec <= 0 || e.km <= 0){ noData++; return; }
-      var lim = dominantLimit(timelines[e.dev], e.a, e.b);
-      if(lim === -1){ artifact++; return; }
+      var lim = dominantLimit(timelines[e.dev], e.a, e.b), suspect = false;
+      if(lim && typeof lim === 'object'){ suspect = true; lim = lim.v; }
       if(lim == null){ noData++; return; }
       var pm = lim*MPH;
       var sm = (e.km / (e.sec/3600)) * MPH;      // sustained average over the event
       if(!(pm > 0) || !isFinite(sm)){ noData++; return; }
       out.push({posted:Math.round(pm), peak:Math.round(sm),
                 over:Math.round(sm-pm), ratio:sm/pm,
-                at:e.a, secs:e.sec, dev:e.dev, driver:e.drv, evId:e.id});
+                at:e.a, secs:e.sec, dev:e.dev, driver:e.drv, evId:e.id,
+                suspect:suspect});
     });
-    return {rows:out, noData:noData, artifact:artifact};
+    return {rows:out, noData:noData};
+  }
+
+  // Confirm or clear a suspected map error by asking what traffic was doing
+  // around it. A road truly posted 25 has the truck running about 25 either side;
+  // a 55 mis-tagged as 25 has it cruising 40+. Calibrated on 40 Detroit
+  // candidates: the two populations separate at 1.3x posted, and 31 of the 40
+  // turned out to be real violations the blunt test had been discarding.
+  //
+  // Only suspects that would actually be COUNTED are checked -- in Detroit that
+  // is 67 calls rather than 157.
+  var ARTIFACT_RATIO = 1.3;
+
+  function confirmSuspects(api, rows, done){
+    var need = rows.filter(function(r){
+      if(!r.suspect || r.posted < POSTED_FLOOR) return false;
+      var p = policyOf(r.posted);
+      return p && r.over >= p.over;      // would appear on the page
+    });
+    if(!need.length){ done(rows, 0); return; }
+    var i = 0, dropped = {};
+    function step(){
+      if(i >= need.length){
+        done(rows.filter(function(r){ return !dropped[r.evId]; }),
+             Object.keys(dropped).length);
+        return;
+      }
+      var slice = need.slice(i, i+20);
+      function judge(res){
+        slice.forEach(function(r, k){
+          var sp = (res && res[k] || []).map(function(l){ return (l.speed||0)*MPH; })
+                                        .sort(function(a,b){ return a-b; });
+          // No GPS to judge on: keep it. Silence is not evidence of an error.
+          if(!sp.length) return;
+          var med = sp[Math.floor(sp.length/2)];
+          if(med >= ARTIFACT_RATIO * r.posted) dropped[r.evId] = true;
+        });
+        i += 20; setTimeout(step, 0);
+      }
+      api.multiCall(slice.map(function(r){
+        return ['Get', {typeName:'LogRecord', resultsLimit:300, search:{
+          deviceSearch:{id:r.dev},
+          fromDate:new Date(r.at - 45000).toISOString(),
+          toDate:new Date(r.at + r.secs*1000 + 45000).toISOString()}}];
+      }), judge, function(){ judge(null); });
+    }
+    step();
   }
 
   // ---- model ----------------------------------------------------------------
@@ -519,9 +573,9 @@ geotab.addin.speedingZones = function () {
              '<div class="s">'+sub+'</div></div>';
     }
     el('sz-kpis').innerHTML =
-      kpi('Neighborhood', n.nbr, 'posted 20–30, over 7 mph', n.nbr>0?'var(--critical-ink)':'') +
-      kpi('Main road', n.main, 'posted 31–45, over 10 mph') +
-      kpi('Highway', n.hwy, 'posted 46+, over 12 mph') +
+      kpi('Posted 20–30', n.nbr, 'more than 7 mph over', n.nbr>0?'var(--critical-ink)':'') +
+      kpi('Posted 31–45', n.main, 'more than 10 mph over') +
+      kpi('Posted 46+', n.hwy, 'more than 12 mph over') +
       kpi('Rate', fmt(rate,1), 'per 1,000 miles driven') +
       kpi('Unresolved', fmt(unres,0)+'%', 'no posted limit or GPS on file');
   }
@@ -677,8 +731,8 @@ geotab.addin.speedingZones = function () {
       if(!d.worst || r.ratio>d.worst.ratio) d.worst = r;
     });
     var rows = Object.keys(byDriver).map(function(k){ return byDriver[k]; });
-    // Neighborhood first, then main road, then highway. A raw total buries the
-    // neighborhood offender under whoever drives the most motorway.
+    // Slowest zones first. A raw total buries the driver speeding past houses
+    // under whoever simply drives the most motorway.
     rows.sort(function(a,b){ return (b.nbr-a.nbr) || (b.main-a.main) ||
                                     (b.hwy-a.hwy) || (b.worst.ratio-a.worst.ratio); });
     var t = el('sz-table');
@@ -689,9 +743,9 @@ geotab.addin.speedingZones = function () {
     }
     t.innerHTML =
       '<thead><tr><th>Driver</th><th>Location</th>'+
-      '<th style="text-align:right">Neighborhood</th>'+
-      '<th style="text-align:right">Main road</th>'+
-      '<th style="text-align:right">Highway</th>'+
+      '<th style="text-align:right">20–30</th>'+
+      '<th style="text-align:right">31–45</th>'+
+      '<th style="text-align:right">46+</th>'+
       '<th>Worst</th><th style="text-align:right">Miles</th></tr></thead><tbody>'+
       rows.map(function(r,ri){
         var c = tierColor(r.worst.ratio);
@@ -718,8 +772,8 @@ geotab.addin.speedingZones = function () {
     if(s.unclassified) bits.push(s.unclassified.toLocaleString()+' events had a posted limit that fell '+
       'outside every band.');
     if(s.artifact) bits.push('<b>'+s.artifact.toLocaleString()+' events were dropped as map errors</b> — '+
-      'a brief dip to a much lower posted limit on a road that is much faster either side. '+
-      'These read as enormous violations and are not real.');
+      'the posted limit dipped briefly, but traffic around the event was running well above it, '+
+      'so the low limit is wrong rather than the driver.');
     if(s.noData) bits.push(s.noData.toLocaleString()+' events happened mostly on road with no posted '+
       'limit on file, or carried no distance, so they could not be placed in a zone.');
     if(bits.length) note('<b>What is not on this page.</b> '+bits.join(' '));
@@ -817,34 +871,38 @@ geotab.addin.speedingZones = function () {
             el('sz-scope').textContent = 'Reading posted limits… '+pct+'% ('+
               done_+' of '+total+' vehicles)';
           }, function(timelines){
-            var r = resolveAll(evts, timelines);
+            var r0 = resolveAll(evts, timelines);
+            el('sz-scope').textContent = 'Checking suspected map errors…';
 
-            // Distance, for the rate. Trip hard-caps at TRIP_CAP rows regardless of
-            // resultsLimit, so a wide window is split rather than silently truncated.
-            el('sz-scope').textContent = 'Loading distance driven…';
-            fetchTrips(api, WIN.from, WIN.to, 0, function(trips){
-              var miles = {}, milesTotal = 0;
-              trips.forEach(function(t){
-                var dev = (t.device && t.device.id) || '';
-                if(!inScope[dev]) return;
-                var k = (t.driver && t.driver.id) || ('veh:'+dev);
-                var mi = (t.distance||0)*0.621371;
-                miles[k] = (miles[k]||0) + mi;
-                milesTotal += mi;
-              });
-              miles.__total = milesTotal;
+            confirmSuspects(api, r0.rows, function(rows, artifact){
+              el('sz-scope').textContent = 'Loading distance driven…';
 
-              MODEL = build(r.rows, r.noData, devices, users, miles);
-              MODEL.skipped.artifact = r.artifact;
-              loading = false;
-              el('sz-root').classList.remove('busy');
-              el('sz-scope').textContent =
-                (officeFilter || 'All locations')+' · last '+days+' days · '+
-                MODEL.events.length.toLocaleString()+' over the policy line · '+
-                'speed is the sustained average across each event, from Geotab’s '+
-                'Speeding and Speeding (New) rules';
-              render(); renderSkipNotes();
-            }, fail);
+              // Distance, for the rate. Trip hard-caps at TRIP_CAP rows regardless
+              // of resultsLimit, so a wide window is split rather than truncated.
+              fetchTrips(api, WIN.from, WIN.to, 0, function(trips){
+                var miles = {}, milesTotal = 0;
+                trips.forEach(function(t){
+                  var dev = (t.device && t.device.id) || '';
+                  if(!inScope[dev]) return;
+                  var k = (t.driver && t.driver.id) || ('veh:'+dev);
+                  var mi = (t.distance||0)*0.621371;
+                  miles[k] = (miles[k]||0) + mi;
+                  milesTotal += mi;
+                });
+                miles.__total = milesTotal;
+
+                MODEL = build(rows, r0.noData, devices, users, miles);
+                MODEL.skipped.artifact = artifact;
+                loading = false;
+                el('sz-root').classList.remove('busy');
+                el('sz-scope').textContent =
+                  (officeFilter || 'All locations')+' · last '+days+' days · '+
+                  MODEL.events.length.toLocaleString()+' over the policy line · '+
+                  'speed is the sustained average across each event, from Geotab’s '+
+                  'Speeding and Speeding (New) rules';
+                render(); renderSkipNotes();
+              }, fail);
+            });
           }, fail);
         }, fail);
       });
