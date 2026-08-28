@@ -321,14 +321,30 @@ geotab.addin.speedingZones = function () {
     });
     if(best == null) return null;
     if(unknown > bestMs) return null;   // mostly unmapped road: do not guess
+
+    // A SHORT event whose posted limit sits far below the surrounding road is
+    // map-matching flicker, not a violation, and because the ratio comes out
+    // enormous it lands straight at the top of the page. Verified on CHI-116,
+    // 26 Aug: twelve minutes of 60-65 either side of a 23-second dip to 20,
+    // while the truck held a steady 62 up I-294. It rendered as "61 in a 20".
+    if((b-a)/1000 < 30){
+      var nearMax = 0;
+      for(i=0;i<tl.length;i++){
+        if(tl[i].v != null && Math.abs(tl[i].t - a) <= 90000){
+          if(tl[i].v > nearMax) nearMax = tl[i].v;
+        }
+      }
+      if(nearMax > 0 && best < 0.6*nearMax) return -1;   // -1 marks a map artifact
+    }
     return best;
   }
 
   function resolveAll(evts, timelines){
-    var out = [], noData = 0;
+    var out = [], noData = 0, artifact = 0;
     evts.forEach(function(e){
       if(e.sec <= 0 || e.km <= 0){ noData++; return; }
       var lim = dominantLimit(timelines[e.dev], e.a, e.b);
+      if(lim === -1){ artifact++; return; }
       if(lim == null){ noData++; return; }
       var pm = lim*MPH;
       var sm = (e.km / (e.sec/3600)) * MPH;      // sustained average over the event
@@ -337,7 +353,7 @@ geotab.addin.speedingZones = function () {
                 over:Math.round(sm-pm), ratio:sm/pm,
                 at:e.a, secs:e.sec, dev:e.dev, driver:e.drv});
     });
-    return {rows:out, noData:noData};
+    return {rows:out, noData:noData, artifact:artifact};
   }
 
   // ---- model ----------------------------------------------------------------
@@ -543,6 +559,9 @@ geotab.addin.speedingZones = function () {
       'under the policy threshold for their zone.');
     if(s.unclassified) bits.push(s.unclassified.toLocaleString()+' events were in a 31–34 mph zone, which '+
       'falls between the residential and open-road bands.');
+    if(s.artifact) bits.push('<b>'+s.artifact.toLocaleString()+' events were dropped as map errors</b> — '+
+      'a brief dip to a much lower posted limit on a road that is much faster either side. '+
+      'These read as enormous violations and are not real.');
     if(s.noData) bits.push(s.noData.toLocaleString()+' events happened mostly on road with no posted '+
       'limit on file, or carried no distance, so they could not be placed in a zone.');
     if(bits.length) note('<b>What is not on this page.</b> '+bits.join(' '));
@@ -658,6 +677,7 @@ geotab.addin.speedingZones = function () {
               miles.__total = milesTotal;
 
               MODEL = build(r.rows, r.noData, devices, users, miles);
+              MODEL.skipped.artifact = r.artifact;
               loading = false;
               el('sz-root').classList.remove('busy');
               el('sz-scope').textContent =
