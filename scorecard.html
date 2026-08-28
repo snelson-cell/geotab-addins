@@ -186,6 +186,9 @@ geotab.addin.driverScorecard = function () {
     '.ds-key{display:flex;flex-wrap:wrap;align-items:center;gap:14px;margin:14px 0 0;',
     '  background:var(--surface-1);border:1px solid var(--hairline);border-radius:9px;',
     '  padding:11px 15px;font-size:12px;color:var(--ink-2);}',
+    '.ds-minibtn{font-size:11.5px;padding:3px 9px;border:1px solid var(--grid);',
+    '  border-radius:5px;background:#fff;color:var(--ink-3);cursor:pointer;}',
+    '.ds-minibtn:hover{border-color:var(--ink-3);color:var(--ink-1);}',
     '.ds-wt{display:block;font-size:10px;font-weight:600;color:var(--ink-3);',
     '  letter-spacing:.04em;margin-top:1px;}',
     'a.ds-link{color:inherit;text-decoration:none;border-bottom:1px dotted var(--ink-3);}',
@@ -1006,6 +1009,7 @@ geotab.addin.driverScorecard = function () {
         '<td class="c">'+d.officeRank+' of '+d.officeN+'</td></tr>';
     }).join('');
     renderRules();
+    wireBudgetToggle();
     el('ds-tablewrap').innerHTML = rows.length
       ? head+body+'</tbody></table>'
       : '<div style="padding:16px;font-size:12.5px;color:var(--ink-3)">No driver in this '+
@@ -1159,14 +1163,17 @@ geotab.addin.driverScorecard = function () {
         ' of the '+x.cap+' it could ever take, because this driver sits '+
         Math.round(d.pct[x.id])+'% of the way up the company on it">'+label+'</i>';
     }).join('');
-    return '<div class="ds-budget">'+bites+
+    return '<div class="ds-budget-wrap" id="ds-budgetwrap" style="display:none">'+
+      '<div class="ds-budget">'+bites+
       '<i class="keep" style="width:'+kept+'%" title="What is left after every metric has taken '+
       'its share. This is the score.">'+(kept>=12 ? 'SCORE '+d.score : d.score)+'</i>'+
       '<span class="ds-tick" style="left:50%" title="A driver sitting exactly at the company '+
       'median on all four metrics keeps 50"></span></div>'+
       '<div class="ds-budget-key"><span>0</span>'+
       '<span>&#9650; a driver at the company median on everything keeps 50</span>'+
-      '<span>100</span></div>'+
+      '<span>100</span></div></div>'+
+      '<div style="margin:2px 0 10px"><button type="button" id="ds-bartoggle" '+
+        'class="ds-minibtn">Show the score bar</button></div>'+
       // Was a static paragraph with only the name swapped in. It asserted the driver
       // was mid-pack on speeding and near the top on everything else, which is false
       // for most people it was shown for -- and it said "he" about every driver on the
@@ -1392,10 +1399,11 @@ geotab.addin.driverScorecard = function () {
            '0.4&nbsp;g is the sort of stop you make when someone pulls out. Measured from GPS rather '+
            'than the accelerometer, so it does not change with how the device is mounted.'},
     {id:'Cornering', geotab:'Harsh Cornering (New)',
-     fires:'Lateral force past Geotab&rsquo;s threshold, around <b>0.5&nbsp;g</b>',
-     plain:'Taking a turn fast enough to push you sideways in the seat. Geotab calibrates this per '+
-           'vehicle type, so the exact trigger differs between a Maverick and an F-150 &mdash; which is '+
-           'deliberate, since the same corner loads them differently.'},
+     fires:'Lateral force past a threshold of <b>0.5</b>',
+     plain:'Taking a turn fast enough to push you sideways in the seat. Measured from GPS, on the '+
+           'sideways axis, so it does not depend on how the device is mounted. The rule carries '+
+           'several variants internally and Geotab does not document what separates them, so treat '+
+           '0.5 as the number and the exact trigger as Geotab&rsquo;s.'},
     {id:'Acceleration', geotab:'Harsh Acceleration (New)',
      fires:'Acceleration harder than <b>0.4&nbsp;g</b>',
      plain:'Pulling away hard enough to press you back into the seat. The mirror image of the braking '+
@@ -1426,13 +1434,20 @@ geotab.addin.driverScorecard = function () {
           '<td style="max-width:44ch">'+r.plain+'</td></tr>';
       }).join('')+
       '</tbody></table></div>'+
-      '<div style="padding:10px 16px 14px;font-size:12.5px;color:var(--ink-3);max-width:78ch">'+
-      '<b>Why speeding carries more than half.</b> It is the most reliable of the four and the one '+
-      'most clearly under a driver&rsquo;s control. Braking and cornering often reflect the route &mdash; '+
-      'city work produces more of both than a highway run &mdash; so they are held to a quarter and a '+
-      'tenth. Acceleration is the lightest because most drivers never trigger it at all, which leaves '+
-      'it with little to separate people by.'+
-      '</div>';
+      '';
+  }
+
+  // The bar is off by default. It restates arithmetic the table already gives in
+  // words, and the table is the part someone can check with a calculator.
+  function wireBudgetToggle(){
+    var b = el('ds-bartoggle'), w = el('ds-budgetwrap');
+    if(!b || !w || b.dataset.wired) return;
+    b.dataset.wired = '1';
+    b.addEventListener('click', function(){
+      var hide = w.style.display !== 'none';
+      w.style.display = hide ? 'none' : '';
+      b.textContent = hide ? 'Show the score bar' : 'Hide the score bar';
+    });
   }
 
   function exportCsv(){
