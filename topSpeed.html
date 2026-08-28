@@ -469,7 +469,8 @@ geotab.addin.topSpeed = function () {
           r.events+' speeding event'+(r.events===1?'':'s')+' in range &middot; '+f0(r.miles)+' mi driven<br>'+
           '<span style="color:'+bandColor(b)+';font-weight:600">'+bandName(b)+'</span>'+
           '<br><span style="color:#898781;font-size:11px">'+
-          (r.tier===TIER_A ? 'click to open this event' : 'click for that day&rsquo;s trips')+
+          (r.tier===TIER_A ? 'click to open this event in a new tab'
+                           : 'click for this vehicle&rsquo;s speeding events')+
           '</span></div>';
       }}
     });
@@ -487,24 +488,36 @@ geotab.addin.topSpeed = function () {
   // ── Table + drill-through ────────────────────────────────────────────────
   // Land on the exact incident, not the day.
   //
-  // `exceptionId` is undocumented — the published URL guide lists ten pages and
-  // no exception page at all. It was read off a URL MyGeotab wrote itself
-  // (2026-08-05) and every id in it verified against the API before use. Supply
-  // only INPUTS: routes, mapBounds, expandedCardIds and isReplayPlayerHidden are
-  // state the page derives after loading, and passing them fights the page.
+  // Both destinations use URL formats confirmed from real MyGeotab URLs, opened in
+  // a NEW TAB. gotoPage() replaces this dashboard, and someone working down a
+  // ranked list should not lose their place to look at one row.
   //
-  // Tier B has no event to open, so it lands on the trip's day with the moment
-  // named in the tooltip — an honest limit, not a broken link.
+  //   tier A  the peak sat inside a speeding event, so open that exact event --
+  //           map, speed trace, driver, and the Event video tab beside it.
+  //   tier B  90+ with no event firing, so there is no event to open. Falls back
+  //           to that vehicle's speeding events, which is the nearest true thing.
+  //           An honest limit rather than a broken link.
+  //
+  // This replaces a Trips History call whose parameters included an undocumented
+  // exceptionId key. That worked, but it navigated in place and could not be
+  // turned into a URL without guessing the encoding.
+  function linkFor(r){
+    var base = location.origin + location.pathname;
+    if(r.tier === TIER_A && r.eventId){
+      return base + '#event,id:' + r.eventId + ',runByDevice:!t,tab:overview';
+    }
+    if(r.peakDeviceId){
+      return base + '#exceptionsInsights,activeTab:overview' +
+             ',assetsFilter:!(' + r.peakDeviceId + ')' +
+             ',exceptionRulesFilter:!(' + SPEED_RULE_IDS[0] + ')' +
+             ',groupByFilter:Rule';
+    }
+    return null;
+  }
+
   function goToTrips(r){
-    if(!(stateRef && typeof stateRef.gotoPage==='function')) return;
-    var params = {
-      dateRange: {interval:'custom', startDate:r.peakDayStart, endDate:r.peakDayEnd},
-      entityType: 'Driver',
-      selectedEntities: [r.driverId],
-      devices: r.peakDeviceId ? [r.peakDeviceId] : undefined
-    };
-    if(r.tier===TIER_A && r.eventId) params.exceptionId = r.eventId;
-    try { stateRef.gotoPage('tripsHistory', params); } catch(e){}
+    var u = r && linkFor(r);
+    if(u) window.open(u, '_blank', 'noopener');
   }
 
   function renderTable(rows){

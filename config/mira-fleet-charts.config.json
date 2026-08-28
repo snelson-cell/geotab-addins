@@ -1,7 +1,7 @@
 {
   "name": "Mira Fleet Charts",
   "supportEmail": "snelson@thegrit.com",
-  "version": "1.21.1",
+  "version": "1.22.0",
   "items": [
     {
       "url": "https://snelson-cell.github.io/geotab-addins/scorecard.html?v=2026-08-28.2",
@@ -25,7 +25,7 @@
       }
     },
     {
-      "url": "https://snelson-cell.github.io/geotab-addins/topSpeed.html",
+      "url": "https://snelson-cell.github.io/geotab-addins/topSpeed.html?v=2026-08-28.1",
       "path": "ActivityLink/",
       "menuName": {
         "en": "Top Speed by Driver"
