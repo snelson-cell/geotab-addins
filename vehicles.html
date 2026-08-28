@@ -423,6 +423,18 @@ geotab.addin.vehicleHealth = function () {
   }
 
   // ── Render ───────────────────────────────────────────────────────────────
+  // Straight to the vehicle's Maintenance tab in MyGeotab -- the screen with oil
+  // life, tire pressure, faults and work orders on it. URL format confirmed from
+  // a real MyGeotab URL, not inferred: #device,id:<id>,tabToFocus:health
+  //
+  // Opens in a NEW TAB. This page is a work list; sending someone away from it to
+  // look at one truck loses their place in the other twenty.
+  function deviceUrl(id, tab){
+    if(!id) return null;
+    return location.origin + location.pathname + '#device,id:' + id +
+           (tab ? ',tabToFocus:' + tab : '');
+  }
+
   function render(){
     if(!DATA) return;
     clearNotes();
@@ -484,7 +496,13 @@ geotab.addin.vehicleHealth = function () {
     var body=rows.map(function(v){
       var cls = v.a.severity>=3 ? ' class="bad"' : (v.a.severity>0 ? ' class="act"' : '');
       return '<tr'+cls+'>'+
-        '<td class="veh">'+esc(v.name)+'</td>'+
+        '<td class="veh">'+(function(){
+            var u = deviceUrl(v.id, 'health');
+            return u ? '<a class="vh-link" href="'+esc(u)+'" target="_blank" rel="noopener" '+
+                       'title="Open this vehicle&rsquo;s Maintenance tab in a new tab">'+
+                       esc(v.name)+'</a>'
+                     : esc(v.name);
+          })()+'</td>'+
         '<td>'+esc(v.office)+'</td>'+
         '<td class="r">'+(v.odo!=null ? f0(v.odo)+' <span class="vh-age">'+ageText(now-v.odoAt)+'</span>' : '&mdash;')+'</td>'+
         '<td class="r">'+(v.miles>0 ? v.mpd.toFixed(0) : '<span class="vh-age">0</span>')+'</td>'+

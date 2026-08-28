@@ -398,6 +398,13 @@ geotab.addin.rollout = function () {
   }
 
   // ── render ───────────────────────────────────────────────────────────────
+  // New tab, not in place. gotoPage() replaces the dashboard, which loses the
+  // manager's place in a list they were working through. URL format confirmed
+  // from a real MyGeotab URL: #device,id:<id>
+  function deviceUrl(id){
+    return id ? location.origin + location.pathname + '#device,id:' + id : null;
+  }
+
   function render(){
     if(!model) return;
     syncBranchOptions();
@@ -674,8 +681,8 @@ geotab.addin.rollout = function () {
   }
 
   function goToDevice(id){
-    if(!(stateRef && typeof stateRef.gotoPage==='function')) return;
-    try { stateRef.gotoPage('device', { id:id }); } catch(e){}
+    var u = deviceUrl(id);
+    if(u) window.open(u, '_blank', 'noopener');
   }
 
   function exportCsv(){

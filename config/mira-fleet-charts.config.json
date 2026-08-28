@@ -1,7 +1,7 @@
 {
   "name": "Mira Fleet Charts",
   "supportEmail": "snelson@thegrit.com",
-  "version": "1.19.0",
+  "version": "1.19.1",
   "items": [
     {
       "url": "https://snelson-cell.github.io/geotab-addins/scorecard.html?v=2026-08-27.2",
@@ -32,21 +32,21 @@
       }
     },
     {
-      "url": "https://snelson-cell.github.io/geotab-addins/fleet.html",
+      "url": "https://snelson-cell.github.io/geotab-addins/fleet.html?v=2026-08-28.1",
       "path": "ActivityLink/",
       "menuName": {
         "en": "Fleet Roster"
       }
     },
     {
-      "url": "https://snelson-cell.github.io/geotab-addins/rollout.html?v=2026-08-26.6",
+      "url": "https://snelson-cell.github.io/geotab-addins/rollout.html?v=2026-08-28.1",
       "path": "ActivityLink/",
       "menuName": {
         "en": "Fleet & Camera Coverage"
       }
     },
     {
-      "url": "https://snelson-cell.github.io/geotab-addins/vehicles.html?v=2026-08-28.1",
+      "url": "https://snelson-cell.github.io/geotab-addins/vehicles.html?v=2026-08-28.2",
       "path": "ActivityLink/",
       "menuName": {
         "en": "Maintenance"

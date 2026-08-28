@@ -250,6 +250,13 @@ geotab.addin.fleetRegister = function () {
     return '<span class="fr-na">&ndash;</span>';
   }
 
+  // New tab, not in place. gotoPage() replaces the dashboard, which loses the
+  // manager's place in a list they were working through. URL format confirmed
+  // from a real MyGeotab URL: #device,id:<id>
+  function deviceUrl(id){
+    return id ? location.origin + location.pathname + '#device,id:' + id : null;
+  }
+
   function render(){
     var list=filtered().slice();
     var k=sortKey;
@@ -332,8 +339,8 @@ geotab.addin.fleetRegister = function () {
     });
     Array.prototype.forEach.call(wrap.querySelectorAll('a[data-d]'), function(a){
       a.onclick=function(){
-        if(!(stateRef && stateRef.gotoPage)) return;
-        try { stateRef.gotoPage('device', { id: a.getAttribute('data-d') }); } catch(e){}
+        var u = deviceUrl(a.getAttribute('data-d'));
+        if(u) window.open(u, '_blank', 'noopener');
       };
     });
 
