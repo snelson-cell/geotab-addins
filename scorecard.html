@@ -186,6 +186,16 @@ geotab.addin.driverScorecard = function () {
     '.ds-key{display:flex;flex-wrap:wrap;align-items:center;gap:14px;margin:14px 0 0;',
     '  background:var(--surface-1);border:1px solid var(--hairline);border-radius:9px;',
     '  padding:11px 15px;font-size:12px;color:var(--ink-2);}',
+    '.ds-rl-intro{padding:14px 16px 4px;font-size:13px;color:var(--ink-2);max-width:76ch;}',
+    '.ds-rl{padding:12px 16px;border-top:1px solid var(--hairline);}',
+    '.ds-rl:first-of-type{border-top:1px solid var(--grid);margin-top:10px;}',
+    '.ds-rl-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px;}',
+    '.ds-rl-name{font-size:14px;font-weight:660;color:var(--ink-1);}',
+    '.ds-rl-wt{font-size:11.5px;font-weight:600;color:var(--ink-2);background:var(--sunk,#f0efe9);',
+    '  padding:1px 8px;border-radius:20px;}',
+    '.ds-rl-geo{font-size:11.5px;color:var(--ink-3);}',
+    '.ds-rl-fires{font-size:13.5px;color:var(--ink-1);margin-top:5px;}',
+    '.ds-rl-plain{font-size:12.5px;color:var(--ink-2);margin-top:3px;max-width:74ch;line-height:1.55;}',
     '.ds-minibtn{font-size:11.5px;padding:3px 9px;border:1px solid var(--grid);',
     '  border-radius:5px;background:#fff;color:var(--ink-3);cursor:pointer;}',
     '.ds-minibtn:hover{border-color:var(--ink-3);color:var(--ink-1);}',
@@ -1414,27 +1424,26 @@ geotab.addin.driverScorecard = function () {
   function renderRules(){
     var host = el('ds-rules');
     if(!host) return;
+    // Stacked blocks, not a table. As a table the plain-English column was the
+    // widest and got clipped behind a horizontal scrollbar -- the one column
+    // anyone actually reads. These wrap instead, so nothing is cut off.
     host.innerHTML =
-      '<div style="padding:14px 16px 4px;font-size:13px;color:var(--ink-2);max-width:78ch">'+
-      'Four rules, each counted as <b>events per 1,000 miles</b> so a long route and a short one '+
-      'compare fairly. The weight is how much of the 100-point score that metric can take.'+
-      '</div>'+
-      '<div style="overflow-x:auto"><table class="ds-t"><thead><tr>'+
-      '<th>Metric</th><th class="c">Weight</th><th>Rule in Geotab</th>'+
-      '<th>What sets it off</th><th>In plain terms</th>'+
-      '</tr></thead><tbody>'+
+      '<div class="ds-rl-intro">Four rules, each counted as <b>events per 1,000 miles</b> so a long '+
+      'route and a short one compare fairly. The weight is how much of the 100-point score that '+
+      'metric can take.</div>'+
       RULEDOC.map(function(r){
         var m = null;
         for(var i=0;i<METRICS.length;i++){ if(METRICS[i].id===r.id) m=METRICS[i]; }
-        return '<tr>'+
-          '<td class="name">'+esc(r.id)+'</td>'+
-          '<td class="c"><b>'+(m?Math.round(m.w*100):'?')+'%</b></td>'+
-          '<td style="white-space:nowrap;color:var(--ink-3)">'+esc(r.geotab)+'</td>'+
-          '<td>'+r.fires+'</td>'+
-          '<td style="max-width:44ch">'+r.plain+'</td></tr>';
-      }).join('')+
-      '</tbody></table></div>'+
-      '';
+        return '<div class="ds-rl">'+
+          '<div class="ds-rl-head">'+
+            '<span class="ds-rl-name">'+esc(r.id)+'</span>'+
+            '<span class="ds-rl-wt">'+(m?Math.round(m.w*100):'?')+'% of the score</span>'+
+            '<span class="ds-rl-geo">'+esc(r.geotab)+'</span>'+
+          '</div>'+
+          '<div class="ds-rl-fires">'+r.fires+'</div>'+
+          '<div class="ds-rl-plain">'+r.plain+'</div>'+
+        '</div>';
+      }).join('');
   }
 
   // The bar is off by default. It restates arithmetic the table already gives in
