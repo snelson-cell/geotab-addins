@@ -278,6 +278,8 @@ geotab.addin.fleetHealth = function () {
                    vin:(d.vehicleIdentificationNumber||'').trim(),
                    camera:!!camSerial[(d.serialNumber||'').trim()],
                    assigned:!!assigned[d.id],
+                   hasDevice:!!((d.serialNumber||'').trim() &&
+                                (d.serialNumber||'').trim().indexOf('000-')!==0),
                    last:lastComm[d.id]||null, miles:0, milesDrv:0};
       });
       if(!Object.keys(veh).length){
@@ -313,12 +315,21 @@ geotab.addin.fleetHealth = function () {
 
   function summarize(list, now){
     var s={n:list.length, miles:0, milesDrv:0, camera:0, vin:0, quiet:0,
-           needDriver:0, drove:0};
+           needDriver:0, drove:0, withDev:0};
     list.forEach(function(v){
       s.miles+=v.miles; s.milesDrv+=v.milesDrv;
       if(v.camera) s.camera++;
       if(v.vin) s.vin++;
-      if(!v.last || (now-v.last)/86400000 >= QUIET_DAYS) s.quiet++;
+      // Reporting is about whether a DEVICE is alive, so only vehicles that have
+      // one belong in it. Counting placeholders as "not reporting" put 113
+      // device-less trucks in the denominator, held every location under the 85%
+      // gate, and made Measurable read "Limited" for all fourteen -- a column
+      // that says the same thing about the best and worst branch says nothing.
+      // Fleet-wide this was 72%; it is 92% among vehicles that can report.
+      if(v.hasDevice){
+        s.withDev++;
+        if(!v.last || (now-v.last)/86400000 >= QUIET_DAYS) s.quiet++;
+      }
       if(v.miles>=MIN_MILES){
         s.drove++;
         if(!v.assigned) s.needDriver++;
@@ -326,7 +337,7 @@ geotab.addin.fleetHealth = function () {
     });
     s.attrib = pct(s.milesDrv, s.miles);
     s.camPct = pct(s.camera, s.n);
-    s.repPct = pct(s.n-s.quiet, s.n);
+    s.repPct = s.withDev ? pct(s.withDev-s.quiet, s.withDev) : 0;
     s.verdict = verdictOf(s.attrib, s.camPct, s.repPct);
     return s;
   }
@@ -389,7 +400,7 @@ geotab.addin.fleetHealth = function () {
           (s.camPct<50 ? ' &middot; <span class="muted">camera rules cannot fire on the rest</span>' : '')) +
       kpi('Not reporting', s.quiet ? C.warn : C.good, String(s.quiet), false,
           'silent '+QUIET_DAYS+'+ days &middot; <span class="muted">'+
-          Math.round(s.repPct)+'% healthy</span>');
+          Math.round(s.repPct)+'% of the '+f0(s.withDev)+' with a device</span>');
 
     el('fh-action').style.display='';
     el('fh-action').innerHTML = s.needDriver
