@@ -204,6 +204,11 @@ geotab.addin.vehicleHealth = function () {
   var QUIET_DAYS = 3;
   var OIL_SOON  = 25;   // % remaining -> book it
   var OIL_NOW   = 10;   // % remaining -> overdue
+  // Beyond this the projection stops being information. It is built from a
+  // 30-day mileage average against an ASSUMED 10,000-mile interval, so a figure
+  // like "331 days" is two guesses compounded and nobody schedules from it.
+  // Past the horizon the honest statement is just "not due soon".
+  var HORIZON_D = 90;
   // FMVSS 138 requires a TPMS lamp at 25% below the placard pressure. The
   // placard is not in Geotab, so each vehicle is compared with its OWN four
   // corners — the median of them stands in for the placard. Self-calibrating,
@@ -576,12 +581,18 @@ geotab.addin.vehicleHealth = function () {
     return Math.round(v.oil)+'%<span class="vh-bar"><i style="width:'+
       Math.max(2,Math.min(100,v.oil))+'%;background:'+c+'"></i></span>';
   }
+  // Spelled out rather than "~36d". At 11px in the muted colour a leading tilde
+  // reads as a minus sign, and "-36d" looks like the service is 36 days OVERDUE
+  // -- the exact opposite of what it says. The word "in" removes the ambiguity
+  // no matter how the glyph renders.
   function serviceCell(v){
     if(v.oil==null) return '<span class="vh-age">&mdash;</span>';
     if(v.oil<=OIL_NOW) return '<span class="vh-pill bad">overdue</span>';
     if(v.oilDays==null) return '<span class="vh-age">&mdash;</span>';
-    if(v.oilDays<=14) return '<span class="vh-pill warn">~'+v.oilDays+'d</span>';
-    return '<span class="vh-age">~'+v.oilDays+'d</span>';
+    if(v.oilDays>HORIZON_D) return '<span class="vh-age">'+HORIZON_D+'+ days</span>';
+    var txt = 'in ~'+v.oilDays+' day'+(v.oilDays===1?'':'s');
+    if(v.oilDays<=14) return '<span class="vh-pill warn">'+txt+'</span>';
+    return '<span class="vh-age">'+txt+'</span>';
   }
   function tireCell(v){
     if(v.tireMin==null) return '<span class="vh-age">no reading</span>';
@@ -614,7 +625,11 @@ geotab.addin.vehicleHealth = function () {
       '<p><b>Service timing uses the vehicle\'s own mileage.</b> A van covering 90 miles a day at '+
       '30% oil life needs booking before a spare covering 5 miles a day at the same percentage. '+
       'The day count assumes a 10,000-mile oil interval &mdash; once service history is being '+
-      'recorded in Geotab that assumption can be replaced with the real one.</p>'+
+      'recorded in Geotab that assumption can be replaced with the real one. '+
+      'Anything further out than '+HORIZON_D+' days is shown as &ldquo;'+HORIZON_D+'+ days&rdquo; '+
+      'rather than a number: that far ahead the figure is a 30-day mileage average multiplied by '+
+      'an assumed interval, and printing &ldquo;331 days&rdquo; would imply a precision neither '+
+      'input has. The exported CSV keeps the raw uncapped figure for analysis.</p>'+
       '<p><b>Readings are last-known, not live</b>, and each one carries its age. A parked vehicle '+
       'keeps showing the last figure it sent; if that is days old, the age beside it says so '+
       'rather than implying the number is current.</p>'+
