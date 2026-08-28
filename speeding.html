@@ -388,13 +388,19 @@ geotab.addin.speedingZones = function () {
 
   // Confirm or clear a suspected map error by asking what traffic was doing
   // around it. A road truly posted 25 has the truck running about 25 either side;
-  // a 55 mis-tagged as 25 has it cruising 40+. Calibrated on 40 Detroit
-  // candidates: the two populations separate at 1.3x posted, and 31 of the 40
-  // turned out to be real violations the blunt test had been discarding.
+  // a 55 mis-tagged as 25 has it cruising 40+.
+  //
+  // Calibrated on 275 suspects across Detroit, Chicago and Atlanta North. Those
+  // ratios form one population centred on 1.0 -- correctly mapped roads, where
+  // traffic runs at the posted limit -- with a right tail. The counts per 0.1
+  // band run 33, 21, 17 at 1.1/1.2/1.3 and then fall to 4 at 1.4, so the tail
+  // begins at 1.4 and 1.3 cuts into the shoulder of the legitimate distribution.
+  // An earlier 1.3, eyeballed from twelve samples, dropped 11% of suspects; 1.4
+  // drops 5%.
   //
   // Only suspects that would actually be COUNTED are checked -- in Detroit that
   // is 67 calls rather than 157.
-  var ARTIFACT_RATIO = 1.3;
+  var ARTIFACT_RATIO = 1.4;
 
   function confirmSuspects(api, rows, done){
     var need = rows.filter(function(r){
