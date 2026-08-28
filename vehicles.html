@@ -539,7 +539,8 @@ geotab.addin.vehicleHealth = function () {
         '<td class="c">'+(v.quiet ? '<span class="vh-pill bad">'+(v.last?ageText(now-v.last.getTime()):'never')+'</span>'
                                   : '<span class="vh-age">'+(v.last?ageText(now-v.last.getTime()):'never')+'</span>')+'</td>'+
         '<td class="c"><a class="vh-link" target="_blank" rel="noopener" '+
-          'href="#device,id:'+esc(v.id)+'" title="Open this asset in MyGeotab to raise a work request">open</a></td>'+
+          'href="'+esc(deviceUrl(v.id,'health')||'')+'" '+
+          'title="Open this vehicle&rsquo;s Maintenance tab in MyGeotab to raise a work request">open</a></td>'+
         '</tr>';
     }).join('');
     el('vh-tablewrap').innerHTML = rows.length ? head+body+'</tbody></table>'
@@ -550,7 +551,11 @@ geotab.addin.vehicleHealth = function () {
       ? '<table class="vh-t"><thead><tr><th>Vehicle</th><th>Branch</th><th class="r">Odometer</th>'+
         '<th class="r">Mi/day</th><th class="c">Last heard</th></tr></thead><tbody>'+
         blind.sort(function(a,b){ return b.miles-a.miles; }).map(function(v){
-          return '<tr><td class="veh">'+esc(v.name)+'</td><td>'+esc(v.office)+'</td>'+
+          var bu = deviceUrl(v.id, 'health');
+          return '<tr><td class="veh">'+(bu
+              ? '<a class="vh-link" href="'+esc(bu)+'" target="_blank" rel="noopener" '+
+                'title="Open this vehicle&rsquo;s Maintenance tab in a new tab">'+esc(v.name)+'</a>'
+              : esc(v.name))+'</td><td>'+esc(v.office)+'</td>'+
             '<td class="r">'+(v.odo!=null?f0(v.odo):'&mdash;')+'</td>'+
             '<td class="r">'+(v.miles>0?v.mpd.toFixed(0):'0')+'</td>'+
             '<td class="c"><span class="vh-age">'+(v.last?ageText(now-v.last.getTime()):'never')+'</span></td></tr>';
