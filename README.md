@@ -11,11 +11,27 @@ that user's role (an office OM sees their office; an exec sees the whole fleet).
 
 | File | Menu name | What it shows |
 |---|---|---|
-| [`fleetFunnel.html`](fleetFunnel.html) | Fleet by Location | Vehicles per location as a stacked bar — owned vs rental vs unknown — with a rental-reliance KPI, click-to-filter vehicle list, and an office × model table |
+| [`scorecard.html`](scorecard.html) | Driver Scorecard | Every driver ranked 0–100 against a frozen company benchmark — speeding 55%, braking 25%, cornering 10%, acceleration 10% — with office standings, a worked example of one driver's arithmetic, and 7/14/30-day windows |
+| [`health.html`](health.html) | Market Standings | Per-location readiness: driver attribution, camera coverage, reporting rate, and a safety rank drawn from the *same* benchmark the scorecard uses. Gates each location as full / partial / not measurable |
+| [`speeding.html`](speeding.html) | Speeding by Zone | Where speeding happens by posted limit — three policy bands (7 over under 30 mph, 10 over to 45, 12 over above) — with a how-far-over histogram and per-event links into Trips History |
 | [`topSpeed.html`](topSpeed.html) | Top Speed by Driver | Peak speed per driver for a chosen day or range, against the written speeding policy, with speeding-event counts and a "speed demon" callout. Built for 1:1s and team meetings |
 | [`fleet.html`](fleet.html) | Fleet Roster | Every vehicle in Geotab — ownership, location, driver, plate, camera and the compliance fields that used to live in the branch spreadsheets. KPI cards follow the active filters |
-| [`rollout.html`](rollout.html) | GO9 & Camera Rollout | Per-location install progress: shipped → assigned → installed (VIN reporting) → camera fitted, so you can see which locations have done what |
-| [`violin.html`](violin.html) | Speeding Rate by Vehicle | KPI summary + per-vehicle speeding rate (events/1,000 mi) distributed by office, over Within target / Monitor / Coaching review zones, with a per-vehicle table. 7/30/60/90-day windows and an office filter for branch managers |
+| [`rollout.html`](rollout.html) | Fleet & Camera Coverage | Per-location install progress: shipped → assigned → installed (VIN reporting) → camera fitted, so you can see which locations have done what |
+| [`vehicles.html`](vehicles.html) | Maintenance | Per-vehicle worklist — oil life, tire pressure by corner, odometer freshness and triaged device faults — plus the roadside-assistance number and the Enterprise service-locator link |
+
+Rows are in **menu order**, which is the order of the `items` array in the config.
+It is not alphabetical and is not sorted — Geotab renders the array as given, so
+the array *is* the running order.
+
+### In the repo but not in the menu
+
+Both still build and still work; they were retired from the menu, not deleted,
+because their Pages URLs may still be bookmarked.
+
+| File | Was | Retired | Why |
+|---|---|---|---|
+| [`violin.html`](violin.html) | Speeding Rate by Vehicle | 2026-08-27 | Superseded by **Speeding by Zone**, which answers the same question against the posted limit instead of a flat per-vehicle rate |
+| [`fleetFunnel.html`](fleetFunnel.html) | Fleet by Location | 2026-08-27 | Its content was absorbed into **Market Standings**, which carries the per-location table alongside the safety rank |
 
 Install config: [`config/mira-fleet-charts.config.json`](config/mira-fleet-charts.config.json) ·
 Step-by-step: [`INSTALL.md`](INSTALL.md)
@@ -24,15 +40,22 @@ Step-by-step: [`INSTALL.md`](INSTALL.md)
 
 ```
 geotab-addins/
-├── fleetFunnel.html      # add-in — Fleet by Location   (root = stable Pages URL)
-├── fleet.html            # add-in — Fleet Roster
-├── rollout.html          # add-in — GO9 & Camera Rollout
-├── violin.html           # add-in — Speeding Rate by Vehicle
+├── scorecard.html        # add-in — Driver Scorecard     (root = stable Pages URL)
+├── health.html           # add-in — Market Standings
+├── speeding.html         # add-in — Speeding by Zone
 ├── topSpeed.html         # add-in — Top Speed by Driver
+├── fleet.html            # add-in — Fleet Roster
+├── rollout.html          # add-in — Fleet & Camera Coverage
+├── vehicles.html         # add-in — Maintenance
+├── violin.html           # retired from the menu, still served
+├── fleetFunnel.html      # retired from the menu, still served
 ├── index.html            # landing page, served from Pages directly — NOT an
 │                         # add-in, so relative asset paths are fine here
 ├── assets/
 │   └── mira-home-logo.png
+├── benchmark/
+│   └── company-30d.json  # frozen company distribution behind the scorecard;
+│                         # INLINED into scorecard.html and health.html, not fetched
 ├── config/
 │   └── mira-fleet-charts.config.json   # paste into MyGeotab → Add-Ins
 ├── INSTALL.md
@@ -47,11 +70,13 @@ this repo is public and frontend-only.
 > are referenced in the MyGeotab config. Moving them changes the URL and breaks
 > the installed add-in. Add new add-ins at the root too.
 >
-> That is also why **`fleetFunnel.html` keeps a filename it outgrew**. It has not
-> drawn a funnel since it was rebuilt as location × ownership, and it is now
-> "Fleet by Location" in the menu — but the filename is baked into the installed
-> config, so renaming it would break the add-in for every user. The file name is
-> not a description; the table above is.
+> That is also why **several files keep filenames they outgrew**. `fleetFunnel.html`
+> has not drawn a funnel since it was rebuilt as location × ownership;
+> `violin.html` stopped being a violin plot; `health.html` is "Market Standings"
+> and `vehicles.html` is "Maintenance". In every case the filename is baked into
+> the installed config, so renaming it would break the add-in for every user —
+> and for the two retired pages it would also break any bookmark. **The file name
+> is not a description; the table above is.**
 
 ## Update workflow
 
@@ -117,8 +142,87 @@ infrastructure reasons; verify with the hash check as always.
 
 ## Design conventions
 
-- **Chart library:** ApexCharts (CDN). Keep it consistent across add-ins.
-- **Speeding-risk bands (fleet-wide, fixed):** Within target `<10`, Monitor
+- **Chart library:** ApexCharts (CDN) *where a page actually plots data* —
+  `topSpeed`, `rollout`, `violin`, `fleetFunnel`. The four newest pages
+  (`scorecard`, `health`, `speeding`, `vehicles`) load **no charting library at
+  all**: they are tables with inline bars and CSS-drawn distributions, and a CDN
+  dependency plus a render cycle would buy nothing. Each says so in a comment at
+  the top of the file. Don't "standardise" one of them onto Apex.
+- **The scorecard's benchmark is frozen, inlined, and shared.** `benchmark/company-30d.json`
+  is a company-wide distribution generated offline so that every login scores
+  identically regardless of what that user can see. It is **inlined into both
+  `scorecard.html` and `health.html`**, never fetched — these files are injected
+  into MyGeotab's page, so a relative URL resolves against `my.geotab.com` and
+  quietly fails. Two consequences: (1) **regenerate both copies together**, or
+  Market Standings will rank offices against a stale snapshot while the scorecard
+  uses a fresh one — the generated date is printed on screen so a drift is
+  visible rather than silent; (2) the inlined copy is a **branch-level aggregate
+  only, no individuals**, so a branch-scoped login can see the whole standings
+  table without seeing anyone else's people.
+- **Weights and the benchmark are coupled, and the page hard-stops if they drift.**
+  Editing `METRICS` weights in `scorecard.html` without regenerating leaves every
+  rank built from a different scoring function than the score beside it.
+  `weightMismatch()` names each mismatched metric and refuses to render;
+  `floorMismatch()` does the same if the benchmark predates the clean-sheet rule.
+- **A clean sheet costs nothing.** Percentile scoring breaks when most of the
+  fleet is tied at zero — 85 of 101 acceleration breakpoints were exactly `0.00`,
+  so a zero landed mid-tie and cost points for a record that could not be
+  improved. A driver at a metric's floor takes the **bottom** of the tie block,
+  for both score and cell colour. A clean metric therefore reads "clean — nothing
+  off", never "better than 100% of the company": they are *tied* with everyone at
+  zero, not ahead of them.
+- **Rank is noise-dominated; coach from the band, not the number.** Scoring two
+  independent 30-day windows with identical weights moves the median driver **33
+  places**. About 48% of drivers cannot be told apart from typical. Changing the
+  weights is a *smaller* perturbation than one fortnight of luck. When someone
+  asks why a driver moved 30 places, the answer is usually "they did not move,
+  the sample did."
+- **Geotab CAN reprocess history — check before clamping a window.** The 11 Aug
+  2026 rule change created a genuine discontinuity, and the scorecard carried a
+  fetch clamp for a fortnight because of it. On 27 Aug an overnight reprocess
+  re-evaluated every event from 1 Jul against the current rule definitions and
+  the discontinuity disappeared from live data. Verify with a **control week**
+  that never changed: if it reproduces, history has been recalculated and the
+  clamp is now doing harm. The scorecard's `rulesChangedAt` is `2026-07-01` with
+  a full 30-day clean window and an empty `metricChangedAt`.
+- **30 days is a choice, not a limit.** ~56 days are available. In early July the
+  reporting fleet was 47% Chicago/Detroit/Indianapolis — the highest-speeding
+  markets — against 21% now, with miles up ~5x as devices came online. A longer
+  window imports a fleet composition that no longer exists.
+- **Speeding policy branches on the posted limit, because the rule engine cannot.**
+  `speeding.html` applies the cut client-side: **7 over** in a 20–30 zone,
+  **10 over** in 31–45, **12 over** at 46+. Geotab's rule engine can't express
+  "when posted is under 30" — `SpeedLimit` is only usable paired with `Speed`.
+  The thresholds differ on purpose: 10 over is 40% over in a 25 but 15% over in a
+  65, so a flat number gets steadily softer as speeds rise. The bands are
+  **contiguous** — posted 31–34 used to fall in a gap and be silently discarded.
+  Posted limits **below 20 mph are dropped** as parking lots, yards and map
+  estimates; left in, a 5 mph "zone" yields a 4.6x ratio and tops the list forever.
+- **Speed comes from the event's own distance ÷ duration, not from LogRecord.**
+  Geotab admits ~300 calls/minute and every multiCall sub-call counts, so
+  resolving each event individually costs ~1,800 calls for one office-week.
+  `GetRoadMaxSpeeds` takes a date *range*, so one call per device covers the whole
+  window. The sustained average is also the *better* number: unlike a peak, it
+  cannot be manufactured by a single bad GPS fix.
+- **Faults are triaged by ID, never counted.** Geotab returns ~3,939 "Active"
+  faults across 297 vehicles, but `severity` is null on every one and the J1939
+  lamp fields are never populated on light-duty OBD — so a raw count flags 80% of
+  the fleet and means nothing. `vehicles.html` splits them into `DEV_ACTION`
+  (unplugged, low voltage, poor GPS, accelerometer, CAN short) and `DEV_NOISE`
+  (power cycles, modem/radio restarts, watchdog resets). "All power removed"
+  alone fires on 208 of 387 vehicles, which is what turned the attention list into
+  the whole fleet.
+- **Tire pressure self-calibrates against the vehicle's own four corners.**
+  FMVSS 138 wants a lamp at 25% below the *placard* pressure, and the placard is
+  not in Geotab. Each vehicle is compared with the median of its own four corners
+  instead, so Mavericks, Colorados and rentals all judge correctly with no lookup
+  table. A 6 psi spread best-to-worst reads as a probable leak.
+- **Odometer must be fetched in small backward steps.** It logs heavily: a single
+  24h fleet-wide `Get` hits the row cap and then returns *fewer* devices than a
+  12h one, because truncation eats them. `LOOKBACK_H` walks 12 / 36 / 84 / 180
+  hours and keeps the newest per device.
+- **Speeding-risk bands (fleet-wide, fixed) — `violin.html`, now retired from the
+  menu:** Within target `<10`, Monitor
   `10–39`, Coaching review `≥40` events/1,000 mi (fleet median / 80th
   percentile, derived 2026-07-30). Colors: high `#d03b3b`, watch `#fab219`,
   safe `#0ca30c` (the internal keys stay `high`/`mod`/`low`).
