@@ -40,7 +40,7 @@
 
   <section class="sz-block">
     <h2 class="sz-h2">Drivers</h2>
-    <p class="sz-sub" id="sz-tablesub">Ranked by residential violations, because a total is dominated by highway miles.</p>
+    <p class="sz-sub" id="sz-tablesub">Ranked by neighborhood violations first, because a total is dominated by highway miles.</p>
     <div class="sz-tablewrap"><table id="sz-table" class="sz-table"></table></div>
   </section>
 </div>
@@ -166,17 +166,29 @@ geotab.addin.speedingZones = function () {
   // The policy cut. Applied here rather than in the Geotab rule because the rule
   // engine cannot branch on the posted limit -- SpeedLimit is only usable paired
   // with Speed, so "when posted is under 30" is not expressible as a condition.
+  // Three categories, not two. "Open road" covered 35 through 70 -- a business
+  // strip and an interstate in one bucket, which is why no single word fitted it.
+  // The bands are contiguous so nothing falls between them: posted 31-34 used to
+  // land in a gap and be discarded.
+  //
+  // The thresholds are not the same number because the same number is not the
+  // same risk: 10 over is 40% over in a 25 but 15% over in a 65, so a flat 10
+  // gets steadily softer as speeds rise and would flag ordinary traffic flow on
+  // a 55.
   var POLICY = [
-    {key:'res',  name:'Residential', lo:20, hi:30,   over:7},
-    {key:'open', name:'Open road',   lo:35, hi:999,  over:10}
+    {key:'nbr',  name:'Neighborhood', lo:20, hi:30,  over:7},
+    {key:'main', name:'Main road',    lo:31, hi:45,  over:10},
+    {key:'hwy',  name:'Highway',      lo:46, hi:999, over:12}
   ];
 
+  // Split finer than the policy for diagnosis, but never across a policy
+  // boundary -- a band that straddled one would filter to a mix of thresholds.
   var BANDS = [
-    {key:'b20', name:'20 – 25', lo:20, hi:25},
-    {key:'b30', name:'30 – 35', lo:30, hi:35},
-    {key:'b40', name:'40 – 45', lo:40, hi:45},
-    {key:'b50', name:'50 – 55', lo:50, hi:55},
-    {key:'b60', name:'60 +',    lo:60, hi:999}
+    {key:'b25', name:'20 – 25', lo:20, hi:25},
+    {key:'b30', name:'30',      lo:26, hi:30},
+    {key:'b35', name:'35',      lo:31, hi:35},
+    {key:'b45', name:'40 – 45', lo:36, hi:45},
+    {key:'b50', name:'50 +',    lo:46, hi:999}
   ];
 
   var PERIODS = [{d:7,n:'Last 7 days'},{d:14,n:'Last 14 days'},{d:30,n:'Last 30 days'}];
@@ -404,13 +416,13 @@ geotab.addin.speedingZones = function () {
       if(r.band) byBand[r.band.key].push(r);
       var k = r.driver || ('veh:'+r.dev);
       var d = byDriver[k] || (byDriver[k] = {name:r.driverName, office:r.office,
-                                            res:0, open:0, worst:null, miles:0});
-      if(r.policy==='res') d.res++; else d.open++;
+                                            nbr:0, main:0, hwy:0, worst:null, miles:0});
+      d[r.policy]++;
       if(!d.worst || r.ratio > d.worst.ratio) d.worst = r;
     });
     Object.keys(byDriver).forEach(function(k){
       byDriver[k].miles = miles[k] || 0;
-      byDriver[k].total = byDriver[k].res + byDriver[k].open;
+      byDriver[k].total = byDriver[k].nbr + byDriver[k].main + byDriver[k].hwy;
     });
 
     var totalMiles = miles.__total || 0;
@@ -496,8 +508,8 @@ geotab.addin.speedingZones = function () {
   }
 
   function renderKpis(){
-    var v = visible(), res=0, open=0;
-    v.forEach(function(r){ if(r.policy==='res') res++; else open++; });
+    var v = visible(), n={nbr:0, main:0, hwy:0};
+    v.forEach(function(r){ n[r.policy]++; });
     var mi = MODEL.miles, rate = mi>0 ? v.length/(mi/1000) : null;
     var sk = MODEL.skipped, attempted = v.length + sk.noData;
     var unres = attempted>0 ? 100*sk.noData/(attempted) : 0;
@@ -507,8 +519,9 @@ geotab.addin.speedingZones = function () {
              '<div class="s">'+sub+'</div></div>';
     }
     el('sz-kpis').innerHTML =
-      kpi('Residential', res, 'posted 20–30, over 7 mph', res>0?'var(--critical-ink)':'') +
-      kpi('Open road', open, 'posted 35+, over 10 mph') +
+      kpi('Neighborhood', n.nbr, 'posted 20–30, over 7 mph', n.nbr>0?'var(--critical-ink)':'') +
+      kpi('Main road', n.main, 'posted 31–45, over 10 mph') +
+      kpi('Highway', n.hwy, 'posted 46+, over 12 mph') +
       kpi('Rate', fmt(rate,1), 'per 1,000 miles driven') +
       kpi('Unresolved', fmt(unres,0)+'%', 'no posted limit or GPS on file');
   }
@@ -658,16 +671,16 @@ geotab.addin.speedingZones = function () {
     v.forEach(function(r){
       var k = r.driver || ('veh:'+r.dev);
       var d = byDriver[k] || (byDriver[k] = {name:r.driverName, office:r.office,
-                                             res:0, open:0, worst:null,
+                                             nbr:0, main:0, hwy:0, worst:null,
                                              miles:(MODEL.byDriver[k]||{}).miles||0});
-      if(r.policy==='res') d.res++; else d.open++;
+      d[r.policy]++;
       if(!d.worst || r.ratio>d.worst.ratio) d.worst = r;
     });
     var rows = Object.keys(byDriver).map(function(k){ return byDriver[k]; });
-    // Residential first, then open road. A raw total buries the residential
-    // offender under whoever drives the most motorway.
-    rows.sort(function(a,b){ return (b.res-a.res) || (b.open-a.open) ||
-                                    (b.worst.ratio-a.worst.ratio); });
+    // Neighborhood first, then main road, then highway. A raw total buries the
+    // neighborhood offender under whoever drives the most motorway.
+    rows.sort(function(a,b){ return (b.nbr-a.nbr) || (b.main-a.main) ||
+                                    (b.hwy-a.hwy) || (b.worst.ratio-a.worst.ratio); });
     var t = el('sz-table');
     if(!rows.length){
       t.innerHTML = '<tr><td class="sz-empty">No events over the policy line'+
@@ -676,14 +689,17 @@ geotab.addin.speedingZones = function () {
     }
     t.innerHTML =
       '<thead><tr><th>Driver</th><th>Location</th>'+
-      '<th style="text-align:right">Residential</th><th style="text-align:right">Open road</th>'+
+      '<th style="text-align:right">Neighborhood</th>'+
+      '<th style="text-align:right">Main road</th>'+
+      '<th style="text-align:right">Highway</th>'+
       '<th>Worst</th><th style="text-align:right">Miles</th></tr></thead><tbody>'+
       rows.map(function(r,ri){
         var c = tierColor(r.worst.ratio);
         return '<tr><td class="nm">'+esc(r.name)+'</td>'+
           '<td>'+esc(r.office||'–')+'</td>'+
-          '<td class="num"'+(r.res?' style="color:var(--critical-ink);font-weight:650"':'')+'>'+(r.res||'–')+'</td>'+
-          '<td class="num">'+(r.open||'–')+'</td>'+
+          '<td class="num"'+(r.nbr?' style="color:var(--critical-ink);font-weight:650"':'')+'>'+(r.nbr||'–')+'</td>'+
+          '<td class="num">'+(r.main||'–')+'</td>'+
+          '<td class="num">'+(r.hwy||'–')+'</td>'+
           '<td class="say">'+pillFor(r.worst, c)+
             (r.worst.evId ? ' <span data-peak="'+esc(r.worst.evId)+'"></span>' : '')+'</td>'+
           '<td class="num">'+(r.miles?Math.round(r.miles).toLocaleString():'–')+'</td></tr>';
@@ -699,8 +715,8 @@ geotab.addin.speedingZones = function () {
       POSTED_FLOOR+' mph — parking lots, yards and map estimates — and were excluded.');
     if(s.underPolicy) bits.push(s.underPolicy.toLocaleString()+' events fired the Geotab rule but came in '+
       'under the policy threshold for their zone.');
-    if(s.unclassified) bits.push(s.unclassified.toLocaleString()+' events were in a 31–34 mph zone, which '+
-      'falls between the residential and open-road bands.');
+    if(s.unclassified) bits.push(s.unclassified.toLocaleString()+' events had a posted limit that fell '+
+      'outside every band.');
     if(s.artifact) bits.push('<b>'+s.artifact.toLocaleString()+' events were dropped as map errors</b> — '+
       'a brief dip to a much lower posted limit on a road that is much faster either side. '+
       'These read as enormous violations and are not real.');
