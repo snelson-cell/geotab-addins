@@ -34,7 +34,7 @@
 
   <section class="sz-block">
     <h2 class="sz-h2">How far over</h2>
-    <p class="sz-sub">How far over the limit, in plain terms. The tail on the right is what matters.</p>
+    <p class="sz-sub">Sustained speed across the event, as a multiple of the posted limit. The tail on the right is what matters.</p>
     <div id="sz-hist" class="sz-hist"></div>
   </section>
 
@@ -134,6 +134,8 @@ geotab.addin.speedingZones = function () {
     '.sz-open{display:inline-block;font-size:12px;color:var(--accent);margin-top:7px;font-weight:600;text-decoration:none;}',
     '.sz-open:hover{text-decoration:underline;}',
     '.sz-go{text-decoration:none;}',
+    '.sz-pk{font-size:11px;color:var(--ink-3);white-space:nowrap;}',
+    '.sz-pk.big{font-size:14px;font-weight:500;color:var(--ink-2);letter-spacing:0;}',
     '.sz-go:hover{outline:1px solid currentColor;}',
     '.sz-pill{display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.04em;',
     '  padding:1px 7px;border-radius:20px;vertical-align:1px;}'
@@ -481,6 +483,16 @@ geotab.addin.speedingZones = function () {
       ' &middot; '+fmt(w.ratio,2)+'&times; the limit</div>'+
       (u ? '<a class="sz-open" href="'+esc(u)+'" target="_blank" rel="noopener">'+
            'Open this trip in a new tab &rarr;</a>' : '');
+    if(w.evId){
+      PEAK_SRC[w.evId] = w;
+      ensurePeaks([w], function(){
+        var p = peakNote(w);
+        if(!p) return;
+        var say = h.querySelector('.say');
+        if(say) say.innerHTML = w.peak+' in a '+w.posted+
+          ' <span class="sz-pk big">peaked at '+p+'</span>';
+      });
+    }
   }
 
   function renderKpis(){
@@ -576,6 +588,61 @@ geotab.addin.speedingZones = function () {
     }).join('');
   }
 
+  // Sustained average is what the page ranks on -- a peak can be one bad GPS fix,
+  // and "you held 35 in a 25 for fifteen seconds" is harder to argue with than
+  // "you touched 39". But reporting only the lower of two true numbers understates
+  // things, so the peak is shown beside it. Verified on Seth Call, AMF-59, 24 Aug:
+  // 780 ft over 15.3 s = 35 sustained, with a real climb through 33-39-35 inside it.
+  //
+  // This is the one place LogRecord is still worth fetching: the worst event per
+  // driver row, not every event. Fifteen or so calls, cached by event id.
+  var PEAK = {};
+
+  function ensurePeaks(worsts, done){
+    var need = worsts.filter(function(w){ return w && w.evId && PEAK[w.evId] === undefined; });
+    if(!need.length || !apiRef){ done(); return; }
+    var i = 0;
+    function step(){
+      if(i >= need.length){ done(); return; }
+      var slice = need.slice(i, i+20);
+      function mark(res){
+        slice.forEach(function(w, k){
+          var mx = 0;
+          (res && res[k] || []).forEach(function(l){
+            var v = (l.speed || 0) * MPH; if(v > mx) mx = v;
+          });
+          PEAK[w.evId] = mx > 0 ? Math.round(mx) : null;
+        });
+        i += 20; setTimeout(step, 0);
+      }
+      apiRef.multiCall(slice.map(function(w){
+        return ['Get', {typeName:'LogRecord', resultsLimit:300, search:{
+          deviceSearch:{id:w.dev},
+          fromDate:new Date(w.at).toISOString(),
+          toDate:new Date(w.at + w.secs*1000).toISOString()}}];
+      }), mark, function(){ mark(null); });
+    }
+    step();
+  }
+
+  // Only worth saying when the peak is meaningfully above the sustained speed.
+  function peakNote(w){
+    var p = w && w.evId ? PEAK[w.evId] : null;
+    return (p && p >= w.peak + 3) ? p : null;
+  }
+
+  function paintPeaks(){
+    Array.prototype.forEach.call(document.querySelectorAll('#sz-root [data-peak]'), function(n){
+      var id = n.getAttribute('data-peak');
+      var w = PEAK_SRC[id];
+      if(!w) return;
+      var p = peakNote(w);
+      if(p) n.innerHTML = '<span class="sz-pk">peaked at '+p+'</span>';
+    });
+  }
+
+  var PEAK_SRC = {};
+
   function pillFor(w, c){
     var body = w.peak+' in a '+w.posted;
     var style = 'background:'+c.bg+'22;color:'+c.ink;
@@ -617,9 +684,13 @@ geotab.addin.speedingZones = function () {
           '<td>'+esc(r.office||'–')+'</td>'+
           '<td class="num"'+(r.res?' style="color:var(--critical-ink);font-weight:650"':'')+'>'+(r.res||'–')+'</td>'+
           '<td class="num">'+(r.open||'–')+'</td>'+
-          '<td class="say">'+pillFor(r.worst, c)+'</td>'+
+          '<td class="say">'+pillFor(r.worst, c)+
+            (r.worst.evId ? ' <span data-peak="'+esc(r.worst.evId)+'"></span>' : '')+'</td>'+
           '<td class="num">'+(r.miles?Math.round(r.miles).toLocaleString():'–')+'</td></tr>';
       }).join('')+'</tbody>';
+    var worsts = rows.map(function(r){ return r.worst; });
+    worsts.forEach(function(w){ if(w && w.evId) PEAK_SRC[w.evId] = w; });
+    ensurePeaks(worsts, paintPeaks);
   }
 
   function renderSkipNotes(){
