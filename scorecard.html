@@ -42,6 +42,12 @@
   <div class="ds-card" id="ds-example"></div>
 
   <div class="ds-tablehead">
+    <div class="ds-tabletitle" id="ds-rulestitle">What each metric counts</div>
+    <div class="ds-tools"><button type="button" id="ds-rulestoggle">Show</button></div>
+  </div>
+  <div class="ds-card" id="ds-rules" style="display:none"></div>
+
+  <div class="ds-tablehead">
     <div class="ds-tabletitle" id="ds-title">Ranked drivers</div>
     <div class="ds-tools">
       <button type="button" id="ds-csv">Export CSV</button>
@@ -180,6 +186,8 @@ geotab.addin.driverScorecard = function () {
     '.ds-key{display:flex;flex-wrap:wrap;align-items:center;gap:14px;margin:14px 0 0;',
     '  background:var(--surface-1);border:1px solid var(--hairline);border-radius:9px;',
     '  padding:11px 15px;font-size:12px;color:var(--ink-2);}',
+    '.ds-wt{display:block;font-size:10px;font-weight:600;color:var(--ink-3);',
+    '  letter-spacing:.04em;margin-top:1px;}',
     'a.ds-link{color:inherit;text-decoration:none;border-bottom:1px dotted var(--ink-3);}',
     'a.ds-link:hover{border-bottom-color:var(--ink-1);}',
     '.ds-key-t{font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;',
@@ -967,7 +975,13 @@ geotab.addin.driverScorecard = function () {
     var head = '<table class="ds-t"><thead><tr>'+
       '<th class="r">#</th><th>Driver</th><th>Location</th>'+
       '<th class="r">Miles</th><th class="c">Score</th><th class="c">Trend</th>'+
-      METRICS.map(function(m){ return '<th class="c">'+esc(m.id)+'</th>'; }).join('')+
+      METRICS.map(function(m){
+        // The weight belongs in the header. Without it the four columns look
+        // equally important, and a driver reading their row cannot tell why a
+        // red cornering cell moved their score less than a pale speeding one.
+        return '<th class="c">'+esc(m.id)+
+               '<span class="ds-wt">'+Math.round(m.w*100)+'%</span></th>';
+      }).join('')+
       '<th class="c">In office</th></tr></thead><tbody>';
     var body = rows.map(function(d){
       return '<tr>'+
@@ -991,6 +1005,7 @@ geotab.addin.driverScorecard = function () {
         }).join('')+
         '<td class="c">'+d.officeRank+' of '+d.officeN+'</td></tr>';
     }).join('');
+    renderRules();
     el('ds-tablewrap').innerHTML = rows.length
       ? head+body+'</tbody></table>'
       : '<div style="padding:16px;font-size:12.5px;color:var(--ink-3)">No driver in this '+
@@ -1337,6 +1352,12 @@ geotab.addin.driverScorecard = function () {
       el('ds-extoggle').className = hide ? '' : 'on';
       el('ds-extoggle').textContent = hide ? 'Show' : 'Hide';
     });
+    el('ds-rulestoggle').addEventListener('click', function(){
+      var w = el('ds-rules'), hide = w.style.display !== 'none';
+      w.style.display = hide ? 'none' : '';
+      el('ds-rulestoggle').className = hide ? '' : 'on';
+      el('ds-rulestoggle').textContent = hide ? 'Show' : 'Hide';
+    });
     el('ds-csv').addEventListener('click', exportCsv);
   }
 
@@ -1351,6 +1372,67 @@ geotab.addin.driverScorecard = function () {
     return u ? '<a class="ds-link" href="'+esc(u)+'" target="_blank" rel="noopener" '+
                'title="Open this driver in a new tab">'+esc(d.name)+'</a>'
              : esc(d.name);
+  }
+
+  // What each metric actually counts. Read off the rule definitions in Geotab,
+  // not from memory: Speeding is RulePostedSpeedingId, the other three are the
+  // "(New)" GPS-based rules. The legacy accelerometer versions were left behind
+  // because they were miscalibrated and biased by vehicle model -- a Maverick and
+  // an F-150 braking identically did not score identically.
+  var RULEDOC = [
+    {id:'Speeding', geotab:'Speeding',
+     fires:'More than <b>10 mph over the posted limit</b>, held for <b>8 seconds</b>',
+     plain:'A brief drift over does not count. You have to hold it &mdash; eight seconds at 10 over '+
+           'is roughly a tenth of a mile. This is the one metric that depends on a map: Geotab has to '+
+           'know the limit for that road, and for roughly a tenth of driving it does not, so nothing '+
+           'can fire there.'},
+    {id:'Braking', geotab:'Harsh Braking (New)',
+     fires:'Deceleration harder than <b>0.4&nbsp;g</b>',
+     plain:'A firm stop that throws loose items off the seat. Normal braking sits well under this; '+
+           '0.4&nbsp;g is the sort of stop you make when someone pulls out. Measured from GPS rather '+
+           'than the accelerometer, so it does not change with how the device is mounted.'},
+    {id:'Cornering', geotab:'Harsh Cornering (New)',
+     fires:'Lateral force past Geotab&rsquo;s threshold, around <b>0.5&nbsp;g</b>',
+     plain:'Taking a turn fast enough to push you sideways in the seat. Geotab calibrates this per '+
+           'vehicle type, so the exact trigger differs between a Maverick and an F-150 &mdash; which is '+
+           'deliberate, since the same corner loads them differently.'},
+    {id:'Acceleration', geotab:'Harsh Acceleration (New)',
+     fires:'Acceleration harder than <b>0.4&nbsp;g</b>',
+     plain:'Pulling away hard enough to press you back into the seat. The mirror image of the braking '+
+           'threshold. Most drivers never trigger it, which is why a clean sheet here is common and '+
+           'costs nothing.'}
+  ];
+
+  function renderRules(){
+    var host = el('ds-rules');
+    if(!host) return;
+    host.innerHTML =
+      '<div style="padding:14px 16px 4px;font-size:13px;color:var(--ink-2);max-width:78ch">'+
+      'Four rules, each counted as <b>events per 1,000 miles</b> so a long route and a short one '+
+      'compare fairly. The weight is how much of the 100-point score that metric can take.'+
+      '</div>'+
+      '<div style="overflow-x:auto"><table class="ds-t"><thead><tr>'+
+      '<th>Metric</th><th class="c">Weight</th><th>Rule in Geotab</th>'+
+      '<th>What sets it off</th><th>In plain terms</th>'+
+      '</tr></thead><tbody>'+
+      RULEDOC.map(function(r){
+        var m = null;
+        for(var i=0;i<METRICS.length;i++){ if(METRICS[i].id===r.id) m=METRICS[i]; }
+        return '<tr>'+
+          '<td class="name">'+esc(r.id)+'</td>'+
+          '<td class="c"><b>'+(m?Math.round(m.w*100):'?')+'%</b></td>'+
+          '<td style="white-space:nowrap;color:var(--ink-3)">'+esc(r.geotab)+'</td>'+
+          '<td>'+r.fires+'</td>'+
+          '<td style="max-width:44ch">'+r.plain+'</td></tr>';
+      }).join('')+
+      '</tbody></table></div>'+
+      '<div style="padding:10px 16px 14px;font-size:12.5px;color:var(--ink-3);max-width:78ch">'+
+      '<b>Why speeding carries more than half.</b> It is the most reliable of the four and the one '+
+      'most clearly under a driver&rsquo;s control. Braking and cornering often reflect the route &mdash; '+
+      'city work produces more of both than a highway run &mdash; so they are held to a quarter and a '+
+      'tenth. Acceleration is the lightest because most drivers never trigger it at all, which leaves '+
+      'it with little to separate people by.'+
+      '</div>';
   }
 
   function exportCsv(){
