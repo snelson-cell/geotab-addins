@@ -131,7 +131,9 @@ geotab.addin.speedingZones = function () {
     '.sz-table td.nm{font-weight:600;color:var(--ink-1);white-space:nowrap;}',
     '.sz-table td.say{white-space:nowrap;font-variant-numeric:tabular-nums;}',
     '.sz-empty{padding:26px 14px;text-align:center;color:var(--ink-3);font-size:13px;}',
-    '.sz-open{font-size:12px;color:var(--accent);margin-top:7px;font-weight:600;}',
+    '.sz-open{display:inline-block;font-size:12px;color:var(--accent);margin-top:7px;font-weight:600;text-decoration:none;}',
+    '.sz-open:hover{text-decoration:underline;}',
+    '.sz-go{text-decoration:none;}',
     '.sz-go:hover{outline:1px solid currentColor;}',
     '.sz-pill{display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.04em;',
     '  padding:1px 7px;border-radius:20px;vertical-align:1px;}'
@@ -178,7 +180,7 @@ geotab.addin.speedingZones = function () {
   var PERIODS = [{d:7,n:'Last 7 days'},{d:14,n:'Last 14 days'},{d:30,n:'Last 30 days'}];
 
   var apiRef=null, stateRef=null, MODEL=null, bandFilter=null, officeFilter='', days=7, loading=false;
-  var forceFull=false, WORST_BY_ROW=[];
+  var forceFull=false;
 
   function el(id){ return document.getElementById(id); }
   function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, function(c){
@@ -420,22 +422,34 @@ geotab.addin.speedingZones = function () {
                      unclassified:unclassified, underPolicy:underPolicy}};
   }
 
-  // Open this exact event in MyGeotab's own Trips History. Pattern and the
-  // undocumented `exceptionId` key are lifted from topSpeed.html, which read it
-  // off a URL MyGeotab wrote itself. Pass only inputs -- the page derives the
-  // rest, and supplying it fights the page.
-  function goToTrip(r){
-    if(!(stateRef && typeof stateRef.gotoPage === 'function')) return;
-    var d = new Date(r.at);
-    var s0 = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0,0,0);
-    var e0 = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23,59,59);
-    var params = {
-      dateRange: {interval:'custom', startDate:s0.toISOString(), endDate:e0.toISOString()},
-      devices: [r.dev]
-    };
-    if(r.driver){ params.entityType='Driver'; params.selectedEntities=[r.driver]; }
-    if(r.evId) params.exceptionId = r.evId;
-    try { stateRef.gotoPage('tripsHistory', params); } catch(e){}
+  // Open this exact event in MyGeotab's own Trips History, in a NEW TAB so the
+  // dashboard is not lost. state.gotoPage() can only navigate in place, so the
+  // URL is built by hand: MyGeotab hash params are rison, which is why the ISO
+  // dates have to be quoted and the id lists are written !(id).
+  //
+  // The rison encoding is inferred, not copied from a URL MyGeotab wrote. If it
+  // is wrong the tab still lands on Trips History, just unfiltered -- degraded
+  // rather than broken. `exceptionId` is undocumented and comes from
+  // topSpeed.html, which read it off a real MyGeotab URL. Only inputs are
+  // passed; the page derives the rest, and supplying more fights it.
+  function rison(v){
+    v = String(v);
+    return /^[A-Za-z0-9_\-.\/]+$/.test(v)
+      ? v
+      : "'" + v.replace(/!/g, '!!').replace(/'/g, "!'") + "'";
+  }
+
+  function tripUrl(r){
+    try {
+      var d  = new Date(r.at);
+      var s0 = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0,0,0).toISOString();
+      var e0 = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23,59,59).toISOString();
+      var p  = ['dateRange:(interval:custom,startDate:'+rison(s0)+',endDate:'+rison(e0)+')',
+                'devices:!('+rison(r.dev)+')'];
+      if(r.driver){ p.push('entityType:Driver'); p.push('selectedEntities:!('+rison(r.driver)+')'); }
+      if(r.evId)  { p.push('exceptionId:'+rison(r.evId)); }
+      return location.origin + location.pathname + '#tripsHistory,' + p.join(',');
+    } catch(e){ return null; }
   }
 
   // ---- render ---------------------------------------------------------------
@@ -456,7 +470,7 @@ geotab.addin.speedingZones = function () {
         '<div class="who">Every event that fired came in under the threshold for its zone.</div>';
       return;
     }
-    var d = new Date(w.at);
+    var d = new Date(w.at), u = tripUrl(w);
     h.className = 'sz-headline';
     h.innerHTML = '<div class="lbl">Worst event</div>'+
       '<div class="say">'+w.peak+' in a '+w.posted+'</div>'+
@@ -465,11 +479,8 @@ geotab.addin.speedingZones = function () {
       d.toLocaleDateString(undefined,{weekday:'long', month:'short', day:'numeric'})+
       ' at '+d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'})+
       ' &middot; '+fmt(w.ratio,2)+'&times; the limit</div>'+
-      (stateRef && stateRef.gotoPage ? '<div class="sz-open">Open this trip &rarr;</div>' : '');
-    if(stateRef && stateRef.gotoPage){
-      h.style.cursor = 'pointer';
-      h.onclick = function(){ goToTrip(w); };
-    }
+      (u ? '<a class="sz-open" href="'+esc(u)+'" target="_blank" rel="noopener">'+
+           'Open this trip in a new tab &rarr;</a>' : '');
   }
 
   function renderKpis(){
@@ -565,6 +576,16 @@ geotab.addin.speedingZones = function () {
     }).join('');
   }
 
+  function pillFor(w, c){
+    var body = w.peak+' in a '+w.posted;
+    var style = 'background:'+c.bg+'22;color:'+c.ink;
+    var u = tripUrl(w);
+    return u
+      ? '<a class="sz-pill sz-go" href="'+esc(u)+'" target="_blank" rel="noopener" '+
+        'title="Open this trip in a new tab" style="'+style+'">'+body+'</a>'
+      : '<span class="sz-pill" style="'+style+'">'+body+'</span>';
+  }
+
   function renderTable(){
     var v = visible(), byDriver = {};
     v.forEach(function(r){
@@ -580,7 +601,6 @@ geotab.addin.speedingZones = function () {
     // offender under whoever drives the most motorway.
     rows.sort(function(a,b){ return (b.res-a.res) || (b.open-a.open) ||
                                     (b.worst.ratio-a.worst.ratio); });
-    WORST_BY_ROW = rows.map(function(r){ return r.worst; });
     var t = el('sz-table');
     if(!rows.length){
       t.innerHTML = '<tr><td class="sz-empty">No events over the policy line'+
@@ -597,21 +617,9 @@ geotab.addin.speedingZones = function () {
           '<td>'+esc(r.office||'–')+'</td>'+
           '<td class="num"'+(r.res?' style="color:var(--critical-ink);font-weight:650"':'')+'>'+(r.res||'–')+'</td>'+
           '<td class="num">'+(r.open||'–')+'</td>'+
-          '<td class="say"><span class="sz-pill sz-go" data-i="'+ri+'" '+
-            'title="Open this trip in Trips History" '+
-            'style="background:'+c.bg+'22;color:'+c.ink+'">'+
-            r.worst.peak+' in a '+r.worst.posted+'</span></td>'+
+          '<td class="say">'+pillFor(r.worst, c)+'</td>'+
           '<td class="num">'+(r.miles?Math.round(r.miles).toLocaleString():'–')+'</td></tr>';
       }).join('')+'</tbody>';
-    if(stateRef && stateRef.gotoPage){
-      Array.prototype.forEach.call(t.querySelectorAll('.sz-go'), function(n){
-        n.style.cursor = 'pointer';
-        n.addEventListener('click', function(){
-          var w = WORST_BY_ROW[+n.getAttribute('data-i')];
-          if(w) goToTrip(w);
-        });
-      });
-    }
   }
 
   function renderSkipNotes(){
