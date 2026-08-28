@@ -10,7 +10,7 @@
 <div id="fh-root">
   <div class="fh-topbar">
     <div>
-      <h2 class="fh-h1">Fleet health</h2>
+      <h2 class="fh-h1">Market standings</h2>
       <div class="fh-scope" id="fh-scope">Loading…</div>
     </div>
     <div class="fh-controls">
@@ -220,6 +220,23 @@ geotab.addin.fleetHealth = function () {
   }
 
   // ── Load ─────────────────────────────────────────────────────────────────
+  // Safety rank comes from the SAME frozen benchmark the Driver Scorecard uses.
+  // Two pages ranking the same offices by two different routes will eventually
+  // disagree, and then neither is believed.
+  //
+  // It is INLINED rather than fetched, exactly as scorecard.html inlines its own
+  // copy: this file is injected into MyGeotab's page, so a relative URL would
+  // resolve against my.geotab.com and quietly fail. Branch-level aggregate only
+  // -- no individuals -- so a branch-scoped login sees the whole table without
+  // seeing anyone else's people.
+  //
+  // REGENERATE THIS WITH benchmark/company-30d.json. If the two drift apart this
+  // page will rank offices against a stale snapshot while the scorecard uses a
+  // fresh one. The date is shown on screen so a stale copy is visible, not silent.
+  var BM = {"generated":"2026-08-27T17:40:52.642724Z","windowDays":30,"offices":[{"office":"ATL North","rank":1,"median":0.4405,"drivers":40},{"office":"ATL South","rank":2,"median":0.4824,"drivers":18},{"office":"Orlando","rank":3,"median":0.6578,"drivers":27},{"office":"American Fork","rank":4,"median":0.7151,"drivers":15},{"office":"Detroit","rank":5,"median":0.8707,"drivers":28},{"office":"Cleveland","rank":6,"median":1.0699,"drivers":25},{"office":"Tampa","rank":7,"median":1.1359,"drivers":19},{"office":"Columbus","rank":8,"median":1.3073,"drivers":16},{"office":"Grand Rapids","rank":9,"median":1.3995,"drivers":9},{"office":"Northern Indy","rank":10,"median":1.6302,"drivers":18},{"office":"Cincinnati","rank":11,"median":2.0638,"drivers":17},{"office":"Indianapolis","rank":12,"median":2.0734,"drivers":21},{"office":"Louisville","rank":13,"median":3.7741,"drivers":15},{"office":"Chicago","rank":14,"median":5.1757,"drivers":18}]};
+  var BM_BY = {};
+  (BM.offices||[]).forEach(function(o){ BM_BY[o.office] = o; });
+
   function load(api){
     apiRef=api; clearNotes();
     el('fh-scope').textContent='Loading '+days+' days…';
@@ -367,23 +384,41 @@ geotab.addin.fleetHealth = function () {
       : 'Every vehicle that drove has a driver assigned. Nothing to chase.';
 
     // ── Per-office table ──────────────────────────────────────────────────
+    // Sorted by safety rank -- this is a standings table, so the best branch is
+    // at the top. Offices the benchmark has no rank for sort last rather than
+    // first, so a missing number never looks like a good one.
     var offs=Object.keys(offices).sort(function(a,b){
-      return summarize(offices[b],now).needDriver - summarize(offices[a],now).needDriver
-          || summarize(offices[b],now).miles - summarize(offices[a],now).miles;
+      var ra=(BM_BY[a]&&BM_BY[a].rank)||999;
+      var rb=(BM_BY[b]&&BM_BY[b].rank)||999;
+      return ra-rb || summarize(offices[b],now).needDriver-summarize(offices[a],now).needDriver;
     });
     var head='<table class="fh-t"><thead><tr>'+
-      '<th>Location</th><th style="text-align:right">Veh</th><th style="text-align:right">Miles</th>'+
+      '<th style="text-align:right">#</th><th>Location</th>'+
+      '<th style="text-align:right">Safety</th>'+
+      '<th style="text-align:right">Veh</th><th style="text-align:right">Miles</th>'+
       '<th style="text-align:right">Needs driver</th><th>Attributed</th><th>Cameras</th>'+
       '<th>Reporting</th><th>Measurable</th></tr></thead><tbody>';
     el('fh-loctitle').innerHTML = officeFilter
-      ? 'By location <span style="font-weight:400;color:var(--ink-3)">&mdash; all locations shown, '+
+      ? 'Standings <span style="font-weight:400;color:var(--ink-3)">&mdash; every location shown, '+
         esc(officeFilter)+' highlighted</span>'
-      : 'By location';
+      : 'Standings';
+    el('fh-loctitle').innerHTML += ' <span style="font-weight:400;font-size:12px;color:var(--ink-3)">'+
+      '&mdash; safety from the '+BM.windowDays+'-day scorecard benchmark, '+
+      esc(String(BM.generated).slice(0,10))+'</span>';
     var body=offs.map(function(o){
       var t=summarize(offices[o], now);
       var cls=[]; if(t.needDriver) cls.push('act'); if(o===officeFilter) cls.push('sel');
+      var b=BM_BY[o]||null;
+      // The multiple is the median driver's, in the same unit each driver sees on
+      // the scorecard: 1.0 is a typical Mira driver, 2.0 is twice the event rate.
+      var med=b?b.median:null;
+      var mcol = med==null ? 'var(--ink-3)'
+               : med<=1 ? C.good : med<=2 ? C.warn : C.bad;
       return '<tr'+(cls.length?' class="'+cls.join(' ')+'"':'')+'>'+
+        '<td class="num" style="color:var(--ink-3)">'+(b&&b.rank?b.rank:'&ndash;')+'</td>'+
         '<td class="veh">'+esc(o)+'</td>'+
+        '<td class="num"><b style="color:'+mcol+'">'+
+          (med==null?'&ndash;':med.toFixed(2)+'&times;')+'</b></td>'+
         '<td class="num">'+t.n+'</td>'+
         '<td class="num">'+f0(t.miles)+'</td>'+
         '<td class="num"><b'+(t.needDriver?' style="color:'+C.bad+'"':'')+'>'+t.needDriver+'</b></td>'+
