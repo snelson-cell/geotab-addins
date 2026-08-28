@@ -1,17 +1,17 @@
 {
   "name": "Mira Fleet Charts",
   "supportEmail": "snelson@thegrit.com",
-  "version": "1.20.0",
+  "version": "1.21.0",
   "items": [
     {
-      "url": "https://snelson-cell.github.io/geotab-addins/scorecard.html?v=2026-08-27.2",
+      "url": "https://snelson-cell.github.io/geotab-addins/scorecard.html?v=2026-08-28.1",
       "path": "ActivityLink/",
       "menuName": {
         "en": "Driver Scorecard"
       }
     },
     {
-      "url": "https://snelson-cell.github.io/geotab-addins/health.html?v=2026-08-27.1",
+      "url": "https://snelson-cell.github.io/geotab-addins/health.html?v=2026-08-28.1",
       "path": "ActivityLink/",
       "menuName": {
         "en": "Market Standings"

@@ -135,6 +135,8 @@ geotab.addin.fleetHealth = function () {
     '.fh-bar{display:inline-block;vertical-align:middle;width:78px;height:7px;border-radius:4px;',
     '  background:var(--grid);margin-left:8px;overflow:hidden;}',
     '.fh-bar i{display:block;height:100%;border-radius:4px;}',
+    'a.fh-link{color:inherit;text-decoration:none;border-bottom:1px dotted var(--ink-3);}',
+    'a.fh-link:hover{border-bottom-color:var(--ink-1);}',
     '.fh-verdict{display:inline-flex;align-items:center;gap:6px;font-weight:600;font-size:11.5px;}',
     '.fh-verdict.full{color:var(--good-ink);} .fh-verdict.partial{color:var(--warn-ink);}',
     '.fh-verdict.limited{color:var(--bad-ink);}',
@@ -336,6 +338,19 @@ geotab.addin.fleetHealth = function () {
       '<div class="fh-kpi-sub">'+sub+'</div></div>';
   }
 
+  // Straight to the asset in MyGeotab, new tab. This list is a work queue -- you
+  // assign a driver, come back, do the next one. URL confirmed from a real
+  // MyGeotab URL: #device,id:<id>
+  function deviceUrl(id){
+    return id ? location.origin + location.pathname + '#device,id:' + id : null;
+  }
+  function vehCell(v){
+    var u = deviceUrl(v.id);
+    return u ? '<a class="fh-link" href="'+esc(u)+'" target="_blank" rel="noopener" '+
+               'title="Open this vehicle in a new tab">'+esc(v.name)+'</a>'
+             : esc(v.name);
+  }
+
   function render(){
     if(!DATA) return;
     clearNotes();
@@ -439,7 +454,7 @@ geotab.addin.fleetHealth = function () {
       '</tr></thead><tbody>';
     var lb=need.map(function(v){
       var age = v.last ? Math.floor((now-v.last)/86400000) : null;
-      return '<tr><td class="veh">'+esc(v.name)+'</td><td>'+esc(v.office)+'</td>'+
+      return '<tr><td class="veh">'+vehCell(v)+'</td><td>'+esc(v.office)+'</td>'+
         '<td class="num">'+f0(v.miles)+'</td>'+
         '<td>'+(v.camera?'yes':'<span style="color:#898781">no</span>')+'</td>'+
         '<td>'+(v.vin?'yes':'<span style="color:#898781">no</span>')+'</td>'+

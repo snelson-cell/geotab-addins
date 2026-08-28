@@ -37,6 +37,7 @@
 
   <div class="ds-tablehead">
     <div class="ds-tabletitle" id="ds-extitle">Worked example</div>
+    <div class="ds-tools"><button type="button" id="ds-extoggle" class="on">Hide</button></div>
   </div>
   <div class="ds-card" id="ds-example"></div>
 
@@ -46,6 +47,7 @@
       <button type="button" id="ds-csv">Export CSV</button>
     </div>
   </div>
+  <div class="ds-key" id="ds-key2"></div>
   <div class="ds-card" id="ds-tablewrap"></div>
 
   <div class="ds-tablehead">
@@ -178,6 +180,8 @@ geotab.addin.driverScorecard = function () {
     '.ds-key{display:flex;flex-wrap:wrap;align-items:center;gap:14px;margin:14px 0 0;',
     '  background:var(--surface-1);border:1px solid var(--hairline);border-radius:9px;',
     '  padding:11px 15px;font-size:12px;color:var(--ink-2);}',
+    'a.ds-link{color:inherit;text-decoration:none;border-bottom:1px dotted var(--ink-3);}',
+    'a.ds-link:hover{border-bottom-color:var(--ink-1);}',
     '.ds-key-t{font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;',
     '  color:var(--ink-3);}',
     '.ds-key-s{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;}',
@@ -892,13 +896,15 @@ geotab.addin.driverScorecard = function () {
                 esc(standings[standings.length-1].office)+' worst</span>' : '&mdash;'));
 
     // ── Color key, directly above the standings it also explains ─────────
-    el('ds-key').innerHTML =
+    var keyHtml =
       '<span class="ds-key-t">Color</span>'+
       FILL.map(function(f,i){
         return '<span class="ds-key-s"><i style="background:'+f.bg+'"></i>'+
           ['Best 10%','Next 20%','Middle 40%','Worse than 70%','Worst 10%'][i]+'</span>';
       }).join('')+
       '<span class="ds-key-n">of all '+f0(BENCHMARK.drivers)+' drivers company-wide, on that metric&rsquo;s raw rate</span>';
+    el('ds-key').innerHTML = keyHtml;
+    if(el('ds-key2')) el('ds-key2').innerHTML = keyHtml;
 
     // ── Office standings ──────────────────────────────────────────────────
     el('ds-offtitle').innerHTML = 'Office standings' +
@@ -966,7 +972,7 @@ geotab.addin.driverScorecard = function () {
     var body = rows.map(function(d){
       return '<tr>'+
         '<td class="rank">'+d.rank+'</td>'+
-        '<td class="name">'+esc(d.name)+
+        '<td class="name">'+nameCell(d)+
           (d.provisional ? provTag('Only '+f0(d.miles)+' miles in this window \u2014 the score '+
             'still leans on the fleet average, so treat it as provisional') : '')+
         '</td>'+
@@ -997,7 +1003,7 @@ geotab.addin.driverScorecard = function () {
         '<th class="r">Events</th></tr></thead><tbody>'+
         unranked.map(function(d){
           var n = METRICS.reduce(function(a,m){ return a+(d.ev[m.id]||0); }, 0);
-          return '<tr><td class="name">'+esc(d.name)+'</td><td>'+esc(d.office)+'</td>'+
+          return '<tr><td class="name">'+nameCell(d)+'</td><td>'+esc(d.office)+'</td>'+
                  '<td class="r">'+f0(d.miles)+'</td><td class="r">'+n+'</td></tr>';
         }).join('')+'</tbody></table>'
       : '<div style="padding:16px;font-size:12.5px;color:var(--ink-3)">Everyone cleared '+
@@ -1321,7 +1327,26 @@ geotab.addin.driverScorecard = function () {
       el('ds-offtoggle').className = hide ? '' : 'on';
       el('ds-offtoggle').textContent = hide ? 'Show' : 'Hide';
     });
+    el('ds-extoggle').addEventListener('click', function(){
+      var w = el('ds-example'), hide = w.style.display !== 'none';
+      w.style.display = hide ? 'none' : '';
+      el('ds-extoggle').className = hide ? '' : 'on';
+      el('ds-extoggle').textContent = hide ? 'Show' : 'Hide';
+    });
     el('ds-csv').addEventListener('click', exportCsv);
+  }
+
+  // The driver's own record in MyGeotab. URL confirmed from a real MyGeotab URL:
+  // #user,currentTab:user,id:<id>. New tab -- this is a ranked list someone works
+  // down, and replacing it to look at one person loses their place.
+  function userUrl(id){
+    return id ? location.origin + location.pathname + '#user,currentTab:user,id:' + id : null;
+  }
+  function nameCell(d){
+    var u = userUrl(d.id);
+    return u ? '<a class="ds-link" href="'+esc(u)+'" target="_blank" rel="noopener" '+
+               'title="Open this driver in a new tab">'+esc(d.name)+'</a>'
+             : esc(d.name);
   }
 
   function exportCsv(){
