@@ -1029,7 +1029,11 @@ geotab.addin.driverScorecard = function () {
     // note in the card itself that this is the middle of the board
     var lost = 0;
     var rows = METRICS.map(function(m){
-      var pct = d.pct[m.id], better = Math.round(100-pct), off = m.w*pct, n = d.ev[m.id]||0;
+      // One decimal, not a whole number. The points-off column is computed from the
+      // exact percentile, so rounding this to 52 made the row impossible to check:
+      // (100-52) x 0.55 = 26.4, while the column correctly showed 26.1 from 47.52.
+      // A worked example whose arithmetic does not reconcile is worse than none.
+      var pct = d.pct[m.id], better = (100-pct).toFixed(1), off = m.w*pct, n = d.ev[m.id]||0;
       lost += off;
       var f = fillFor(d.rawPct[m.id]);
       // A clean sheet is scored at the metric's floor, so "better than 100% of the
@@ -1162,7 +1166,7 @@ geotab.addin.driverScorecard = function () {
         var worst  = budget.slice().sort(function(a,b){ return b.pct-a.pct; })[0];
         var lowest = budget.slice().sort(function(a,b){ return a.pct-b.pct; })[0];
         function nm(x){ return x.id.toLowerCase(); }
-        function betterThan(x){ return Math.round(100-x.pct); }
+        function betterThan(x){ return (100-x.pct).toFixed(1); }
         var caps = METRICS.map(function(m){
           return m.id.toLowerCase()+' '+Math.round(m.w*100);
         }).join(', ');
