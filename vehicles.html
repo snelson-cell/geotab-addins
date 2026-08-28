@@ -6,6 +6,20 @@
 </head>
 <body>
 <div id="vh-root">
+  <div class="vh-refs">
+    <div class="vh-ref">
+      <span class="vh-ref-k">Roadside assistance</span>
+      <a class="vh-ref-v" href="tel:+18003258838">800-325-8838</a>
+      <span class="vh-ref-s">any breakdown, any vehicle &mdash; 24 hours</span>
+    </div>
+    <div class="vh-ref">
+      <span class="vh-ref-k">Service locations</span>
+      <a class="vh-ref-v" href="https://www.efleets.com/en/locations.html"
+         target="_blank" rel="noopener">Enterprise Fleet Management &rarr;</a>
+      <span class="vh-ref-s">find an approved shop near a branch</span>
+    </div>
+  </div>
+
   <div class="vh-topbar">
     <div>
       <h2 class="vh-h1">Maintenance</h2>
@@ -114,6 +128,13 @@ geotab.addin.vehicleHealth = function () {
     'table.vh-t tr.bad td{background:#fbece8;}',
     'a.vh-link{color:var(--accent);text-decoration:none;font-weight:600;}',
     'a.vh-link:hover{text-decoration:underline;}',
+    '.vh-refs{display:flex;flex-wrap:wrap;gap:10px;margin:0 0 16px;}',
+    '.vh-ref{flex:1 1 250px;background:var(--surface-1);border:1px solid var(--grid);',
+    '  border-left:3px solid var(--accent);border-radius:0 9px 9px 0;padding:10px 14px;}',
+    '.vh-ref-k{display:block;font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3);}',
+    '.vh-ref-v{display:block;font-size:17px;font-weight:660;color:var(--accent);text-decoration:none;margin-top:1px;}',
+    '.vh-ref-v:hover{text-decoration:underline;}',
+    '.vh-ref-s{display:block;font-size:11.5px;color:var(--ink-3);margin-top:1px;}',
     '.vh-pill{display:inline-block;font-size:11px;font-weight:700;padding:1px 7px;border-radius:20px;}',
     '.vh-pill.ok{background:#e9f5e9;color:var(--good-ink);}',
     '.vh-pill.warn{background:#fdf1e8;color:#8a4b1d;}',

@@ -506,25 +506,24 @@ geotab.addin.speedingZones = function () {
   // rather than broken. `exceptionId` is undocumented and comes from
   // topSpeed.html, which read it off a real MyGeotab URL. Only inputs are
   // passed; the page derives the rest, and supplying more fights it.
-  function rison(v){
-    v = String(v);
-    return /^[A-Za-z0-9_\-.\/]+$/.test(v)
-      ? v
-      : "'" + v.replace(/!/g, '!!').replace(/'/g, "!'") + "'";
+  // Straight to the event's own page in MyGeotab -- map, speed trace, driver,
+  // location, and the Event video tab one click away. URL format confirmed from
+  // a real MyGeotab URL, and the id is the ExceptionEvent id this page already
+  // carries, verified against the API:
+  //
+  //   #event,id:<exceptionEventId>,runByDevice:!t,tab:overview
+  //   #event,id:<exceptionEventId>,runByDevice:!t,tab:video
+  //
+  // This replaces a hand-built Trips History URL whose rison encoding was
+  // inferred rather than checked. Overview rather than video on purpose: only
+  // about two thirds of the fleet has a camera, and the video tab is right there
+  // when there is one.
+  function eventUrl(evId, tab){
+    if(!evId) return null;
+    return location.origin + location.pathname + '#event,id:' + evId +
+           ',runByDevice:!t,tab:' + (tab || 'overview');
   }
-
-  function tripUrl(r){
-    try {
-      var d  = new Date(r.at);
-      var s0 = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0,0,0).toISOString();
-      var e0 = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23,59,59).toISOString();
-      var p  = ['dateRange:(interval:custom,startDate:'+rison(s0)+',endDate:'+rison(e0)+')',
-                'devices:!('+rison(r.dev)+')'];
-      if(r.driver){ p.push('entityType:Driver'); p.push('selectedEntities:!('+rison(r.driver)+')'); }
-      if(r.evId)  { p.push('exceptionId:'+rison(r.evId)); }
-      return location.origin + location.pathname + '#tripsHistory,' + p.join(',');
-    } catch(e){ return null; }
-  }
+  function tripUrl(r){ return eventUrl(r && r.evId); }
 
   // ---- render ---------------------------------------------------------------
 

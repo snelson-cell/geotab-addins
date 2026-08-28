@@ -1,7 +1,7 @@
 {
   "name": "Mira Fleet Charts",
   "supportEmail": "snelson@thegrit.com",
-  "version": "1.19.1",
+  "version": "1.20.0",
   "items": [
     {
       "url": "https://snelson-cell.github.io/geotab-addins/scorecard.html?v=2026-08-27.2",
@@ -18,7 +18,7 @@
       }
     },
     {
-      "url": "https://snelson-cell.github.io/geotab-addins/speeding.html?v=2026-08-27.11",
+      "url": "https://snelson-cell.github.io/geotab-addins/speeding.html?v=2026-08-28.1",
       "path": "ActivityLink/",
       "menuName": {
         "en": "Speeding by Zone"
@@ -46,7 +46,7 @@
       }
     },
     {
-      "url": "https://snelson-cell.github.io/geotab-addins/vehicles.html?v=2026-08-28.2",
+      "url": "https://snelson-cell.github.io/geotab-addins/vehicles.html?v=2026-08-28.3",
       "path": "ActivityLink/",
       "menuName": {
         "en": "Maintenance"
