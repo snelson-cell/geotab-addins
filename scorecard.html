@@ -184,7 +184,7 @@ geotab.addin.driverScorecard = function () {
     '.ds-key-s i{width:19px;height:11px;border-radius:3px;display:inline-block;flex:none;}',
     '.ds-key-n{color:var(--ink-3);}',
     // Per-metric distribution: one stacked bar per office per metric, segments
-    // in the same five colours as the driver cells.
+    // in the same five colors as the driver cells.
     '.ds-dist{display:flex;height:11px;width:100%;min-width:74px;border-radius:3px;overflow:hidden;',
     '  background:var(--grid);}',
     '.ds-dist span{display:block;height:100%;}',
@@ -247,7 +247,7 @@ geotab.addin.driverScorecard = function () {
   // perfectly average read as below average, purely for driving less.
   //
   // Target is now the MEDIAN rate per metric -- the neutral point of a
-  // percentile scale. A thin driver at exactly median behaviour now scores
+  // percentile scale. A thin driver at exactly median behavior now scores
   // exactly 50; one with no events at all scores 79, credited but not vaulted.
   // Because the target no longer carries a built-in penalty, K can go back up:
   // at 1.0 the best-evidenced driver holds #1, 13 of the top 15 have 750+
@@ -300,7 +300,7 @@ geotab.addin.driverScorecard = function () {
 
   // ── Company benchmark ────────────────────────────────────────────────────
   // A branch-scoped login can only see its own drivers, so left to itself it
-  // ranks them against each other -- which centres EVERY branch on ~50 and
+  // ranks them against each other -- which centers EVERY branch on ~50 and
   // makes the scores disagree with what an all-branch login sees for the same
   // person. Measured before this was added: Chicago's own login showed its
   // median driver at 52 where the company view said 19, and ATL North's showed
@@ -500,7 +500,7 @@ geotab.addin.driverScorecard = function () {
     if(!drivers.length) return [];
     // Shrink target and percentile base both come from the COMPANY benchmark,
     // never from whoever happens to be visible. Without this a branch-scoped
-    // login ranks its drivers against each other, which centres every branch on
+    // login ranks its drivers against each other, which centers every branch on
     // ~50 and makes the same driver score differently for a branch manager than
     // for Chad or Megan — the two people who need to read the same row in a 1:1.
     var fleetRate = {};
@@ -517,11 +517,11 @@ geotab.addin.driverScorecard = function () {
         var clean = !(d.ev[m.id]||0);
         var adj = ((d.ev[m.id]||0) + SHRINK_K*fleetRate[m.id]) / (d.miles/1000 + SHRINK_K);
         d.pct[m.id] = pctFromBreaks(bmWin().adjusted[m.id], adj, clean);
-        // Colour is company-referenced too. Ranking colours within whoever is
+        // Color is company-referenced too. Ranking colors within whoever is
         // on screen renormalises every branch: a branch whose drivers are all
         // genuinely excellent would still show a normal spread of blue and red,
         // and the same number would be grey to one login and red to another.
-        // Same for the colour, so a 0.0 cell reads as the best possible rather than
+        // Same for the color, so a 0.0 cell reads as the best possible rather than
         // as "typical" merely because most of the fleet is also at zero.
         d.rawPct[m.id] = pctFromBreaks(bmWin().raw[m.id], rawRate[i], clean);
       });
@@ -891,9 +891,9 @@ geotab.addin.driverScorecard = function () {
               standings.length ? esc(standings[0].office)+' best &middot; <span class="muted">'+
                 esc(standings[standings.length-1].office)+' worst</span>' : '&mdash;'));
 
-    // ── Colour key, directly above the standings it also explains ─────────
+    // ── Color key, directly above the standings it also explains ─────────
     el('ds-key').innerHTML =
-      '<span class="ds-key-t">Colour</span>'+
+      '<span class="ds-key-t">Color</span>'+
       FILL.map(function(f,i){
         return '<span class="ds-key-s"><i style="background:'+f.bg+'"></i>'+
           ['Best 10%','Next 20%','Middle 40%','Worse than 70%','Worst 10%'][i]+'</span>';
@@ -913,7 +913,7 @@ geotab.addin.driverScorecard = function () {
       '<th class="c">Typical driver</th>'+
       METRICS.map(function(m){ return '<th class="c">'+esc(m.id)+'</th>'; }).join('')+
       '</tr></thead><tbody>';
-    // Share of an office's drivers falling in each colour band, per metric.
+    // Share of an office's drivers falling in each color band, per metric.
     function distCell(row, m){
       var cnt, n;
       if(row.dist){ cnt = row.dist[m.id].slice(); n = row.n; }
@@ -979,7 +979,7 @@ geotab.addin.driverScorecard = function () {
           var f = fillFor(d.rawPct[m.id]);
           return '<td class="mcell" style="background:'+f.bg+';color:'+f.fg+'" title="'+
             esc(d.name)+' — '+esc(m.id)+': '+d.rate[m.id].toFixed(1)+' per 1,000 mi ('+
-            (d.ev[m.id]||0)+' events over '+f0(d.miles)+' mi). Colour is this raw rate against '+
+            (d.ev[m.id]||0)+' events over '+f0(d.miles)+' mi). Color is this raw rate against '+
             'the fleet; the score also allows for how few miles they have driven.">'+
             d.rate[m.id].toFixed(1)+'</td>';
         }).join('')+
@@ -1014,7 +1014,7 @@ geotab.addin.driverScorecard = function () {
     if(!view.length){ el('ds-example').innerHTML=''; el('ds-extitle').textContent='Worked example'; return; }
     // The MEDIAN driver in the current view, not the best one. An example is
     // meant to be representative: the top driver's bar is almost entirely one
-    // colour, which demonstrates nothing about how the points come off. The
+    // color, which demonstrates nothing about how the points come off. The
     // middle of the board shows all four bites at a readable size.
     var byScore = view.slice().sort(function(a,b){ return a.score-b.score; });
     var d = byScore[Math.floor(byScore.length/2)];
@@ -1113,7 +1113,7 @@ geotab.addin.driverScorecard = function () {
         'as the miles build. At '+f0(d.miles)+' miles '+esc(d.name.split(' ')[0])+'&rsquo;s score is '+
         f0(100*d.miles/(d.miles+SHRINK_K*1000))+'% their own driving'+
         (d.miles>=1500?' &mdash; effectively all of it':'')+
-        '. The colours show the raw rate; the percentage beside it is after that nudge.</p>'+
+        '. The colors show the raw rate; the percentage beside it is after that nudge.</p>'+
       '<p class="foot2">This example follows whatever is on screen &mdash; pick a different office '+
         'or time range and it re-works itself for the middle driver there.</p>'+
       '</div>';
@@ -1213,7 +1213,7 @@ geotab.addin.driverScorecard = function () {
       'because percentile scoring caps what any single metric can cost. Until there is a defensible '+
       'way to draw that line, the table is simply sorted worst-last and the judgement is yours.</p>'+
       '<p><b>A clean sheet costs nothing.</b> Zero events on a metric is the best possible '+
-      'outcome and is scored as such, whatever the mileage &mdash; there is no behaviour a driver '+
+      'outcome and is scored as such, whatever the mileage &mdash; there is no behavior a driver '+
       'could change to do better, so there is nothing to deduct. Those cells read as the best band '+
       'and take 0.0 points.</p>'+
       '<p><b>New drivers are nudged toward the fleet average, and it fades fast.</b> Before '+
@@ -1257,11 +1257,11 @@ geotab.addin.driverScorecard = function () {
       f0(BENCHMARK.drivers)+' drivers as of '+esc(String(BENCHMARK.generated).slice(0,10))+' &mdash; '+
       'not against whoever the login happens to see. A branch manager and an all-branch login read '+
       'the identical number for the same driver, which is the point: the two of them look at it '+
-      'together. Left to rank only its own people a branch centres itself on 50 whatever its real '+
+      'together. Left to rank only its own people a branch centers itself on 50 whatever its real '+
       'standing &mdash; measured before this was fixed, Chicago&rsquo;s own view put its median '+
-      'driver at 52 where the company view said 19. <b>Cell colours read against the company too.</b> '+
+      'driver at 52 where the company view said 19. <b>Cell colors read against the company too.</b> '+
       'A branch whose drivers are genuinely the best in Mira shows a wall of blue, and the same '+
-      'number is the same colour on every screen &mdash; 13.1 braking events per 1,000 miles sits '+
+      'number is the same color on every screen &mdash; 13.1 braking events per 1,000 miles sits '+
       'at the 81st percentile company-wide whoever is looking at it.</p>'+
       '<p><b>Drivers archived in Geotab are excluded entirely</b>'+
       (goneCount ? ' &mdash; '+goneCount+' in this window' : '')+'. Geotab returns archived users '+

@@ -145,7 +145,7 @@ geotab.addin.fleetByType = function () {
   // back blank for every vehicle — an all-"Unknown" chart that looks plausible.
   var OWN_PROP_NAME = /^ownership$/i;
 
-  // Colours: slot-1 blue and slot-2 orange from the house palette. Validated as
+  // Colors: slot-1 blue and slot-2 orange from the house palette. Validated as
   // a categorical pair on this surface — CVD ΔE 24.7, normal-vision 33.6, both
   // far clear of the 8 / 15 floors. Unknown is deliberately a NEUTRAL, not a
   // third hue: it is an absence of data, not a third kind of vehicle, and it
@@ -276,7 +276,7 @@ geotab.addin.fleetByType = function () {
       colors:[C.owned, C.rental, C.unknown],
       plotOptions:{bar:{horizontal:true, barHeight:'64%',
         borderRadius:4, borderRadiusApplication:'end', borderRadiusWhenStacked:'last'}},
-      // 2px surface-coloured gap between stacked segments, so adjacent fills
+      // 2px surface-colored gap between stacked segments, so adjacent fills
       // read as separate marks rather than one blended band.
       stroke:{show:true, width:2, colors:[C.surface]},
       // Never a number on every segment: only where the segment is wide enough
@@ -319,7 +319,7 @@ geotab.addin.fleetByType = function () {
     chart.render();
 
     // Legend is always present for >= 2 series, so identity is never carried by
-    // colour alone.
+    // color alone.
     el('fbt-legend').innerHTML =
       '<span><i class="fbt-swatch" style="background:'+C.owned+'"></i>'+OWNED+' &mdash; '+s.owned+'</span>'+
       '<span><i class="fbt-swatch" style="background:'+C.rental+'"></i>'+RENTAL+' &mdash; '+s.rental+'</span>'+
@@ -591,7 +591,7 @@ geotab.addin.fleetByType = function () {
   }
   // ResizeObserver delivery rides the animation-frame loop, so it goes quiet in
   // a backgrounded tab and some embedded contexts. One clientWidth read makes
-  // the behaviour independent of that.
+  // the behavior independent of that.
   function startPoll(){ if(!resizePoll && onResize) resizePoll = setInterval(onResize, 400); }
   function stopPoll(){ if(resizePoll){ clearInterval(resizePoll); resizePoll = null; } }
 

@@ -226,14 +226,14 @@ geotab.addin.speedingViolin = function () {
   //     said "flagged for coaching review". Now every surface reads from here.
   //
   // Numbered levels (Level 1/2/3) were considered and rejected: numbers carry no
-  // inherent direction (a Level 1 trauma centre is the best one, a Category 1
+  // inherent direction (a Level 1 trauma center is the best one, a Category 1
   // hurricane the weakest), so they force every viewer to learn a mapping.
   //
   // Renaming is not legal protection and must not be treated as such — discovery
   // gets these definitions too. What protects the company is that a flag here is
   // reliably followed by documented coaching.
-  // ink is the accessible text colour for each band (the fill colours in C are
-  // too light to read against). Kept here so a name and its colour can never
+  // ink is the accessible text color for each band (the fill colors in C are
+  // too light to read against). Kept here so a name and its color can never
   // drift apart across the six places a band is written.
   var TIERS = {
     low:  {name:'Within target',   zone:'WITHIN TARGET',   ink:'#0a6b18'},
@@ -450,7 +450,7 @@ geotab.addin.speedingViolin = function () {
     // Color is deliberately NOT tier here: tier is a pure function of x, so
     // painting it on the dots spends the only free channel restating the axis.
     // The zones carry tier (large regions + text labels, so it survives every
-    // colour-vision deficiency), and fill/hollow carries whether Geotab has a
+    // color-vision deficiency), and fill/hollow carries whether Geotab has a
     // driver attached — a data-quality gap that matters in a new deployment.
     var withDrv = [], noDrv = [], medPts = [];
     offices.forEach(function(off, i){
@@ -484,7 +484,7 @@ geotab.addin.speedingViolin = function () {
     ];
 
     // Zones carry the risk read. The numeric boundaries live in the legend strip
-    // above, where each status colour is paired with its text (a status colour
+    // above, where each status color is paired with its text (a status color
     // must never carry meaning by hue alone).
     //
     // A zone label is DROPPED when its band is too narrow to hold it, rather
@@ -538,7 +538,7 @@ geotab.addin.speedingViolin = function () {
 
     // Office median drawn as the Mira mark rather than a plain square. Sized a
     // little larger than the old 5.5px marker so the shape stays legible, and
-    // offset by half its size so it centres on the value rather than hanging
+    // offset by half its size so it centers on the value rather than hanging
     // off it.
     var MARK_PX = narrow ? 13 : 16;
     var points = medPts.map(function(m){
@@ -1081,7 +1081,7 @@ geotab.addin.speedingViolin = function () {
   // ResizeObserver delivery is tied to the animation-frame loop, so it goes
   // quiet wherever frames aren't being produced — a backgrounded tab, and some
   // embedded/iframe contexts. This poll is one clientWidth read and makes the
-  // behaviour independent of that; onResize itself ignores sub-16px changes, so
+  // behavior independent of that; onResize itself ignores sub-16px changes, so
   // a tick where nothing moved costs nothing.
   function startPoll(){
     if(resizePoll || !onResize) return;

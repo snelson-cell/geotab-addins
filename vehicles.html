@@ -8,7 +8,7 @@
 <div id="vh-root">
   <div class="vh-topbar">
     <div>
-      <h2 class="vh-h1">Vehicle health</h2>
+      <h2 class="vh-h1">Maintenance</h2>
       <div class="vh-scope" id="vh-scope">Loading…</div>
     </div>
     <div class="vh-controls">
@@ -137,7 +137,7 @@ geotab.addin.vehicleHealth = function () {
 
   var D_ODO  = 'DiagnosticOdometerId';
   var D_OIL  = 'DiagnosticEngineOilLifeRemainingId';
-  var TYRES  = [
+  var TIRES  = [
     {k:'FL', id:'DiagnosticTirePressureFrontLeftId',  label:'Front left'},
     {k:'FR', id:'DiagnosticTirePressureFrontRightId', label:'Front right'},
     {k:'RL', id:'DiagnosticTirePressureRearLeftId',   label:'Rear left'},
@@ -187,8 +187,8 @@ geotab.addin.vehicleHealth = function () {
   // placard is not in Geotab, so each vehicle is compared with its OWN four
   // corners — the median of them stands in for the placard. Self-calibrating,
   // so Mavericks, Colorados and rentals all judge correctly with no lookup.
-  var TYRE_LOW_FRAC = 0.75;
-  var TYRE_SPREAD   = 6;    // psi between best and worst corner = probable leak
+  var TIRE_LOW_FRAC = 0.75;
+  var TIRE_SPREAD   = 6;    // psi between best and worst corner = probable leak
   var STALE_HOURS   = 72;   // a reading older than this is labelled, not trusted
   var PAGE_CAP = 25000, ROW_LIMIT = 25000;
   // Latest-value windows, walked backwards. Odometer logs heavily — a single
@@ -327,7 +327,7 @@ geotab.addin.vehicleHealth = function () {
                    assigned:!!assigned[d.id], last:lastComm[d.id]||null,
                    faults:faultCount[d.id]||0,
                    devIssues:Object.keys(devIssue[d.id]||{}),
-                   miles:0, odo:null, odoAt:null, oil:null, oilAt:null, tyre:{}, tyreAt:null};
+                   miles:0, odo:null, odoAt:null, oil:null, oilAt:null, tire:{}, tireAt:null};
       });
       if(!Object.keys(veh).length){
         fail('No vehicle in your data scope is assigned to one of the '+
@@ -352,16 +352,16 @@ geotab.addin.vehicleHealth = function () {
               if(veh[id]){ veh[id].oil=oil[id].v; veh[id].oilAt=oil[id].t; }
             });
             var ti=0;
-            (function nextTyre(){
-              if(ti >= TYRES.length){ finish(); return; }
-              var T=TYRES[ti++];
+            (function nextTire(){
+              if(ti >= TIRES.length){ finish(); return; }
+              var T=TIRES[ti++];
               latestByDevice(api, T.id, function(m){
                 Object.keys(m).forEach(function(id){
-                  if(veh[id]){ veh[id].tyre[T.k]=m[id].v*PA_TO_PSI;
-                               veh[id].tyreAt=Math.max(veh[id].tyreAt||0, m[id].t); }
+                  if(veh[id]){ veh[id].tire[T.k]=m[id].v*PA_TO_PSI;
+                               veh[id].tireAt=Math.max(veh[id].tireAt||0, m[id].t); }
                 });
-                nextTyre();
-              }, function(err){ nextTyre(); });   // one missing corner must not kill the page
+                nextTire();
+              }, function(err){ nextTire(); });   // one missing corner must not kill the page
             })();
           }, function(err){ fail('Error loading oil life: '+esc(err)); });
         }, function(err){ fail('Error loading odometer: '+esc(err)); });
@@ -393,18 +393,18 @@ geotab.addin.vehicleHealth = function () {
       else if(v.oil <= OIL_SOON){ out.flags.push('oil-soon'); out.severity=Math.max(out.severity,2); }
     }
 
-    // Tyres, judged against this vehicle's own corners.
-    var vals=[], corners=Object.keys(v.tyre);
-    corners.forEach(function(k){ vals.push(v.tyre[k]); });
-    v.tyreMin=null; v.tyreSpread=null; v.tyreRef=null;
+    // Tires, judged against this vehicle's own corners.
+    var vals=[], corners=Object.keys(v.tire);
+    corners.forEach(function(k){ vals.push(v.tire[k]); });
+    v.tireMin=null; v.tireSpread=null; v.tireRef=null;
     if(vals.length >= 3){
-      v.tyreRef=median(vals);
-      v.tyreMin=Math.min.apply(null, vals);
-      v.tyreSpread=Math.max.apply(null, vals)-v.tyreMin;
-      if(v.tyreMin < v.tyreRef*TYRE_LOW_FRAC){
-        out.flags.push('tyre-low'); out.severity=Math.max(out.severity,3);
-      } else if(v.tyreSpread >= TYRE_SPREAD){
-        out.flags.push('tyre-spread'); out.severity=Math.max(out.severity,2);
+      v.tireRef=median(vals);
+      v.tireMin=Math.min.apply(null, vals);
+      v.tireSpread=Math.max.apply(null, vals)-v.tireMin;
+      if(v.tireMin < v.tireRef*TIRE_LOW_FRAC){
+        out.flags.push('tire-low'); out.severity=Math.max(out.severity,3);
+      } else if(v.tireSpread >= TIRE_SPREAD){
+        out.flags.push('tire-spread'); out.severity=Math.max(out.severity,2);
       }
     }
 
@@ -449,8 +449,8 @@ geotab.addin.vehicleHealth = function () {
     var blind   = view.filter(function(v){ return  v.blind; });
     var attn    = visible.filter(function(v){ return v.a.severity > 0; });
     var oilDue  = visible.filter(function(v){ return v.oil != null && v.oil <= OIL_SOON; });
-    var tyre    = visible.filter(function(v){
-      return v.a.flags.indexOf('tyre-low')>=0 || v.a.flags.indexOf('tyre-spread')>=0; });
+    var tire    = visible.filter(function(v){
+      return v.a.flags.indexOf('tire-low')>=0 || v.a.flags.indexOf('tire-spread')>=0; });
     var fault   = visible.filter(function(v){ return v.faults > 0; });
     var devbad  = visible.filter(function(v){ return v.devIssues.length > 0; });
 
@@ -460,14 +460,14 @@ geotab.addin.vehicleHealth = function () {
           (officeFilter ? esc(officeFilter) : 'all branches')+'</span>') +
       kpi('Service due', oilDue.length ? '#fab219' : null, String(oilDue.length),
           'oil life at or under '+OIL_SOON+'%') +
-      kpi('Tyre alerts', tyre.length ? '#fab219' : null, String(tyre.length),
+      kpi('Tire alerts', tire.length ? '#fab219' : null, String(tire.length),
           'a corner low, or the set uneven') +
       kpi('Device problems', devbad.length ? '#d03b3b' : null, String(devbad.length),
           'unplugged, low voltage or bad install') +
       kpi('Fault codes', null, String(fault.length),
           'vehicles with an active DTC &middot; <span class="muted">no severity available</span>') +
       kpi('Not measurable', blind.length ? '#898781' : null, String(blind.length),
-          'no oil life or tyre data &middot; <span class="muted">listed below</span>');
+          'no oil life or tire data &middot; <span class="muted">listed below</span>');
 
     var rows = (attnOnly ? attn : visible).slice().sort(function(a,b){
       return b.a.severity-a.a.severity || (a.oil==null?101:a.oil)-(b.oil==null?101:b.oil)
@@ -478,7 +478,7 @@ geotab.addin.vehicleHealth = function () {
 
     var head='<table class="vh-t"><thead><tr>'+
       '<th>Vehicle</th><th>Branch</th><th class="r">Odometer</th><th class="r">Mi/day</th>'+
-      '<th>Oil life</th><th class="c">Service</th><th>Tyres</th><th class="c">Fault codes</th><th>Device</th>'+
+      '<th>Oil life</th><th class="c">Service</th><th>Tires</th><th class="c">Fault codes</th><th>Device</th>'+
       '<th class="c">Camera</th><th class="c">Driver</th><th class="c">Last heard</th>'+
       '<th class="c">Open</th></tr></thead><tbody>';
     var body=rows.map(function(v){
@@ -490,7 +490,7 @@ geotab.addin.vehicleHealth = function () {
         '<td class="r">'+(v.miles>0 ? v.mpd.toFixed(0) : '<span class="vh-age">0</span>')+'</td>'+
         '<td>'+oilCell(v)+'</td>'+
         '<td class="c">'+serviceCell(v)+'</td>'+
-        '<td>'+tyreCell(v)+'</td>'+
+        '<td>'+tireCell(v)+'</td>'+
         '<td class="c">'+(v.faults ? '<span class="vh-pill warn">'+v.faults+'</span>'
                                    : '<span class="vh-age">0</span>')+'</td>'+
         '<td>'+(v.devIssues.length ? '<span class="vh-pill bad">'+esc(v.devIssues[0])+'</span>'
@@ -539,13 +539,13 @@ geotab.addin.vehicleHealth = function () {
     if(v.oilDays<=14) return '<span class="vh-pill warn">~'+v.oilDays+'d</span>';
     return '<span class="vh-age">~'+v.oilDays+'d</span>';
   }
-  function tyreCell(v){
-    if(v.tyreMin==null) return '<span class="vh-age">no reading</span>';
-    var low=v.a.flags.indexOf('tyre-low')>=0, sp=v.a.flags.indexOf('tyre-spread')>=0;
-    var txt=v.tyreMin.toFixed(1)+' psi';
+  function tireCell(v){
+    if(v.tireMin==null) return '<span class="vh-age">no reading</span>';
+    var low=v.a.flags.indexOf('tire-low')>=0, sp=v.a.flags.indexOf('tire-spread')>=0;
+    var txt=v.tireMin.toFixed(1)+' psi';
     if(low) return '<span class="vh-pill bad">'+txt+'</span> <span class="vh-age">vs '+
-      v.tyreRef.toFixed(0)+' typical</span>';
-    if(sp)  return '<span class="vh-pill warn">'+v.tyreSpread.toFixed(1)+' psi spread</span>';
+      v.tireRef.toFixed(0)+' typical</span>';
+    if(sp)  return '<span class="vh-pill warn">'+v.tireSpread.toFixed(1)+' psi spread</span>';
     return '<span class="vh-age">'+txt+' &middot; even</span>';
   }
 
@@ -561,12 +561,12 @@ geotab.addin.vehicleHealth = function () {
       '<p><b>What this page is for.</b> Which vehicles need attention before they break down or '+
       'fail an inspection. It is the counterpart to the Driver Scorecard: that one asks how your '+
       'people drive, this one asks whether the trucks are fit to be driven.</p>'+
-      '<p><b>A low tyre is judged against its own vehicle.</b> Federal rules require a dashboard '+
+      '<p><b>A low tire is judged against its own vehicle.</b> Federal rules require a dashboard '+
       'TPMS light at 25% below the placard pressure, but the placard is not in Geotab &mdash; so '+
       'each corner is compared with the median of that vehicle\'s own four. A Maverick and a '+
       'loaded Colorado are therefore both judged correctly with no lookup table. A <b>spread</b> '+
-      'of '+TYRE_SPREAD+' psi or more between best and worst corner is flagged separately: four '+
-      'tyres low together is cold weather, one tyre low is a leak.</p>'+
+      'of '+TIRE_SPREAD+' psi or more between best and worst corner is flagged separately: four '+
+      'tires low together is cold weather, one tire low is a leak.</p>'+
       '<p><b>Service timing uses the vehicle\'s own mileage.</b> A van covering 90 miles a day at '+
       '30% oil life needs booking before a spare covering 5 miles a day at the same percentage. '+
       'The day count assumes a 10,000-mile oil interval &mdash; once service history is being '+
@@ -574,7 +574,7 @@ geotab.addin.vehicleHealth = function () {
       '<p><b>Readings are last-known, not live</b>, and each one carries its age. A parked vehicle '+
       'keeps showing the last figure it sent; if that is days old, the age beside it says so '+
       'rather than implying the number is current.</p>'+
-      '<p><b>'+nBlind+' of '+(nVis+nBlind)+' vehicles report no oil life or tyre data at all</b> and '+
+      '<p><b>'+nBlind+' of '+(nVis+nBlind)+' vehicles report no oil life or tire data at all</b> and '+
       'are listed separately rather than shown as healthy. Roughly half the fleet is in that state '+
       '&mdash; an empty maintenance row means the truck is not talking, not that it is fine.</p>'+
       '<p><b>Fault codes are shown but do not drive the attention list.</b> Geotab reports 3,939 '+
@@ -635,14 +635,14 @@ geotab.addin.vehicleHealth = function () {
   function exportCsv(){
     if(!lastRows.length) return;
     var head=['Vehicle','Branch','Odometer_mi','MilesPerDay','OilLife_pct','ServiceInDays',
-              'TyreMin_psi','TyreSpread_psi','ActiveFaults','DeviceIssues','Camera','DriverAssigned',
+              'TireMin_psi','TireSpread_psi','ActiveFaults','DeviceIssues','Camera','DriverAssigned',
               'LastHeard_hours','Flags'];
     var now=DATA.to.getTime();
     var lines=[head.join(',')].concat(lastRows.map(function(v){
       return ['"'+String(v.name).replace(/"/g,'""')+'"','"'+v.office+'"',
         v.odo!=null?Math.round(v.odo):'', v.mpd.toFixed(1),
         v.oil!=null?v.oil.toFixed(1):'', v.oilDays!=null?v.oilDays:'',
-        v.tyreMin!=null?v.tyreMin.toFixed(1):'', v.tyreSpread!=null?v.tyreSpread.toFixed(1):'',
+        v.tireMin!=null?v.tireMin.toFixed(1):'', v.tireSpread!=null?v.tireSpread.toFixed(1):'',
         v.faults, v.camera?'yes':'no', v.assigned?'yes':'no',
         v.last?Math.round((now-v.last.getTime())/3600000):'', '"'+v.a.flags.join(' ')+'"'].join(',');
     }));
