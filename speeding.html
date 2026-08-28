@@ -23,7 +23,7 @@
   </div>
 
   <div id="sz-notes"></div>
-  <div id="sz-headline" class="sz-headline"></div>
+  <div id="sz-headline" class="sz-headline" style="display:none"></div>
   <div id="sz-kpis" class="sz-kpis"></div>
 
   <section class="sz-block">
@@ -173,6 +173,7 @@ geotab.addin.speedingZones = function () {
   var PERIODS = [{d:7,n:'Last 7 days'},{d:14,n:'Last 14 days'},{d:30,n:'Last 30 days'}];
 
   var apiRef=null, MODEL=null, bandFilter=null, officeFilter='', days=7, loading=false;
+  var forceFull=false;
 
   function el(id){ return document.getElementById(id); }
   function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, function(c){
@@ -274,7 +275,7 @@ geotab.addin.speedingZones = function () {
   // One call per device covering the whole window. Throttled below the 300/min
   // ceiling, because a company-wide 30-day view touches every device in the fleet.
   function fetchLimits(api, devIds, onProgress, done, fail){
-    var timelines = {}, i = 0, CHUNK = 40;
+    var timelines = {}, i = 0, CHUNK = 20;
     function step(){
       if(i >= devIds.length){ done(timelines); return; }
       var slice = devIds.slice(i, i+CHUNK);
@@ -294,8 +295,7 @@ geotab.addin.speedingZones = function () {
         });
         i += CHUNK;
         onProgress(Math.min(i, devIds.length), devIds.length);
-        // Stay under the per-minute ceiling on big windows.
-        setTimeout(step, devIds.length > 240 ? 9000 : 0);
+        setTimeout(step, 0);
       }, fail);
     }
     step();
@@ -405,6 +405,7 @@ geotab.addin.speedingZones = function () {
 
   function renderHeadline(){
     var h = el('sz-headline'), w = MODEL && MODEL.worst;
+    h.style.display = '';
     if(!w){
       h.className = 'sz-headline none';
       h.innerHTML = '<div class="lbl">Worst event</div>'+
@@ -559,11 +560,31 @@ geotab.addin.speedingZones = function () {
 
   // ---- load -----------------------------------------------------------------
 
+  // Resolving posted limits costs roughly 1.5-3 seconds per vehicle per week --
+  // that is GetRoadMaxSpeeds latency, not quota. One office is fine; the whole
+  // fleet is several minutes, so it is offered rather than run automatically.
+  function estimateSecs(nDev){ return Math.round(nDev * 1.8); }
+
+  function offerFullRun(api, nDev){
+    loading = false;
+    el('sz-root').classList.remove('busy');
+    el('sz-scope').textContent = 'Pick a location, or run the whole fleet below.';
+    clearNotes();
+    var mins = Math.max(1, Math.round(estimateSecs(nDev)/60));
+    note('<b>All locations takes about '+mins+' minute'+(mins>1?'s':'')+'.</b> '+
+         'Posted limits have to be read for '+nDev+' vehicles, and Geotab returns them '+
+         'one vehicle at a time. Choosing a single location above makes it quick. '+
+         '<button type="button" id="sz-runall" class="sz-btn" style="margin-left:8px">'+
+         'Run all locations anyway</button>');
+    var b = document.getElementById('sz-runall');
+    if(b) b.addEventListener('click', function(){ forceFull = true; load(api); });
+  }
+
   function load(api){
     if(loading) return;
     loading = true; apiRef = api; clearNotes(); bandFilter = null;
     el('sz-root').classList.add('busy');
-    el('sz-scope').textContent = 'Loading ' + days + ' days…';
+    el('sz-scope').textContent = 'Loading vehicles and drivers…';
 
     var to = new Date(), from = new Date(to.getTime() - days*24*3600*1000);
     WIN.from = from.toISOString(); WIN.to = to.toISOString();
@@ -590,6 +611,7 @@ geotab.addin.speedingZones = function () {
         if(!officeFilter || off === officeFilter) inScope[d.id] = true;
       });
 
+      el('sz-scope').textContent = 'Loading speeding events…';
       var got = [], left = SOURCE_RULES.length;
       SOURCE_RULES.forEach(function(rid){
         fetchEvents(api, rid, WIN.from, WIN.to, 0, function(rows){
@@ -597,6 +619,9 @@ geotab.addin.speedingZones = function () {
           if(--left) return;
 
           var evts = dedupe(got).filter(function(e){ return inScope[e.dev]; });
+          var nDev = Object.keys(evts.reduce(function(m,e){ m[e.dev]=1; return m; }, {})).length;
+          if(!officeFilter && !forceFull && nDev > 60){ offerFullRun(api, nDev); return; }
+          forceFull = false;
           if(!evts.length){
             MODEL = build([], 0, devices, users, {});
             loading = false; el('sz-root').classList.remove('busy');
@@ -605,15 +630,18 @@ geotab.addin.speedingZones = function () {
           }
 
           var devIds = Object.keys(evts.reduce(function(m,e){ m[e.dev]=1; return m; }, {}));
+          el('sz-scope').textContent = 'Reading posted limits for '+devIds.length+' vehicles…';
 
           fetchLimits(api, devIds, function(done_, total){
-            el('sz-scope').textContent = 'Reading posted limits… vehicle '+
-              done_.toLocaleString()+' of '+total.toLocaleString();
+            var pct = Math.round(100*done_/total);
+            el('sz-scope').textContent = 'Reading posted limits… '+pct+'% ('+
+              done_+' of '+total+' vehicles)';
           }, function(timelines){
             var r = resolveAll(evts, timelines);
 
             // Distance, for the rate. Trip hard-caps at TRIP_CAP rows regardless of
             // resultsLimit, so a wide window is split rather than silently truncated.
+            el('sz-scope').textContent = 'Loading distance driven…';
             fetchTrips(api, WIN.from, WIN.to, 0, function(trips){
               var miles = {}, milesTotal = 0;
               trips.forEach(function(t){
@@ -670,6 +698,7 @@ geotab.addin.speedingZones = function () {
         .map(function(n){ return '<option value="'+esc(n)+'">'+esc(n)+'</option>'; }).join('');
     o.addEventListener('change', function(){
       officeFilter = o.value;
+      forceFull = false;
       if(apiRef) load(apiRef);
     });
 
