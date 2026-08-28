@@ -364,8 +364,11 @@ geotab.addin.speedingZones = function () {
       if(r.over < p.over){ underPolicy++; return; }
       r.policy = p.key; r.policyName = p.name;
       r.band = bandOf(r.posted);
-      r.driverName = r.driver ? (nameOf[r.driver] || 'Unknown driver') : 'No driver assigned';
       r.vehicle = (devById[r.dev]||{}).name || r.dev;
+      // Naming the truck matters when there is no driver: three unassigned
+      // vehicles otherwise render as three identical rows nobody can act on.
+      r.driverName = r.driver ? (nameOf[r.driver] || 'Unknown driver')
+                              : (r.vehicle + ' — no driver');
       kept.push(r);
     });
 
