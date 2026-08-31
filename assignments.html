@@ -32,6 +32,7 @@
     <div class="da-title" id="da-veh-title">Trucks with nobody assigned</div>
   </div>
   <div class="da-card" id="da-vehicles"></div>
+  <div class="da-awaiting" id="da-awaiting"></div>
 
   <div class="da-head" id="da-byloc-head">
     <div class="da-title">By location</div>
@@ -115,6 +116,8 @@ geotab.addin.driverAssignments = function () {
     '.da-bar{height:5px;border-radius:3px;background:var(--grid);margin-top:5px;overflow:hidden;min-width:70px;}',
     '.da-bar i{display:block;height:100%;border-radius:3px;}',
     '.da-sub{font-size:11.5px;color:var(--ink-3);}',
+    '.da-awaiting{margin:8px 2px 0;font-size:12.5px;color:var(--ink-3);}',
+    '.da-awaiting b{color:var(--ink-2);}',
     '.da-foot{margin:22px 0 0;font-size:12px;color:var(--ink-3);max-width:82ch;line-height:1.6;}',
     '.da-foot p{margin:0 0 7px;}'
   ].join('\n');
@@ -281,14 +284,16 @@ geotab.addin.driverAssignments = function () {
     // Trucks at an office with nobody currently assigned. A parked spare and a
     // truck covering 300 miles a week both belong here -- the miles column is
     // what separates them, so nothing is filtered out on mileage.
-    var orphan=[];
+    var orphan=[], awaiting={};
     Object.keys(devById).forEach(function(id){
       var off=devOffice[id];
       if(!off || vehDrv[id]) return;
-      // Placeholders are assets with no hardware -- 95 of them fleet-wide. They
-      // can never carry a driver, so listing them under "nobody assigned" was
-      // 42% of this table saying nothing. Fleet Roster is where they belong.
-      if((devById[id].deviceType||'None')==='None') return;
+      // Placeholders come off the full Enterprise list -- real trucks waiting on
+      // a GO9. They belong to the fleet, but not in this table: its columns are
+      // miles and last-moved, which a device cannot answer when there is no
+      // device, and Geotab will not attach a driver to one either. Counted
+      // below the table instead, so they stay visible without filling it.
+      if((devById[id].deviceType||'None')==='None'){ awaiting[off]=(awaiting[off]||0)+1; return; }
       orphan.push({id:id, name:devById[id].name, office:off,
                    model:makeModel(devById[id].vinInfoMake, devById[id].vinInfoModel),
                    year:devById[id].vinInfoYear||'',
@@ -302,7 +307,7 @@ geotab.addin.driverAssignments = function () {
       if(!devOffice[id]) return;
       totalMi += miles[id]||0; totalNo += milesNoDrv[id]||0;
     });
-    return {crew:crew, orphan:orphan, totalMi:totalMi, totalNo:totalNo};
+    return {crew:crew, orphan:orphan, awaiting:awaiting, totalMi:totalMi, totalNo:totalNo};
   }
 
   function view(){
@@ -441,6 +446,16 @@ geotab.addin.driverAssignments = function () {
           '<td class="da-sub">'+daysAgo(o.last)+'</td></tr>';
       }).join('')+'</tbody></table>'
       : '<div class="da-empty">Every truck here has a driver assigned.</div>';
+    var waitN=0;
+    Object.keys(MODEL.awaiting||{}).forEach(function(o){
+      if(!officeFilter || o===officeFilter) waitN+=MODEL.awaiting[o];
+    });
+    el('da-awaiting').innerHTML = waitN
+      ? 'Plus <b>'+waitN+'</b> '+(waitN===1?'truck':'trucks')+
+        (officeFilter?' here':'')+' awaiting a GO9 \u2014 on the Enterprise list, no device fitted '+
+        'yet, so nothing can be assigned to '+(waitN===1?'it':'them')+' or measured on '+
+        (waitN===1?'it':'them')+'. '+(waitN===1?'It is':'They are')+' tracked on Fleet Roster.'
+      : '';
 
     el('da-foot').innerHTML =
       '<p><b>Who counts as HCS.</b> A driver whose Geotab record carries a Rippling worker id. '+
@@ -448,10 +463,10 @@ geotab.addin.driverAssignments = function () {
       'so managers and office staff are excluded without anyone matching names or titles.</p>'+
       '<p><b>What "has a truck" means.</b> The driver MyGeotab currently records against a vehicle &mdash; '+
       'the same assignment you set on the asset. It is a statement about now, not about who drove last week.</p>'+
-      '<p><b>Trucks with nobody assigned</b> counts only assets with a device in them. '+
-      'Placeholder records for trucks that exist but have no hardware yet are left out: nothing '+
-      'can be assigned to them and nothing can be measured on them. Fleet Roster is where those '+
-      'are tracked.</p>'+
+      '<p><b>Trucks with nobody assigned</b> counts only assets with a device fitted. Trucks from '+
+      'the Enterprise list that are still waiting on a GO9 are real, but nothing can be assigned '+
+      'to them and no mileage exists for them, so they are counted under the table rather than '+
+      'listed in it. Fleet Roster carries the full inventory.</p>'+
       '<p><b>Unattributed miles</b> are miles on a branch vehicle whose trip carried no driver. They are '+
       'counted per vehicle over '+WINDOW_DAYS+' days, and a truck is only listed once it has done '+
       MIN_MILES+'+ such miles, so a single stray trip does not fill the page.</p>'+

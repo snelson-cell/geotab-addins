@@ -1,10 +1,10 @@
 {
   "name": "Mira Fleet Charts",
   "supportEmail": "snelson@thegrit.com",
-  "version": "1.31.0",
+  "version": "1.32.0",
   "items": [
     {
-      "url": "https://snelson-cell.github.io/geotab-addins/assignments.html?v=2026-08-31.8",
+      "url": "https://snelson-cell.github.io/geotab-addins/assignments.html?v=2026-08-31.9",
       "path": "ActivityLink/",
       "menuName": {
         "en": "Driver assignment"
