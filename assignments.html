@@ -91,20 +91,22 @@ geotab.addin.driverAssignments = function () {
     '.da-tools button:hover{border-color:var(--ink-3);color:var(--ink-1);}',
     '.da-card{border:1px solid var(--grid);border-radius:9px;background:var(--surface);overflow-x:auto;}',
 
-    '.da-t{border-collapse:collapse;width:100%;font-size:13px;min-width:560px;}',
-    '.da-t th{text-align:left;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;',
-    '  color:var(--ink-3);font-weight:600;padding:9px 12px;border-bottom:1px solid var(--grid);',
-    '  background:#f4f4f1;white-space:nowrap;}',
-    '.da-t td{padding:8px 12px;border-bottom:1px solid var(--hairline);vertical-align:middle;}',
-    '.da-t tr:last-child td{border-bottom:0;}',
+    '.da-t{border-collapse:collapse;width:100%;font-size:13px;min-width:720px;}',
+    '.da-t th,.da-t td{padding:7px 10px;text-align:left;border-bottom:1px solid #eeede7;',
+    '  white-space:nowrap;}',
+    '.da-t th{position:sticky;top:0;background:#faf9f5;font-weight:600;font-size:12px;',
+    '  color:var(--ink-2);z-index:1;cursor:pointer;}',
+    '.da-t th:hover{background:#f2f1ea;}',
+    '.da-t tr:hover td{background:#fbfaf6;}',
+    '.da-t tr:last-child td{border-bottom:none;}',
     '.da-t td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;}',
     '.da-t td.nm{font-weight:600;color:var(--ink-1);white-space:nowrap;}',
+    '.da-t td.mut{color:var(--ink-3);}',
     '.da-t tr.sel td{background:#eef4fb;}',
-    '.da-t tr.gap td{background:#fdf4f1;}',
     '.da-btn.on,.da-tools button.on{background:var(--ink-1);color:#fff;border-color:var(--ink-1);}',
     '.da-empty{padding:26px 14px;text-align:center;color:var(--ink-3);font-size:13px;}',
-    'a.da-link{color:inherit;text-decoration:none;border-bottom:1px dotted var(--ink-3);}',
-    'a.da-link:hover{border-bottom-color:var(--ink-1);}',
+    'a.da-link{color:#185FA5;text-decoration:none;}',
+    'a.da-link:hover{text-decoration:underline;}',
     '.da-pill{display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.04em;',
     '  padding:1px 7px;border-radius:20px;}',
     '.da-pill.new{background:#e7eff8;color:#1d5fa8;}',
@@ -139,6 +141,7 @@ geotab.addin.driverAssignments = function () {
   var WINDOW_DAYS  = 14;
 
   var apiRef=null, MODEL=null, officeFilter='', loading=false, gapsOnly=false;
+  var sortKey='name', sortDir=1;
 
   function el(id){ return document.getElementById(id); }
   function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, function(c){
@@ -168,6 +171,18 @@ geotab.addin.driverAssignments = function () {
   // hired:YYYY-MM-DD, written into the driver's comment by the Rippling sync.
   // Geotab has no hire-date field and activeFrom is when the RECORD was made,
   // which for a backfilled driver is nothing like the day they started.
+  // The nightly sync writes "title:<Rippling job title>" into the driver's
+  // comment beside the hire date. Geotab has no title field of its own.
+  function titleOf(u){
+    var m=/title:([^\n]+)/.exec(u.comment||'');
+    return m ? m[1].trim() : '';
+  }
+  // 07-13-26 -- the format the branch sheets already use.
+  function fmtDate(d){
+    if(!d) return '\u2013';
+    var p=function(x){ return (x<10?'0':'')+x; };
+    return p(d.getMonth()+1)+'-'+p(d.getDate())+'-'+String(d.getFullYear()).slice(2);
+  }
   function hiredOn(u){
     var m=/hired:(\d{4})-(\d{2})-(\d{2})/.exec(u.comment||'');
     return m ? new Date(+m[1], +m[2]-1, +m[3]) : null;
@@ -230,6 +245,7 @@ geotab.addin.driverAssignments = function () {
       // they used earlier went to someone else is a fact, and is worth showing.
       var dm=drvMiles[u.id]||0, prior=priorVeh[u.id];
       crew.push({id:u.id, name:((u.firstName||'')+' '+(u.lastName||'')).trim(),
+                 title:titleOf(u),
                  office:off, hired:hd, days:age, vehId:veh,
                  veh: veh ? (devById[veh]||{}).name : null,
                  miles:dm, lastTrip:lastTrip[u.id]||null,
@@ -334,33 +350,47 @@ geotab.addin.driverAssignments = function () {
       : '<div class="da-empty">No HCS in your data scope.</div>';
     }
 
-    // The roster: everyone at this office and the truck they are on. Sorted by
-    // name so it reads and prints as a roster; a missing truck is tinted rather
-    // than floated to the top, so the list stays in the order people expect.
-    var list=all.slice().sort(function(x,y){ return x.name.localeCompare(y.name); });
+    // The roster: everyone at this office and the truck they are on. Sortable
+    // the way Fleet Roster is, so the two pages behave the same way under the
+    // same click.
+    var list=all.slice();
     if(gapsOnly) list=list.filter(function(c){ return !c.vehId; });
+    list.sort(function(x,y){
+      var a,b;
+      if(sortKey==='truck'){ a=x.veh||''; b=y.veh||''; }
+      else if(sortKey==='start'){ a=x.hired?x.hired.getTime():0; b=y.hired?y.hired.getTime():0; }
+      else if(sortKey==='title'){ a=x.title||''; b=y.title||''; }
+      else if(sortKey==='office'){ a=x.office||''; b=y.office||''; }
+      else { a=x.name||''; b=y.name||''; }
+      if(typeof a==='string') return a.localeCompare(b)*sortDir || x.name.localeCompare(y.name);
+      return (a<b?-1:a>b?1:0)*sortDir || x.name.localeCompare(y.name);
+    });
     el('da-listtitle').textContent='Roster'+(list.length?' ('+list.length+')':'');
+    var cols=[['name','Name'],['title','Title']];
+    if(!officeFilter) cols.push(['office','Location']);
+    cols.push(['truck','Truck'],['start','Start Date']);
     el('da-list').innerHTML = list.length ?
-      '<table class="da-t"><thead><tr><th>Name</th>'+
-      (officeFilter?'':'<th>Location</th>')+
-      '<th>Truck</th><th>Started</th><th></th></tr></thead><tbody>'+
+      '<table class="da-t"><thead><tr>'+
+      cols.map(function(c){
+        return '<th data-k="'+c[0]+'">'+c[1]+
+               (sortKey===c[0]?(sortDir>0?' \u2191':' \u2193'):'')+'</th>';
+      }).join('')+'<th></th></tr></thead><tbody>'+
       list.map(function(c){
-        return '<tr'+(c.vehId?'':' class="gap"')+'>'+
+        return '<tr>'+
           '<td class="nm">'+linked('da-link', userUrl(c.id), c.name,
              'Open this driver in a new tab')+'</td>'+
+          '<td'+(c.title?'':' class="mut"')+'>'+esc(c.title||'\u2013')+'</td>'+
           (officeFilter?'':'<td>'+esc(c.office||'\u2013')+'</td>')+
-          '<td'+(c.vehId?' class="nm"':'')+'>'+(c.vehId
+          '<td'+(c.vehId?' class="nm"':' class="mut"')+'>'+(c.vehId
             ? linked('da-link', deviceUrl(c.vehId), c.veh||c.vehId, 'Open this vehicle in a new tab')
-            : '<span class="da-sub">'+(c.hadTruck
-                ? 'was on '+esc(c.priorVeh)+', last trip '+daysAgo(c.lastTrip)
-                : 'none')+'</span>')+'</td>'+
-          '<td>'+(c.hired?c.hired.toISOString().slice(0,10):'\u2013')+
-            '<div class="da-sub">'+(c.days==null?'':c.days+' days')+'</div></td>'+
+            : (c.hadTruck ? 'was on '+esc(c.priorVeh)+', '+daysAgo(c.lastTrip) : '\u2013'))+'</td>'+
+          '<td>'+fmtDate(c.hired)+'</td>'+
           '<td>'+(c.vehId ? ''
             : c.onboarding ? '<span class="da-pill new">onboarding</span>'
             : '<span class="da-pill late">no truck</span>')+'</td></tr>';
       }).join('')+'</tbody></table>'
       : '<div class="da-empty">'+(gapsOnly?'Everyone here has a truck.':'No HCS in this location.')+'</div>';
+    wireSort();
 
     // Trucks at this office with nobody on them, and what they covered.
     el('da-veh-title').textContent='Trucks with nobody assigned'+(orph.length?' ('+orph.length+')':'');
@@ -371,7 +401,7 @@ geotab.addin.driverAssignments = function () {
       '<th>Last moved</th></tr></thead><tbody>'+
       orph.map(function(o){
         var driven=o.miles>=MIN_MILES;
-        return '<tr'+(driven?' class="gap"':'')+'>'+
+        return '<tr>'+
           '<td class="nm">'+linked('da-link', deviceUrl(o.id), o.name||o.id,
                  'Open this vehicle in a new tab')+'</td>'+
           (officeFilter?'':'<td>'+esc(o.office)+'</td>')+
@@ -402,6 +432,18 @@ geotab.addin.driverAssignments = function () {
       'carried their name, which is exactly what the absence of an assignment produces on its own.</p>'+
       '<p><b>Onboarding</b> is anyone hired within '+ONBOARD_DAYS+' days, read from the hire date the '+
       'sync writes into the driver record. They are shown but not counted as a gap.</p>';
+  }
+
+  // innerHTML replaces the header row each render, so the handlers go back on.
+  function wireSort(){
+    var ths=el('da-list').querySelectorAll('th[data-k]');
+    Array.prototype.forEach.call(ths, function(th){
+      th.addEventListener('click', function(){
+        var k=th.getAttribute('data-k');
+        if(sortKey===k) sortDir=-sortDir; else { sortKey=k; sortDir=1; }
+        render();
+      });
+    });
   }
 
   function fetchTrips(api, a, b, depth, done, fail){
@@ -474,10 +516,10 @@ geotab.addin.driverAssignments = function () {
     });
     el('da-csv').addEventListener('click', function(){
       if(!MODEL) return;
-      var rows=[['Name','Location','Hired','Days','Truck','Status']];
+      var rows=[['Name','Title','Location','Start Date','Days','Truck','Status']];
       view().slice().sort(function(x,y){ return x.name.localeCompare(y.name); })
         .forEach(function(c){
-          rows.push([c.name, c.office||'', c.hired?c.hired.toISOString().slice(0,10):'',
+          rows.push([c.name, c.title||'', c.office||'', fmtDate(c.hired),
                      c.days==null?'':c.days, c.veh||'',
                      c.vehId?'assigned':(c.onboarding?'onboarding':'no truck')]);
         });
