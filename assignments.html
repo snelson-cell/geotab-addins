@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>Driver Assignments</title>
+</head>
+<body>
+<div id="da-root">
+  <div class="da-topbar">
+    <div>
+      <h1 class="da-h1">Driver assignments</h1>
+      <p class="da-scope" id="da-scope">Loading…</p>
+    </div>
+    <div class="da-controls">
+      <label class="da-lab">Location
+        <select id="da-office"><option value="">All locations</option></select>
+      </label>
+      <button type="button" id="da-csv" class="da-btn">Export CSV</button>
+    </div>
+  </div>
+
+  <div id="da-notes"></div>
+  <div id="da-action" class="da-action"></div>
+  <div id="da-kpis" class="da-kpis"></div>
+
+  <div class="da-head">
+    <div class="da-title">By location</div>
+  </div>
+  <div class="da-card" id="da-bylocation"></div>
+
+  <div class="da-head">
+    <div class="da-title" id="da-listtitle">Field crew with no truck</div>
+  </div>
+  <div class="da-card" id="da-list"></div>
+
+  <div class="da-head">
+    <div class="da-title" id="da-veh-title">Trucks driving with nobody assigned</div>
+    <div class="da-tools"><button type="button" id="da-vehtoggle">Show</button></div>
+  </div>
+  <div class="da-card" id="da-vehicles" style="display:none"></div>
+
+  <div class="da-foot" id="da-foot"></div>
+</div>
+
+<script>
+geotab.addin.driverAssignments = function () {
+  'use strict';
+
+  // MyGeotab drops this file's <head>, so the stylesheet ships as a string and is
+  // injected from JS. Same as every other add-in here.
+  var STYLE_ID = 'da-styles';
+  var CSS = [
+    '#da-root{',
+    '  --page:#f9f9f7; --surface:#fcfcfb; --ink-1:#0b0b0b; --ink-2:#52514e; --ink-3:#898781;',
+    '  --grid:#e1e0d9; --hairline:rgba(11,11,11,.10); --sunk:#f0efe9;',
+    '  --good:#0ca30c; --warning:#fab219; --critical:#d03b3b;',
+    '  --good-ink:#0a6b18; --warning-ink:#7a5300; --critical-ink:#9b2626;',
+    '  --accent:#2a78d6;',
+    '  font-family:system-ui,-apple-system,"Segoe UI",sans-serif;',
+    '  color:var(--ink-1); background:var(--page); padding:18px 20px 32px; width:100%;}',
+    '#da-root, #da-root *{box-sizing:border-box;}',
+    '#da-root.busy{opacity:.55;}',
+    '.da-topbar{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:12px;}',
+    '.da-h1{font-size:19px;font-weight:650;margin:0;letter-spacing:-.01em;}',
+    '.da-scope{font-size:12.5px;color:var(--ink-3);margin:3px 0 0;}',
+    '.da-controls{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;}',
+    '.da-lab{font-size:11px;color:var(--ink-3);display:flex;flex-direction:column;gap:3px;}',
+    '.da-lab select{font-size:13px;padding:5px 8px;border:1px solid var(--grid);border-radius:6px;background:#fff;color:var(--ink-1);}',
+    '.da-btn{font-size:12.5px;padding:6px 11px;border:1px solid var(--grid);border-radius:6px;background:#fff;color:var(--ink-2);cursor:pointer;}',
+    '.da-btn:hover{border-color:var(--ink-3);}',
+    '.da-note{font-size:12.5px;padding:9px 12px;border-radius:7px;margin:12px 0 0;',
+    '  background:#fdf6e3;border:1px solid #f0e2bd;color:#6b5316;}',
+    '.da-note.err{background:#fdeceb;border-color:#f3c9c5;color:#8f2a22;}',
+
+    '.da-action{margin:16px 0 0;padding:13px 16px;background:var(--surface);',
+    '  border:1px solid var(--grid);border-left:3px solid var(--critical);',
+    '  border-radius:0 9px 9px 0;font-size:13.5px;color:var(--ink-2);}',
+    '.da-action.clear{border-left-color:var(--good);}',
+    '.da-action b{color:var(--ink-1);}',
+
+    '.da-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin:12px 0 0;}',
+    '.da-kpi{background:var(--surface);border:1px solid var(--grid);border-radius:9px;padding:12px 14px;}',
+    '.da-kpi .k{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);}',
+    '.da-kpi .v{font-size:25px;font-weight:680;letter-spacing:-.02em;line-height:1.15;margin-top:2px;',
+    '  font-variant-numeric:tabular-nums;}',
+    '.da-kpi .s{font-size:11.5px;color:var(--ink-3);margin-top:1px;}',
+
+    '.da-head{display:flex;align-items:baseline;justify-content:space-between;margin:26px 0 8px;gap:12px;}',
+    '.da-title{font-size:15px;font-weight:640;letter-spacing:-.005em;}',
+    '.da-tools button{font-size:11.5px;padding:3px 9px;border:1px solid var(--grid);',
+    '  border-radius:5px;background:#fff;color:var(--ink-3);cursor:pointer;}',
+    '.da-tools button:hover{border-color:var(--ink-3);color:var(--ink-1);}',
+    '.da-card{border:1px solid var(--grid);border-radius:9px;background:var(--surface);overflow-x:auto;}',
+
+    '.da-t{border-collapse:collapse;width:100%;font-size:13px;min-width:560px;}',
+    '.da-t th{text-align:left;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;',
+    '  color:var(--ink-3);font-weight:600;padding:9px 12px;border-bottom:1px solid var(--grid);',
+    '  background:#f4f4f1;white-space:nowrap;}',
+    '.da-t td{padding:8px 12px;border-bottom:1px solid var(--hairline);vertical-align:middle;}',
+    '.da-t tr:last-child td{border-bottom:0;}',
+    '.da-t td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;}',
+    '.da-t td.nm{font-weight:600;color:var(--ink-1);white-space:nowrap;}',
+    '.da-t tr.sel td{background:#eef4fb;}',
+    '.da-empty{padding:26px 14px;text-align:center;color:var(--ink-3);font-size:13px;}',
+    'a.da-link{color:inherit;text-decoration:none;border-bottom:1px dotted var(--ink-3);}',
+    'a.da-link:hover{border-bottom-color:var(--ink-1);}',
+    '.da-pill{display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.04em;',
+    '  padding:1px 7px;border-radius:20px;}',
+    '.da-pill.new{background:#e7eff8;color:#1d5fa8;}',
+    '.da-pill.late{background:#f8e8e3;color:var(--critical-ink);}',
+    '.da-pill.unk{background:var(--sunk);color:var(--ink-2);}',
+    '.da-bar{height:5px;border-radius:3px;background:var(--grid);margin-top:5px;overflow:hidden;min-width:70px;}',
+    '.da-bar i{display:block;height:100%;border-radius:3px;}',
+    '.da-sub{font-size:11.5px;color:var(--ink-3);}',
+    '.da-foot{margin:22px 0 0;font-size:12px;color:var(--ink-3);max-width:82ch;line-height:1.6;}',
+    '.da-foot p{margin:0 0 7px;}'
+  ].join('\n');
+
+  function injectStyles(){
+    if(document.getElementById(STYLE_ID)) return;
+    var s=document.createElement('style'); s.id=STYLE_ID; s.textContent=CSS;
+    document.head.appendChild(s);
+  }
+
+  // Offices, as group ids. Same map the other add-ins carry.
+  var OFFICES = {
+    'b27AB':'Orlando','b27AC':'Tampa','b27AD':'ATL North','b27AE':'ATL South',
+    'b27AF':'Chicago','b27B0':'Indianapolis','b27B1':'Northern Indy','b27B2':'Louisville',
+    'b27B3':'Detroit','b27B4':'Grand Rapids','b27B5':'Cincinnati','b27B6':'Cleveland',
+    'b27B7':'Columbus','b27B8':'American Fork'
+  };
+
+  // A driver is field crew if a nightly Rippling sync stamped their worker id into
+  // employeeNo. Managers and office staff never get one, so this is the filter --
+  // no title matching, no name matching, nothing to drift.
+  var ONBOARD_DAYS = 3;   // a new hire has this long before the gap counts
+  var MIN_MILES    = 50;  // below this in the window, "it drove" means nothing
+  var WINDOW_DAYS  = 14;
+
+  var apiRef=null, MODEL=null, officeFilter='', loading=false;
+
+  function el(id){ return document.getElementById(id); }
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+  function f0(n){ return (n==null||!isFinite(n)) ? '–' : Math.round(n).toLocaleString(); }
+  function pct(a,b){ return b>0 ? 100*a/b : 0; }
+  function note(html, err){
+    var d=document.createElement('div'); d.className='da-note'+(err?' err':'');
+    d.innerHTML=html; el('da-notes').appendChild(d);
+  }
+  function userUrl(id){
+    return id ? location.origin+location.pathname+'#user,currentTab:user,id:'+id : null;
+  }
+  function deviceUrl(id){
+    return id ? location.origin+location.pathname+'#device,id:'+id : null;
+  }
+  function linked(cls, url, text, title){
+    return url ? '<a class="'+cls+'" href="'+esc(url)+'" target="_blank" rel="noopener"'+
+                 (title?' title="'+esc(title)+'"':'')+'>'+esc(text)+'</a>' : esc(text);
+  }
+
+  // hired:YYYY-MM-DD, written into the driver's comment by the Rippling sync.
+  // Geotab has no hire-date field and activeFrom is when the RECORD was made,
+  // which for a backfilled driver is nothing like the day they started.
+  function hiredOn(u){
+    var m=/hired:(\d{4})-(\d{2})-(\d{2})/.exec(u.comment||'');
+    return m ? new Date(+m[1], +m[2]-1, +m[3]) : null;
+  }
+  function daysSince(d){
+    return d ? Math.floor((Date.now()-d.getTime())/86400000) : null;
+  }
+  function officeOf(groups){
+    for(var i=0;i<(groups||[]).length;i++){
+      if(OFFICES[groups[i].id]) return OFFICES[groups[i].id];
+    }
+    return null;
+  }
+
+  function build(users, devices, status, trips, winStart){
+    var devById={}, devOffice={};
+    devices.forEach(function(d){
+      devById[d.id]=d;
+      devOffice[d.id]=officeOf(d.groups);
+    });
+    // driver -> vehicle, from the assignment MyGeotab itself records
+    var drvVeh={}, vehDrv={};
+    status.forEach(function(s){
+      var dev=(s.device||{}).id, dr=s.driver;
+      var did=(dr && typeof dr==='object') ? dr.id : null;
+      if(did && did!=='UnknownDriverId'){ drvVeh[did]=dev; vehDrv[dev]=did; }
+    });
+    var miles={}, milesNoDrv={}, drove={};
+    trips.forEach(function(t){
+      var dev=(t.device||{}).id, dr=t.driver;
+      var did=(dr && typeof dr==='object') ? dr.id : null;
+      var mi=(t.distance||0)*0.621371;
+      miles[dev]=(miles[dev]||0)+mi;
+      if(!did || did==='UnknownDriverId') milesNoDrv[dev]=(milesNoDrv[dev]||0)+mi;
+      if(mi>0) drove[dev]=true;
+    });
+
+    var crew=[];
+    users.forEach(function(u){
+      if(!u.isDriver) return;
+      if(!(u.employeeNo||'').trim()) return;          // not field crew
+      var off=officeOf(u.driverGroups||u.companyGroups);
+      var hd=hiredOn(u), age=daysSince(hd);
+      var veh=drvVeh[u.id];
+      crew.push({id:u.id, name:((u.firstName||'')+' '+(u.lastName||'')).trim(),
+                 office:off, hired:hd, days:age, vehId:veh,
+                 veh: veh ? (devById[veh]||{}).name : null,
+                 onboarding: age!=null && age < ONBOARD_DAYS});
+    });
+
+    // trucks that drove with nobody attached
+    var orphan=[];
+    Object.keys(devById).forEach(function(id){
+      var off=devOffice[id];
+      if(!off) return;
+      var mi=miles[id]||0;
+      if(mi < MIN_MILES) return;
+      var noMi=milesNoDrv[id]||0;
+      if(noMi < MIN_MILES) return;
+      orphan.push({id:id, name:devById[id].name, office:off,
+                   miles:mi, unattributed:noMi,
+                   driver: vehDrv[id] ? 'assigned' : 'nobody assigned'});
+    });
+    orphan.sort(function(a,b){ return b.unattributed-a.unattributed; });
+
+    var totalMi=0, totalNo=0;
+    Object.keys(devOffice).forEach(function(id){
+      if(!devOffice[id]) return;
+      totalMi += miles[id]||0; totalNo += milesNoDrv[id]||0;
+    });
+    return {crew:crew, orphan:orphan, totalMi:totalMi, totalNo:totalNo};
+  }
+
+  function view(){
+    if(!MODEL) return [];
+    return officeFilter ? MODEL.crew.filter(function(c){ return c.office===officeFilter; })
+                        : MODEL.crew;
+  }
+
+  function render(){
+    var all=view();
+    var withV=all.filter(function(c){ return c.vehId; });
+    var without=all.filter(function(c){ return !c.vehId; });
+    var onb=without.filter(function(c){ return c.onboarding; });
+    var late=without.filter(function(c){ return !c.onboarding; });
+
+    var a=el('da-action');
+    if(late.length){
+      a.className='da-action';
+      a.innerHTML='<b>'+late.length+' '+(late.length===1?'person has':'people have')+
+        ' no truck assigned</b> and started more than '+ONBOARD_DAYS+' days ago. Until a truck is '+
+        'attached, nothing they drive can be scored to them &mdash; and Geotab never backfills, so '+
+        'those miles are lost for good.';
+    } else {
+      a.className='da-action clear';
+      a.innerHTML='Everyone past their first '+ONBOARD_DAYS+' days has a truck assigned.'+
+        (onb.length ? ' '+onb.length+' still onboarding.' : '');
+    }
+
+    function kpi(k,v,s,col){
+      return '<div class="da-kpi"><div class="k">'+k+'</div><div class="v"'+
+             (col?' style="color:'+col+'"':'')+'>'+v+'</div><div class="s">'+s+'</div></div>';
+    }
+    var noPct=pct(MODEL.totalNo, MODEL.totalMi);
+    el('da-kpis').innerHTML =
+      kpi('Field crew', all.length, 'active in Rippling') +
+      kpi('With a truck', withV.length, Math.round(pct(withV.length, all.length))+'% of the crew',
+          withV.length===all.length?'var(--good-ink)':'') +
+      kpi('No truck', late.length, 'past '+ONBOARD_DAYS+' days &middot; the list below',
+          late.length?'var(--critical-ink)':'var(--good-ink)') +
+      kpi('Onboarding', onb.length, 'started in the last '+ONBOARD_DAYS+' days') +
+      kpi('Unattributed miles', Math.round(noPct)+'%', f0(MODEL.totalNo)+' of '+f0(MODEL.totalMi)+
+          ' mi, last '+WINDOW_DAYS+' days', noPct>10?'var(--critical-ink)':'');
+
+    // by location
+    var by={};
+    MODEL.crew.forEach(function(c){
+      var o=c.office||'(no location)';
+      var r=by[o]||(by[o]={n:0, with:0, late:0, onb:0});
+      r.n++; if(c.vehId) r.with++; else if(c.onboarding) r.onb++; else r.late++;
+    });
+    var rows=Object.keys(by).sort(function(x,y){ return by[y].late-by[x].late || by[y].n-by[x].n; });
+    el('da-bylocation').innerHTML = rows.length ?
+      '<table class="da-t"><thead><tr><th>Location</th>'+
+      '<th style="text-align:right">Crew</th><th style="text-align:right">With a truck</th>'+
+      '<th style="text-align:right">No truck</th><th style="text-align:right">Onboarding</th>'+
+      '<th>Coverage</th></tr></thead><tbody>'+
+      rows.map(function(o){
+        var r=by[o], p=pct(r.with,r.n);
+        var col = p>=100 ? 'var(--good)' : p>=90 ? 'var(--warning)' : 'var(--critical)';
+        return '<tr'+(o===officeFilter?' class="sel"':'')+'>'+
+          '<td class="nm">'+esc(o)+'</td>'+
+          '<td class="num">'+r.n+'</td>'+
+          '<td class="num">'+r.with+'</td>'+
+          '<td class="num"'+(r.late?' style="color:var(--critical-ink);font-weight:650"':'')+'>'+
+            (r.late||'–')+'</td>'+
+          '<td class="num">'+(r.onb||'–')+'</td>'+
+          '<td>'+Math.round(p)+'%<div class="da-bar"><i style="width:'+p+'%;background:'+col+'"></i></div></td>'+
+        '</tr>';
+      }).join('')+'</tbody></table>'
+      : '<div class="da-empty">No field crew in your data scope.</div>';
+
+    // the named list -- overdue first, then onboarding
+    var list=late.concat(onb);
+    list.sort(function(x,y){ return (y.days||0)-(x.days||0); });
+    el('da-listtitle').textContent='Field crew with no truck'+(list.length?' ('+list.length+')':'');
+    el('da-list').innerHTML = list.length ?
+      '<table class="da-t"><thead><tr><th>Name</th><th>Location</th>'+
+      '<th>Started</th><th style="text-align:right">Days</th><th></th></tr></thead><tbody>'+
+      list.map(function(c){
+        return '<tr><td class="nm">'+linked('da-link', userUrl(c.id), c.name,
+                 'Open this driver in a new tab')+'</td>'+
+          '<td>'+esc(c.office||'–')+'</td>'+
+          '<td>'+(c.hired?c.hired.toISOString().slice(0,10):'–')+'</td>'+
+          '<td class="num">'+(c.days==null?'–':c.days)+'</td>'+
+          '<td>'+(c.onboarding
+            ? '<span class="da-pill new">onboarding</span>'
+            : '<span class="da-pill late">needs a truck</span>')+'</td></tr>';
+      }).join('')+'</tbody></table>'
+      : '<div class="da-empty">Everyone has a truck assigned.</div>';
+
+    // trucks driving unattributed
+    var orph=officeFilter ? MODEL.orphan.filter(function(o){ return o.office===officeFilter; })
+                          : MODEL.orphan;
+    el('da-veh-title').textContent='Trucks driving with nobody assigned'+(orph.length?' ('+orph.length+')':'');
+    el('da-vehicles').innerHTML = orph.length ?
+      '<table class="da-t"><thead><tr><th>Truck</th><th>Location</th>'+
+      '<th style="text-align:right">Miles</th><th style="text-align:right">Unattributed</th>'+
+      '<th></th></tr></thead><tbody>'+
+      orph.map(function(o){
+        return '<tr><td class="nm">'+linked('da-link', deviceUrl(o.id), o.name||o.id,
+                 'Open this vehicle in a new tab')+'</td>'+
+          '<td>'+esc(o.office)+'</td>'+
+          '<td class="num">'+f0(o.miles)+'</td>'+
+          '<td class="num" style="color:var(--critical-ink);font-weight:650">'+f0(o.unattributed)+'</td>'+
+          '<td class="da-sub">'+esc(o.driver)+'</td></tr>';
+      }).join('')+'</tbody></table>'
+      : '<div class="da-empty">Every truck that drove had a driver attached.</div>';
+
+    el('da-foot').innerHTML =
+      '<p><b>Who counts as field crew.</b> A driver whose Geotab record carries a Rippling worker id. '+
+      'The nightly sync stamps one on every active Field Operations Frontline worker and nobody else, '+
+      'so managers and office staff are excluded without anyone matching names or titles.</p>'+
+      '<p><b>What "has a truck" means.</b> The driver MyGeotab currently records against a vehicle &mdash; '+
+      'the same assignment you set on the asset. It is a statement about now, not about who drove last week.</p>'+
+      '<p><b>Unattributed miles</b> are miles on a branch vehicle whose trip carried no driver. They are '+
+      'counted per vehicle over '+WINDOW_DAYS+' days, and a truck is only listed once it has done '+
+      MIN_MILES+'+ such miles, so a single stray trip does not fill the page.</p>'+
+      '<p><b>Onboarding</b> is anyone hired within '+ONBOARD_DAYS+' days, read from the hire date the '+
+      'sync writes into the driver record. They are shown but not counted as a gap.</p>';
+  }
+
+  function fetchTrips(api, a, b, depth, done, fail){
+    // Trip hard-caps at 25,000 rows whatever resultsLimit says, so a wide window
+    // truncates silently. Split rather than lose the tail.
+    api.call('Get', {typeName:'Trip', resultsLimit:25000, search:{fromDate:a, toDate:b}},
+      function(rows){
+        rows=rows||[];
+        if(rows.length>=25000 && depth<6){
+          var mid=new Date((Date.parse(a)+Date.parse(b))/2).toISOString();
+          var acc=[], left=2;
+          var step=function(p){ acc=acc.concat(p); if(--left===0) done(acc); };
+          fetchTrips(api,a,mid,depth+1,step,fail);
+          fetchTrips(api,mid,b,depth+1,step,fail);
+        } else done(rows);
+      }, fail);
+  }
+
+  function load(api){
+    if(loading) return;
+    loading=true; apiRef=api;
+    el('da-notes').innerHTML='';
+    el('da-root').classList.add('busy');
+    el('da-scope').textContent='Loading crew and assignments…';
+    var to=new Date(), from=new Date(to.getTime()-WINDOW_DAYS*864e5);
+    function fail(e){
+      loading=false; el('da-root').classList.remove('busy');
+      el('da-scope').textContent='Could not load.';
+      note('Could not load this dashboard: '+esc((e&&(e.message||e.name))||e)+'.', true);
+    }
+    api.multiCall([
+      ['Get', {typeName:'User', search:{isDriver:true}}],
+      ['Get', {typeName:'Device', resultsLimit:50000}],
+      ['Get', {typeName:'DeviceStatusInfo'}]
+    ], function(res){
+      var users=(res[0]||[]).filter(function(u){
+        var t=u.activeTo; return !t || new Date(t).getTime()>Date.now();
+      });
+      var devices=(res[1]||[]).filter(function(d){
+        var t=d.activeTo; return !t || new Date(t).getTime()>Date.now();
+      });
+      el('da-scope').textContent='Loading distance driven…';
+      fetchTrips(api, from.toISOString(), to.toISOString(), 0, function(trips){
+        MODEL=build(users, devices, res[2]||[], trips, from.getTime());
+        var offs={};
+        MODEL.crew.forEach(function(c){ if(c.office) offs[c.office]=1; });
+        var sel=el('da-office'), keep=sel.value;
+        sel.innerHTML='<option value="">All locations</option>'+
+          Object.keys(offs).sort().map(function(o){
+            return '<option value="'+esc(o)+'">'+esc(o)+'</option>'; }).join('');
+        sel.value=keep;
+        loading=false; el('da-root').classList.remove('busy');
+        el('da-scope').textContent=
+          (officeFilter||'All locations')+' · '+MODEL.crew.length+' field crew · '+
+          'assignments live from Geotab, hire dates from the Rippling sync';
+        render();
+      }, fail);
+    }, fail);
+  }
+
+  function wire(){
+    el('da-office').addEventListener('change', function(){
+      officeFilter=this.value; if(MODEL) render();
+    });
+    el('da-vehtoggle').addEventListener('click', function(){
+      var w=el('da-vehicles'), hide=w.style.display!=='none';
+      w.style.display=hide?'none':'';
+      this.textContent=hide?'Show':'Hide';
+    });
+    el('da-csv').addEventListener('click', function(){
+      if(!MODEL) return;
+      var rows=[['Name','Location','Hired','Days','Truck','Status']];
+      view().forEach(function(c){
+        rows.push([c.name, c.office||'', c.hired?c.hired.toISOString().slice(0,10):'',
+                   c.days==null?'':c.days, c.veh||'',
+                   c.vehId?'has a truck':(c.onboarding?'onboarding':'needs a truck')]);
+      });
+      var csv=rows.map(function(r){
+        return r.map(function(x){ return '"'+String(x).replace(/"/g,'""')+'"'; }).join(','); }).join('\n');
+      var a=document.createElement('a');
+      a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+      a.download='driver-assignments.csv'; a.click();
+    });
+  }
+
+  return {
+    initialize: function(api, state, cb){ injectStyles(); wire(); cb(); },
+    focus: function(api){ load(api); },
+    blur: function(){}
+  };
+};
+</script>
+</body>
+</html>
