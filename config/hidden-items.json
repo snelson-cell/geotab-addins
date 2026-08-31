@@ -1,0 +1,16 @@
+{
+  "note": "Menu entries removed from mira-fleet-charts.config.json but deliberately kept. The pages themselves are still committed and still served from Pages, so these are hidden from the menu, not deleted. To restore one, paste its object back into the items array at the position you want and bump the config version.",
+  "hidden": [
+    {
+      "hiddenOn": "2026-08-31",
+      "reason": "paused, not retired",
+      "item": {
+        "url": "https://snelson-cell.github.io/geotab-addins/health.html?v=2026-08-28.2",
+        "path": "ActivityLink/",
+        "menuName": {
+          "en": "Market Standings"
+        }
+      }
+    }
+  ]
+}
