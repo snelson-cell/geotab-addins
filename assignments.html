@@ -285,6 +285,10 @@ geotab.addin.driverAssignments = function () {
     Object.keys(devById).forEach(function(id){
       var off=devOffice[id];
       if(!off || vehDrv[id]) return;
+      // Placeholders are assets with no hardware -- 95 of them fleet-wide. They
+      // can never carry a driver, so listing them under "nobody assigned" was
+      // 42% of this table saying nothing. Fleet Roster is where they belong.
+      if((devById[id].deviceType||'None')==='None') return;
       orphan.push({id:id, name:devById[id].name, office:off,
                    model:makeModel(devById[id].vinInfoMake, devById[id].vinInfoModel),
                    year:devById[id].vinInfoYear||'',
@@ -444,6 +448,10 @@ geotab.addin.driverAssignments = function () {
       'so managers and office staff are excluded without anyone matching names or titles.</p>'+
       '<p><b>What "has a truck" means.</b> The driver MyGeotab currently records against a vehicle &mdash; '+
       'the same assignment you set on the asset. It is a statement about now, not about who drove last week.</p>'+
+      '<p><b>Trucks with nobody assigned</b> counts only assets with a device in them. '+
+      'Placeholder records for trucks that exist but have no hardware yet are left out: nothing '+
+      'can be assigned to them and nothing can be measured on them. Fleet Roster is where those '+
+      'are tracked.</p>'+
       '<p><b>Unattributed miles</b> are miles on a branch vehicle whose trip carried no driver. They are '+
       'counted per vehicle over '+WINDOW_DAYS+' days, and a truck is only listed once it has done '+
       MIN_MILES+'+ such miles, so a single stray trip does not fill the page.</p>'+
