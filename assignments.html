@@ -144,6 +144,11 @@ geotab.addin.driverAssignments = function () {
     return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
   function f0(n){ return (n==null||!isFinite(n)) ? '–' : Math.round(n).toLocaleString(); }
   function pct(a,b){ return b>0 ? 100*a/b : 0; }
+  function daysAgo(t){
+    if(!t) return 'unknown';
+    var d=Math.round((Date.now()-t)/864e5);
+    return d<=0 ? 'today' : d===1 ? 'yesterday' : d+' days ago';
+  }
   function note(html, err){
     var d=document.createElement('div'); d.className='da-note'+(err?' err':'');
     d.innerHTML=html; el('da-notes').appendChild(d);
@@ -189,16 +194,24 @@ geotab.addin.driverAssignments = function () {
       var did=(dr && typeof dr==='object') ? dr.id : null;
       if(did && did!=='UnknownDriverId'){ drvVeh[did]=dev; vehDrv[dev]=did; }
     });
-    var miles={}, milesNoDrv={}, drvMiles={};
+    var miles={}, milesNoDrv={}, drvMiles={}, lastTrip={}, priorVeh={};
     trips.forEach(function(t){
       var dev=(t.device||{}).id, dr=t.driver;
       var did=(dr && typeof dr==='object') ? dr.id : null;
       var mi=(t.distance||0)*0.621371;
       miles[dev]=(miles[dev]||0)+mi;
       if(!did || did==='UnknownDriverId') milesNoDrv[dev]=(milesNoDrv[dev]||0)+mi;
-      else drvMiles[did]=(drvMiles[did]||0)+mi;
+      else {
+        drvMiles[did]=(drvMiles[did]||0)+mi;
+        var st=Date.parse(t.start||t.dateTime||0);
+        if(st>(lastTrip[did]||0)){ lastTrip[did]=st; priorVeh[did]=dev; }
+      }
     });
 
+    var uById={}; users.forEach(function(u){ uById[u.id]=u; });
+    function nameOf(id){
+      var u=uById[id]; return u ? ((u.firstName||'')+' '+(u.lastName||'')).trim() : null;
+    }
     var crew=[];
     users.forEach(function(u){
       if(!u.isDriver) return;
@@ -206,20 +219,20 @@ geotab.addin.driverAssignments = function () {
       var off=officeOf(u.driverGroups||u.companyGroups);
       var hd=hiredOn(u), age=daysSince(hd);
       var veh=drvVeh[u.id];
-      // A driver record created after the window opened cannot carry miles from
-      // inside it -- no trip could name a driver who did not exist yet. Reading
-      // that silence as "not driving" is wrong: one of these was hired in March
-      // and only got a Geotab record last week.
-      var dm=drvMiles[u.id]||0;
-      var since=u.activeFrom ? Date.parse(u.activeFrom) : 0;
-      var canTell=!since || since<=winStart;
+      // A trip can only carry a driver's name if an assignment existed at the
+      // time: 97% of assigned crew have attributed miles against 12% of the
+      // unassigned. So for anyone with no truck, zero miles is produced by the
+      // query, not observed from behaviour -- it says nothing about whether they
+      // drive. This page therefore makes no claim either way. Whether the truck
+      // they used earlier went to someone else is a fact, and is worth showing.
+      var dm=drvMiles[u.id]||0, prior=priorVeh[u.id];
       crew.push({id:u.id, name:((u.firstName||'')+' '+(u.lastName||'')).trim(),
                  office:off, hired:hd, days:age, vehId:veh,
                  veh: veh ? (devById[veh]||{}).name : null,
-                 miles:dm, canTell:canTell,
-                 driving: canTell && dm>=MIN_MILES,
-                 unknown: !canTell,
-                 recordFrom: since ? new Date(since) : null,
+                 miles:dm, lastTrip:lastTrip[u.id]||null,
+                 hadTruck: !veh && !!prior,
+                 priorVeh: prior ? (devById[prior]||{}).name : null,
+                 priorNow: prior ? (vehDrv[prior] ? nameOf(vehDrv[prior]) : null) : null,
                  onboarding: age!=null && age < ONBOARD_DAYS});
     });
 
@@ -258,22 +271,20 @@ geotab.addin.driverAssignments = function () {
     var without=all.filter(function(c){ return !c.vehId; });
     var onb=without.filter(function(c){ return c.onboarding; });
     var rest=without.filter(function(c){ return !c.onboarding; });
-    var late=rest.filter(function(c){ return c.driving; });            // losing miles today
-    var unknown=rest.filter(function(c){ return c.unknown; });         // record too new to judge
-    var idle=rest.filter(function(c){ return c.canTell && !c.driving; });
+    var late=rest.filter(function(c){ return c.hadTruck; });     // had one earlier in the window
+    var idle=rest.filter(function(c){ return !c.hadTruck; });    // none at any point in it
 
     var a=el('da-action');
     if(late.length){
       a.className='da-action';
-      var lm=0; late.forEach(function(c){ lm+=c.miles; });
-      a.innerHTML='<b>'+late.length+' '+(late.length===1?'person is':'people are')+
-        ' driving with no truck assigned</b> &mdash; '+f0(lm)+' miles in the last '+WINDOW_DAYS+
-        ' days that cannot be scored to anyone. Geotab never backfills an assignment, so every day '+
-        'this stands is another day of driving lost for good.';
+      a.innerHTML='<b>'+without.length+' of '+all.length+' field crew have no truck assigned.</b> '+
+        late.length+' of them had one earlier in the last '+WINDOW_DAYS+' days; '+idle.length+
+        ' had none at any point in it. This page cannot tell you whether any of them are driving '+
+        '&mdash; Geotab attributes a trip only through the assignment &mdash; so these are names to '+
+        'ask about, not a fault list. Driving that reached no one is counted on the vehicle side below.';
     } else {
       a.className='da-action clear';
-      a.innerHTML='Nobody is driving without a truck assigned.'+
-        (idle.length ? ' '+idle.length+' on the roster have no truck and no miles recorded.' : '');
+      a.innerHTML='Every field crew member has a truck assigned.';
     }
 
     function kpi(k,v,s,col){
@@ -285,10 +296,9 @@ geotab.addin.driverAssignments = function () {
       kpi('Field crew', all.length, 'active in Rippling') +
       kpi('With a truck', withV.length, Math.round(pct(withV.length, all.length))+'% of the crew',
           withV.length===all.length?'var(--good-ink)':'') +
-      kpi('Driving unattached', late.length, 'losing miles right now',
-          late.length?'var(--critical-ink)':'var(--good-ink)') +
-      kpi('No miles recorded', idle.length, 'no truck, nothing driven') +
-      kpi('Too new to tell', unknown.length, 'record newer than the window') +
+      kpi('No truck', without.length, 'reason is not in the data',
+          without.length?'var(--critical-ink)':'var(--good-ink)') +
+      kpi('Had one recently', late.length, 'assigned earlier in the window') +
       kpi('Onboarding', onb.length, 'started in the last '+ONBOARD_DAYS+' days') +
       kpi('Unattributed miles', Math.round(noPct)+'%', f0(MODEL.totalNo)+' of '+f0(MODEL.totalMi)+
           ' mi, last '+WINDOW_DAYS+' days', noPct>10?'var(--critical-ink)':'');
@@ -301,16 +311,16 @@ geotab.addin.driverAssignments = function () {
       r.n++;
       if(c.vehId) r.with++;
       else if(c.onboarding) r.onb++;
-      else if(c.driving) r.late++;
-      else if(c.unknown) r.unk++;
+      else if(c.hadTruck) r.late++;
       else r.idle++;
     });
-    var rows=Object.keys(by).sort(function(x,y){ return by[y].late-by[x].late || by[y].n-by[x].n; });
+    var rows=Object.keys(by).sort(function(x,y){
+      return (by[y].late+by[y].idle)-(by[x].late+by[x].idle) || by[y].n-by[x].n; });
     el('da-bylocation').innerHTML = rows.length ?
       '<table class="da-t"><thead><tr><th>Location</th>'+
       '<th style="text-align:right">Crew</th><th style="text-align:right">With a truck</th>'+
-      '<th style="text-align:right">Driving unattached</th>'+
-      '<th style="text-align:right">No miles</th><th style="text-align:right">Too new</th>'+
+      '<th style="text-align:right">No truck</th>'+
+      '<th style="text-align:right">Had one recently</th>'+
       '<th style="text-align:right">Onboarding</th>'+
       '<th>Coverage</th></tr></thead><tbody>'+
       rows.map(function(o){
@@ -320,10 +330,9 @@ geotab.addin.driverAssignments = function () {
           '<td class="nm">'+esc(o)+'</td>'+
           '<td class="num">'+r.n+'</td>'+
           '<td class="num">'+r.with+'</td>'+
-          '<td class="num"'+(r.late?' style="color:var(--critical-ink);font-weight:650"':'')+'>'+
-            (r.late||'–')+'</td>'+
-          '<td class="num">'+(r.idle||'–')+'</td>'+
-          '<td class="num">'+(r.unk||'–')+'</td>'+
+          '<td class="num"'+((r.late+r.idle)?' style="color:var(--critical-ink);font-weight:650"':'')+'>'+
+            ((r.late+r.idle)||'–')+'</td>'+
+          '<td class="num">'+(r.late||'–')+'</td>'+
           '<td class="num">'+(r.onb||'–')+'</td>'+
           '<td>'+Math.round(p)+'%<div class="da-bar"><i style="width:'+p+'%;background:'+col+'"></i></div></td>'+
         '</tr>';
@@ -331,35 +340,34 @@ geotab.addin.driverAssignments = function () {
       : '<div class="da-empty">No field crew in your data scope.</div>';
 
     // the named list -- overdue first, then onboarding
-    var list=late.concat(unknown).concat(idle).concat(onb);
+    var list=late.concat(idle).concat(onb);
     list.sort(function(x,y){
-      // driving-unattached first: they are losing miles today. Then the ones the
-      // data cannot judge, because a brand-new record is a question, not an answer.
-      var rank=function(c){ return c.driving?0 : c.unknown?1 : c.onboarding?3 : 2; };
-      return rank(x)-rank(y) || (y.miles-x.miles) || (y.days||0)-(x.days||0);
+      // Recently-assigned first: their truck moved within the window, so the
+      // trail is warm and someone still remembers what happened.
+      var rank=function(c){ return c.hadTruck?0 : c.onboarding?2 : 1; };
+      return rank(x)-rank(y) || (y.lastTrip||0)-(x.lastTrip||0) || (y.days||0)-(x.days||0);
     });
     el('da-listtitle').textContent='Field crew with no truck'+(list.length?' ('+list.length+')':'');
     el('da-list').innerHTML = list.length ?
       '<table class="da-t"><thead><tr><th>Name</th><th>Location</th>'+
       '<th>Started</th><th style="text-align:right">Days</th>'+
-      '<th style="text-align:right">Miles driven</th><th></th></tr></thead><tbody>'+
+      '<th>Last truck they were on</th><th></th></tr></thead><tbody>'+
       list.map(function(c){
         return '<tr><td class="nm">'+linked('da-link', userUrl(c.id), c.name,
                  'Open this driver in a new tab')+'</td>'+
           '<td>'+esc(c.office||'–')+'</td>'+
           '<td>'+(c.hired?c.hired.toISOString().slice(0,10):'–')+'</td>'+
           '<td class="num">'+(c.days==null?'–':c.days)+'</td>'+
-          '<td class="num"'+(c.driving?' style="color:var(--critical-ink);font-weight:650"':'')+'>'+
-            (c.miles>=1?f0(c.miles):'–')+'</td>'+
-          '<td>'+(c.driving
-            ? '<span class="da-pill late">driving unattached</span>'
-            : c.onboarding
-              ? '<span class="da-pill new">onboarding</span>'
-              : c.unknown
-                ? '<span class="da-pill unk" title="Driver record created '+
-                  (c.recordFrom?c.recordFrom.toISOString().slice(0,10):'recently')+
-                  ', after this window opened, so no trip could name them yet">too new to tell</span>'
-                : '<span class="da-sub">no miles recorded</span>')+'</td></tr>';
+          '<td>'+(c.hadTruck
+            ? esc(c.priorVeh)+'<div class="da-sub">'+
+              (c.priorNow ? 'now '+esc(c.priorNow) : 'nobody assigned to it now')+
+              ', last trip '+daysAgo(c.lastTrip)+'</div>'
+            : '<span class="da-sub">nothing in this window</span>')+'</td>'+
+          '<td>'+(c.onboarding
+            ? '<span class="da-pill new">onboarding</span>'
+            : c.hadTruck
+              ? '<span class="da-pill unk">had one recently</span>'
+              : '<span class="da-pill late">no truck</span>')+'</td></tr>';
       }).join('')+'</tbody></table>'
       : '<div class="da-empty">Everyone has a truck assigned.</div>';
 
@@ -390,14 +398,16 @@ geotab.addin.driverAssignments = function () {
       '<p><b>Unattributed miles</b> are miles on a branch vehicle whose trip carried no driver. They are '+
       'counted per vehicle over '+WINDOW_DAYS+' days, and a truck is only listed once it has done '+
       MIN_MILES+'+ such miles, so a single stray trip does not fill the page.</p>'+
-      '<p><b>Driving unattached</b> is the row that matters: someone on the field roster who has '+
-      'driven '+MIN_MILES+'+ miles in the window with no truck attached. Those miles are being lost '+
-      'as you read this.</p>'+
-      '<p><b>Too new to tell</b> means their driver record was created after this window opened, so '+
-      'no trip could name them yet and zero miles proves nothing. Several were hired months before '+
-      'they got a Geotab record and may have been driving the whole time, in a truck with nobody '+
-      'attached. <b>No miles recorded</b> is the case where the silence is real: the record existed '+
-      'for the whole window and nothing was driven.</p>'+
+      '<p><b>This page does not know who is driving.</b> Geotab attributes a trip to a person only '+
+      'through the truck assignment, so someone with no truck has no attributed miles no matter how '+
+      'much they drive &mdash; 97% of assigned crew have miles against 12% of the unassigned. Every '+
+      'name below is a question for a manager, not a finding. Reasons the data cannot see include '+
+      'leave, a branch-based role, a shared truck, or a Geotab record that is simply newer than the '+
+      'person.</p>'+
+      '<p><b>Had one recently</b> means a trip in this window carried their name, so they were '+
+      'assigned earlier in it. The truck is shown along with who holds it now &mdash; often it was '+
+      'handed to someone else, which is ordinary. <b>No truck</b> means nothing in this window '+
+      'carried their name, which is exactly what the absence of an assignment produces on its own.</p>'+
       '<p><b>Onboarding</b> is anyone hired within '+ONBOARD_DAYS+' days, read from the hire date the '+
       'sync writes into the driver record. They are shown but not counted as a gap.</p>';
   }
