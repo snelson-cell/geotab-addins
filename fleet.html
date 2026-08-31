@@ -121,6 +121,29 @@ geotab.addin.fleetRegister = function () {
   function note(id,msg){ var n=el(id); if(!n) return;
     if(msg){ n.innerHTML=msg; n.className='fr-note on'; } else { n.className='fr-note'; n.textContent=''; } }
 
+
+  // Geotab's VIN decoder is inconsistent about case: 113 Chevrolets come back as
+  // "Chevrolet" and 19 as "CHEVROLET". Normalise for display only -- the field is
+  // derived from the VIN, so writing to it just gets re-decoded on the next read.
+  // Acronyms are held out (GMC must not become "Gmc") and any token carrying a
+  // digit or dash is left exactly as found (F-150, 1500, 2500).
+  // Ram is deliberately absent: it is a brand name, not an acronym, and the VIN
+  // decoder already returns it as "Ram". Forcing it uppercase produced "RAM 1500".
+  var ACRONYMS = {GMC:1, BMW:1, GM:1, MB:1, VW:1};
+  function titleish(s){
+    s=String(s==null?'':s).trim();
+    if(!s) return '';
+    return s.split(/\s+/).map(function(w){
+      if(ACRONYMS[w.toUpperCase()]) return w.toUpperCase();
+      if(!/^[A-Za-z]+$/.test(w)) return w;
+      return w.charAt(0).toUpperCase()+w.slice(1).toLowerCase();
+    }).join(' ');
+  }
+  function makeModel(mk, md){
+    md=String(md==null?'':md).replace(/\s+Truck$/i,'').trim();
+    return (titleish(mk)+' '+titleish(md)).trim();
+  }
+
   var apiRef=null, stateRef=null, rows=[], sortKey='rank', sortDir=1;
 
   function load(){
@@ -183,7 +206,7 @@ geotab.addin.fleetRegister = function () {
       var drv=st && st.driver && st.driver.id ? drvName[st.driver.id] : '';
       rows.push({
         truck: d.name||'', vin: vin, id: d.id, serial: serial,
-        model: ((d.vinInfoMake||'')+' '+(d.vinInfoModel||'')).trim(),
+        model: makeModel(d.vinInfoMake, d.vinInfoModel),
         year: d.vinInfoYear||'',
         office: office||'',
         own: cp['Ownership'] || (vin?'Unconfirmed':''),

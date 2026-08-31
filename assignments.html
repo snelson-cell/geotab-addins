@@ -173,6 +173,29 @@ geotab.addin.driverAssignments = function () {
   // which for a backfilled driver is nothing like the day they started.
   // The nightly sync writes "title:<Rippling job title>" into the driver's
   // comment beside the hire date. Geotab has no title field of its own.
+
+  // Geotab's VIN decoder is inconsistent about case: 113 Chevrolets come back as
+  // "Chevrolet" and 19 as "CHEVROLET". Normalise for display only -- the field is
+  // derived from the VIN, so writing to it just gets re-decoded on the next read.
+  // Acronyms are held out (GMC must not become "Gmc") and any token carrying a
+  // digit or dash is left exactly as found (F-150, 1500, 2500).
+  // Ram is deliberately absent: it is a brand name, not an acronym, and the VIN
+  // decoder already returns it as "Ram". Forcing it uppercase produced "RAM 1500".
+  var ACRONYMS = {GMC:1, BMW:1, GM:1, MB:1, VW:1};
+  function titleish(s){
+    s=String(s==null?'':s).trim();
+    if(!s) return '';
+    return s.split(/\s+/).map(function(w){
+      if(ACRONYMS[w.toUpperCase()]) return w.toUpperCase();
+      if(!/^[A-Za-z]+$/.test(w)) return w;
+      return w.charAt(0).toUpperCase()+w.slice(1).toLowerCase();
+    }).join(' ');
+  }
+  function makeModel(mk, md){
+    md=String(md==null?'':md).replace(/\s+Truck$/i,'').trim();
+    return (titleish(mk)+' '+titleish(md)).trim();
+  }
+
   function titleOf(u){
     var m=/title:([^\n]+)/.exec(u.comment||'');
     return m ? m[1].trim() : '';
@@ -263,6 +286,8 @@ geotab.addin.driverAssignments = function () {
       var off=devOffice[id];
       if(!off || vehDrv[id]) return;
       orphan.push({id:id, name:devById[id].name, office:off,
+                   model:makeModel(devById[id].vinInfoMake, devById[id].vinInfoModel),
+                   year:devById[id].vinInfoYear||'',
                    miles:miles[id]||0, unattributed:milesNoDrv[id]||0,
                    last:lastMove[id]||null});
     });
@@ -395,7 +420,7 @@ geotab.addin.driverAssignments = function () {
     // Trucks at this office with nobody on them, and what they covered.
     el('da-veh-title').textContent='Trucks with nobody assigned'+(orph.length?' ('+orph.length+')':'');
     el('da-vehicles').innerHTML = orph.length ?
-      '<table class="da-t"><thead><tr><th>Truck</th>'+
+      '<table class="da-t"><thead><tr><th>Truck</th><th>Model</th><th>Year</th>'+
       (officeFilter?'':'<th>Location</th>')+
       '<th style="text-align:right">Miles, '+WINDOW_DAYS+' days</th>'+
       '<th>Last moved</th></tr></thead><tbody>'+
@@ -404,6 +429,8 @@ geotab.addin.driverAssignments = function () {
         return '<tr>'+
           '<td class="nm">'+linked('da-link', deviceUrl(o.id), o.name||o.id,
                  'Open this vehicle in a new tab')+'</td>'+
+          '<td'+(o.model?'':' class="mut"')+'>'+esc(o.model||'\u2013')+'</td>'+
+          '<td'+(o.year?'':' class="mut"')+'>'+esc(o.year||'\u2013')+'</td>'+
           (officeFilter?'':'<td>'+esc(o.office)+'</td>')+
           '<td class="num"'+(driven?' style="color:var(--critical-ink);font-weight:650"':'')+'>'+
             (o.miles>=1?f0(o.miles):'\u2013')+'</td>'+
