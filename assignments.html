@@ -8,7 +8,7 @@
 <div id="da-root">
   <div class="da-topbar">
     <div>
-      <h1 class="da-h1">Driver assignments</h1>
+      <h1 class="da-h1">HCS assignments</h1>
       <p class="da-scope" id="da-scope">Loading…</p>
     </div>
     <div class="da-controls">
@@ -20,24 +20,23 @@
   </div>
 
   <div id="da-notes"></div>
-  <div id="da-action" class="da-action"></div>
   <div id="da-kpis" class="da-kpis"></div>
 
   <div class="da-head">
-    <div class="da-title">By location</div>
-  </div>
-  <div class="da-card" id="da-bylocation"></div>
-
-  <div class="da-head">
-    <div class="da-title" id="da-listtitle">Field crew with no truck</div>
+    <div class="da-title" id="da-listtitle">Roster</div>
+    <div class="da-tools"><button type="button" id="da-gaps">Only without a truck</button></div>
   </div>
   <div class="da-card" id="da-list"></div>
 
   <div class="da-head">
-    <div class="da-title" id="da-veh-title">Trucks driving with nobody assigned</div>
-    <div class="da-tools"><button type="button" id="da-vehtoggle">Show</button></div>
+    <div class="da-title" id="da-veh-title">Trucks with nobody assigned</div>
   </div>
-  <div class="da-card" id="da-vehicles" style="display:none"></div>
+  <div class="da-card" id="da-vehicles"></div>
+
+  <div class="da-head" id="da-byloc-head">
+    <div class="da-title">By location</div>
+  </div>
+  <div class="da-card" id="da-bylocation"></div>
 
   <div class="da-foot" id="da-foot"></div>
 </div>
@@ -101,6 +100,8 @@ geotab.addin.driverAssignments = function () {
     '.da-t td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;}',
     '.da-t td.nm{font-weight:600;color:var(--ink-1);white-space:nowrap;}',
     '.da-t tr.sel td{background:#eef4fb;}',
+    '.da-t tr.gap td{background:#fdf4f1;}',
+    '.da-btn.on,.da-tools button.on{background:var(--ink-1);color:#fff;border-color:var(--ink-1);}',
     '.da-empty{padding:26px 14px;text-align:center;color:var(--ink-3);font-size:13px;}',
     'a.da-link{color:inherit;text-decoration:none;border-bottom:1px dotted var(--ink-3);}',
     'a.da-link:hover{border-bottom-color:var(--ink-1);}',
@@ -130,14 +131,14 @@ geotab.addin.driverAssignments = function () {
     'b27B7':'Columbus','b27B8':'American Fork'
   };
 
-  // A driver is field crew if a nightly Rippling sync stamped their worker id into
+  // A driver is HCS if a nightly Rippling sync stamped their worker id into
   // employeeNo. Managers and office staff never get one, so this is the filter --
   // no title matching, no name matching, nothing to drift.
   var ONBOARD_DAYS = 3;   // a new hire has this long before the gap counts
   var MIN_MILES    = 50;  // below this in the window, "it drove" means nothing
   var WINDOW_DAYS  = 14;
 
-  var apiRef=null, MODEL=null, officeFilter='', loading=false;
+  var apiRef=null, MODEL=null, officeFilter='', loading=false, gapsOnly=false;
 
   function el(id){ return document.getElementById(id); }
   function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, function(c){
@@ -194,12 +195,14 @@ geotab.addin.driverAssignments = function () {
       var did=(dr && typeof dr==='object') ? dr.id : null;
       if(did && did!=='UnknownDriverId'){ drvVeh[did]=dev; vehDrv[dev]=did; }
     });
-    var miles={}, milesNoDrv={}, drvMiles={}, lastTrip={}, priorVeh={};
+    var miles={}, milesNoDrv={}, drvMiles={}, lastTrip={}, priorVeh={}, lastMove={};
     trips.forEach(function(t){
       var dev=(t.device||{}).id, dr=t.driver;
       var did=(dr && typeof dr==='object') ? dr.id : null;
       var mi=(t.distance||0)*0.621371;
       miles[dev]=(miles[dev]||0)+mi;
+      var ts=Date.parse(t.start||t.dateTime||0);
+      if(ts>(lastMove[dev]||0)) lastMove[dev]=ts;
       if(!did || did==='UnknownDriverId') milesNoDrv[dev]=(milesNoDrv[dev]||0)+mi;
       else {
         drvMiles[did]=(drvMiles[did]||0)+mi;
@@ -215,7 +218,7 @@ geotab.addin.driverAssignments = function () {
     var crew=[];
     users.forEach(function(u){
       if(!u.isDriver) return;
-      if(!(u.employeeNo||'').trim()) return;          // not field crew
+      if(!(u.employeeNo||'').trim()) return;          // not HCS
       var off=officeOf(u.driverGroups||u.companyGroups);
       var hd=hiredOn(u), age=daysSince(hd);
       var veh=drvVeh[u.id];
@@ -236,20 +239,18 @@ geotab.addin.driverAssignments = function () {
                  onboarding: age!=null && age < ONBOARD_DAYS});
     });
 
-    // trucks that drove with nobody attached
+    // Trucks at an office with nobody currently assigned. A parked spare and a
+    // truck covering 300 miles a week both belong here -- the miles column is
+    // what separates them, so nothing is filtered out on mileage.
     var orphan=[];
     Object.keys(devById).forEach(function(id){
       var off=devOffice[id];
-      if(!off) return;
-      var mi=miles[id]||0;
-      if(mi < MIN_MILES) return;
-      var noMi=milesNoDrv[id]||0;
-      if(noMi < MIN_MILES) return;
+      if(!off || vehDrv[id]) return;
       orphan.push({id:id, name:devById[id].name, office:off,
-                   miles:mi, unattributed:noMi,
-                   driver: vehDrv[id] ? 'assigned' : 'nobody assigned'});
+                   miles:miles[id]||0, unattributed:milesNoDrv[id]||0,
+                   last:lastMove[id]||null});
     });
-    orphan.sort(function(a,b){ return b.unattributed-a.unattributed; });
+    orphan.sort(function(a,b){ return b.miles-a.miles; });
 
     var totalMi=0, totalNo=0;
     Object.keys(devOffice).forEach(function(id){
@@ -269,41 +270,34 @@ geotab.addin.driverAssignments = function () {
     var all=view();
     var withV=all.filter(function(c){ return c.vehId; });
     var without=all.filter(function(c){ return !c.vehId; });
-    var onb=without.filter(function(c){ return c.onboarding; });
-    var rest=without.filter(function(c){ return !c.onboarding; });
-    var late=rest.filter(function(c){ return c.hadTruck; });     // had one earlier in the window
-    var idle=rest.filter(function(c){ return !c.hadTruck; });    // none at any point in it
+    var where=officeFilter||'All locations';
+    // the scope line is set on load, so it has to be refreshed on every filter change
+    el('da-scope').textContent = where+' \u00b7 '+all.length+' HCS \u00b7 '+
+      withV.length+' with a truck \u00b7 assignments live from Geotab, '+
+      'hire dates from the Rippling sync';
 
-    var a=el('da-action');
-    if(late.length){
-      a.className='da-action';
-      a.innerHTML='<b>'+without.length+' of '+all.length+' field crew have no truck assigned.</b> '+
-        late.length+' of them had one earlier in the last '+WINDOW_DAYS+' days; '+idle.length+
-        ' had none at any point in it. This page cannot tell you whether any of them are driving '+
-        '&mdash; Geotab attributes a trip only through the assignment &mdash; so these are names to '+
-        'ask about, not a fault list. Driving that reached no one is counted on the vehicle side below.';
-    } else {
-      a.className='da-action clear';
-      a.innerHTML='Every field crew member has a truck assigned.';
-    }
-
-    function kpi(k,v,s,col){
+    function kpi(k,v,sub,col){
       return '<div class="da-kpi"><div class="k">'+k+'</div><div class="v"'+
-             (col?' style="color:'+col+'"':'')+'>'+v+'</div><div class="s">'+s+'</div></div>';
+             (col?' style="color:'+col+'"':'')+'>'+v+'</div><div class="s">'+sub+'</div></div>';
     }
-    var noPct=pct(MODEL.totalNo, MODEL.totalMi);
+    var orph=officeFilter ? MODEL.orphan.filter(function(o){ return o.office===officeFilter; })
+                          : MODEL.orphan;
+    var orphMi=0; orph.forEach(function(o){ orphMi+=o.miles; });
     el('da-kpis').innerHTML =
-      kpi('Field crew', all.length, 'active in Rippling') +
-      kpi('With a truck', withV.length, Math.round(pct(withV.length, all.length))+'% of the crew',
-          withV.length===all.length?'var(--good-ink)':'') +
-      kpi('No truck', without.length, 'reason is not in the data',
+      kpi('HCS', all.length, where) +
+      kpi('With a truck', withV.length,
+          all.length ? Math.round(pct(withV.length, all.length))+'% of the roster' : '\u2013',
+          (all.length && withV.length===all.length)?'var(--good-ink)':'') +
+      kpi('Without a truck', without.length, 'listed in the roster below',
           without.length?'var(--critical-ink)':'var(--good-ink)') +
-      kpi('Had one recently', late.length, 'assigned earlier in the window') +
-      kpi('Onboarding', onb.length, 'started in the last '+ONBOARD_DAYS+' days') +
-      kpi('Unattributed miles', Math.round(noPct)+'%', f0(MODEL.totalNo)+' of '+f0(MODEL.totalMi)+
-          ' mi, last '+WINDOW_DAYS+' days', noPct>10?'var(--critical-ink)':'');
+      kpi('Trucks, nobody assigned', orph.length, f0(orphMi)+' mi in '+WINDOW_DAYS+' days',
+          orphMi>=MIN_MILES?'var(--critical-ink)':'');
 
-    // by location
+    // by location -- an index when nothing is picked, redundant once one is
+    var showBy=!officeFilter;
+    el('da-byloc-head').style.display=showBy?'':'none';
+    el('da-bylocation').style.display=showBy?'':'none';
+    if(showBy){
     var by={};
     MODEL.crew.forEach(function(c){
       var o=c.office||'(no location)';
@@ -337,60 +331,58 @@ geotab.addin.driverAssignments = function () {
           '<td>'+Math.round(p)+'%<div class="da-bar"><i style="width:'+p+'%;background:'+col+'"></i></div></td>'+
         '</tr>';
       }).join('')+'</tbody></table>'
-      : '<div class="da-empty">No field crew in your data scope.</div>';
+      : '<div class="da-empty">No HCS in your data scope.</div>';
+    }
 
-    // the named list -- overdue first, then onboarding
-    var list=late.concat(idle).concat(onb);
-    list.sort(function(x,y){
-      // Recently-assigned first: their truck moved within the window, so the
-      // trail is warm and someone still remembers what happened.
-      var rank=function(c){ return c.hadTruck?0 : c.onboarding?2 : 1; };
-      return rank(x)-rank(y) || (y.lastTrip||0)-(x.lastTrip||0) || (y.days||0)-(x.days||0);
-    });
-    el('da-listtitle').textContent='Field crew with no truck'+(list.length?' ('+list.length+')':'');
+    // The roster: everyone at this office and the truck they are on. Sorted by
+    // name so it reads and prints as a roster; a missing truck is tinted rather
+    // than floated to the top, so the list stays in the order people expect.
+    var list=all.slice().sort(function(x,y){ return x.name.localeCompare(y.name); });
+    if(gapsOnly) list=list.filter(function(c){ return !c.vehId; });
+    el('da-listtitle').textContent='Roster'+(list.length?' ('+list.length+')':'');
     el('da-list').innerHTML = list.length ?
-      '<table class="da-t"><thead><tr><th>Name</th><th>Location</th>'+
-      '<th>Started</th><th style="text-align:right">Days</th>'+
-      '<th>Last truck they were on</th><th></th></tr></thead><tbody>'+
+      '<table class="da-t"><thead><tr><th>Name</th>'+
+      (officeFilter?'':'<th>Location</th>')+
+      '<th>Truck</th><th>Started</th><th></th></tr></thead><tbody>'+
       list.map(function(c){
-        return '<tr><td class="nm">'+linked('da-link', userUrl(c.id), c.name,
-                 'Open this driver in a new tab')+'</td>'+
-          '<td>'+esc(c.office||'–')+'</td>'+
-          '<td>'+(c.hired?c.hired.toISOString().slice(0,10):'–')+'</td>'+
-          '<td class="num">'+(c.days==null?'–':c.days)+'</td>'+
-          '<td>'+(c.hadTruck
-            ? esc(c.priorVeh)+'<div class="da-sub">'+
-              (c.priorNow ? 'now '+esc(c.priorNow) : 'nobody assigned to it now')+
-              ', last trip '+daysAgo(c.lastTrip)+'</div>'
-            : '<span class="da-sub">nothing in this window</span>')+'</td>'+
-          '<td>'+(c.onboarding
-            ? '<span class="da-pill new">onboarding</span>'
-            : c.hadTruck
-              ? '<span class="da-pill unk">had one recently</span>'
-              : '<span class="da-pill late">no truck</span>')+'</td></tr>';
+        return '<tr'+(c.vehId?'':' class="gap"')+'>'+
+          '<td class="nm">'+linked('da-link', userUrl(c.id), c.name,
+             'Open this driver in a new tab')+'</td>'+
+          (officeFilter?'':'<td>'+esc(c.office||'\u2013')+'</td>')+
+          '<td'+(c.vehId?' class="nm"':'')+'>'+(c.vehId
+            ? linked('da-link', deviceUrl(c.vehId), c.veh||c.vehId, 'Open this vehicle in a new tab')
+            : '<span class="da-sub">'+(c.hadTruck
+                ? 'was on '+esc(c.priorVeh)+', last trip '+daysAgo(c.lastTrip)
+                : 'none')+'</span>')+'</td>'+
+          '<td>'+(c.hired?c.hired.toISOString().slice(0,10):'\u2013')+
+            '<div class="da-sub">'+(c.days==null?'':c.days+' days')+'</div></td>'+
+          '<td>'+(c.vehId ? ''
+            : c.onboarding ? '<span class="da-pill new">onboarding</span>'
+            : '<span class="da-pill late">no truck</span>')+'</td></tr>';
       }).join('')+'</tbody></table>'
-      : '<div class="da-empty">Everyone has a truck assigned.</div>';
+      : '<div class="da-empty">'+(gapsOnly?'Everyone here has a truck.':'No HCS in this location.')+'</div>';
 
-    // trucks driving unattributed
-    var orph=officeFilter ? MODEL.orphan.filter(function(o){ return o.office===officeFilter; })
-                          : MODEL.orphan;
-    el('da-veh-title').textContent='Trucks driving with nobody assigned'+(orph.length?' ('+orph.length+')':'');
+    // Trucks at this office with nobody on them, and what they covered.
+    el('da-veh-title').textContent='Trucks with nobody assigned'+(orph.length?' ('+orph.length+')':'');
     el('da-vehicles').innerHTML = orph.length ?
-      '<table class="da-t"><thead><tr><th>Truck</th><th>Location</th>'+
-      '<th style="text-align:right">Miles</th><th style="text-align:right">Unattributed</th>'+
-      '<th></th></tr></thead><tbody>'+
+      '<table class="da-t"><thead><tr><th>Truck</th>'+
+      (officeFilter?'':'<th>Location</th>')+
+      '<th style="text-align:right">Miles, '+WINDOW_DAYS+' days</th>'+
+      '<th>Last moved</th></tr></thead><tbody>'+
       orph.map(function(o){
-        return '<tr><td class="nm">'+linked('da-link', deviceUrl(o.id), o.name||o.id,
+        var driven=o.miles>=MIN_MILES;
+        return '<tr'+(driven?' class="gap"':'')+'>'+
+          '<td class="nm">'+linked('da-link', deviceUrl(o.id), o.name||o.id,
                  'Open this vehicle in a new tab')+'</td>'+
-          '<td>'+esc(o.office)+'</td>'+
-          '<td class="num">'+f0(o.miles)+'</td>'+
-          '<td class="num" style="color:var(--critical-ink);font-weight:650">'+f0(o.unattributed)+'</td>'+
-          '<td class="da-sub">'+esc(o.driver)+'</td></tr>';
+          (officeFilter?'':'<td>'+esc(o.office)+'</td>')+
+          '<td class="num"'+(driven?' style="color:var(--critical-ink);font-weight:650"':'')+'>'+
+            (o.miles>=1?f0(o.miles):'\u2013')+'</td>'+
+          '<td class="da-sub">'+daysAgo(o.last)+'</td></tr>';
       }).join('')+'</tbody></table>'
-      : '<div class="da-empty">Every truck that drove had a driver attached.</div>';
+      : '<div class="da-empty">Every truck here has a driver assigned.</div>';
 
     el('da-foot').innerHTML =
-      '<p><b>Who counts as field crew.</b> A driver whose Geotab record carries a Rippling worker id. '+
+      '<p><b>Who counts as HCS.</b> A driver whose Geotab record carries a Rippling worker id. '+
       'The nightly sync stamps one on every active Field Operations Frontline worker and nobody else, '+
       'so managers and office staff are excluded without anyone matching names or titles.</p>'+
       '<p><b>What "has a truck" means.</b> The driver MyGeotab currently records against a vehicle &mdash; '+
@@ -463,7 +455,7 @@ geotab.addin.driverAssignments = function () {
         sel.value=keep;
         loading=false; el('da-root').classList.remove('busy');
         el('da-scope').textContent=
-          (officeFilter||'All locations')+' · '+MODEL.crew.length+' field crew · '+
+          (officeFilter||'All locations')+' · '+MODEL.crew.length+' HCS · '+
           'assignments live from Geotab, hire dates from the Rippling sync';
         render();
       }, fail);
@@ -474,19 +466,21 @@ geotab.addin.driverAssignments = function () {
     el('da-office').addEventListener('change', function(){
       officeFilter=this.value; if(MODEL) render();
     });
-    el('da-vehtoggle').addEventListener('click', function(){
-      var w=el('da-vehicles'), hide=w.style.display!=='none';
-      w.style.display=hide?'none':'';
-      this.textContent=hide?'Show':'Hide';
+    el('da-gaps').addEventListener('click', function(){
+      gapsOnly=!gapsOnly;
+      this.className=gapsOnly?'on':'';
+      this.textContent=gapsOnly?'Show everyone':'Only without a truck';
+      if(MODEL) render();
     });
     el('da-csv').addEventListener('click', function(){
       if(!MODEL) return;
       var rows=[['Name','Location','Hired','Days','Truck','Status']];
-      view().forEach(function(c){
-        rows.push([c.name, c.office||'', c.hired?c.hired.toISOString().slice(0,10):'',
-                   c.days==null?'':c.days, c.veh||'',
-                   c.vehId?'has a truck':(c.onboarding?'onboarding':'needs a truck')]);
-      });
+      view().slice().sort(function(x,y){ return x.name.localeCompare(y.name); })
+        .forEach(function(c){
+          rows.push([c.name, c.office||'', c.hired?c.hired.toISOString().slice(0,10):'',
+                     c.days==null?'':c.days, c.veh||'',
+                     c.vehId?'assigned':(c.onboarding?'onboarding':'no truck')]);
+        });
       var csv=rows.map(function(r){
         return r.map(function(x){ return '"'+String(x).replace(/"/g,'""')+'"'; }).join(','); }).join('\n');
       var a=document.createElement('a');
