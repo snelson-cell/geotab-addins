@@ -319,7 +319,17 @@ geotab.addin.vehicleHealth = function () {
                search:{fromDate:new Date(to.getTime()-7*24*3600*1000).toISOString(),
                        toDate:to.toISOString()}}]
     ], function(res){
-      var devices=res[0]||[], cameras=res[1]||[], status=res[2]||[], faults=res[3]||[];
+      // Drop archived vehicles. Geotab returns them from a plain Device Get, and
+      // counting them inflated the fleet with trucks that no longer exist: 15
+      // fleet-wide, all rentals returned in the last week, 7 of them Louisville's.
+      // They landed in "not reporting maintenance data", which is true of a
+      // returned rental and useless to a manager.
+      var now_=Date.now();
+      var devices=(res[0]||[]).filter(function(d){
+        var t=d && d.activeTo;
+        return !t || new Date(t).getTime() > now_;
+      });
+      var cameras=res[1]||[], status=res[2]||[], faults=res[3]||[];
 
       // Camera records key off the GO device SERIAL NUMBER, not the device id.
       var camSerial={};
