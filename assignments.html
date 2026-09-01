@@ -194,6 +194,13 @@ geotab.addin.driverAssignments = function () {
       return w.charAt(0).toUpperCase()+w.slice(1).toLowerCase();
     }).join(' ');
   }
+  // Many trucks are already named by the last 6 of their VIN, so for those this
+  // repeats the name -- but for a branch-numbered truck (ATN-68) it is the only
+  // way to tie the row to a title, an RA, or an Enterprise export.
+  function last6(v){
+    v=String(v==null?'':v).trim().toUpperCase();
+    return v.length>=6 ? v.slice(-6) : (v||'');
+  }
   function makeModel(mk, md){
     md=String(md==null?'':md).replace(/\s+Truck$/i,'').trim();
     return (titleish(mk)+' '+titleish(md)).trim();
@@ -276,6 +283,7 @@ geotab.addin.driverAssignments = function () {
                  veh: veh ? (devById[veh]||{}).name : null,
                  vehModel: veh ? makeModel((devById[veh]||{}).vinInfoMake,
                                            (devById[veh]||{}).vinInfoModel) : '',
+                 vehVin: veh ? last6((devById[veh]||{}).vehicleIdentificationNumber) : '',
                  miles:dm, lastTrip:lastTrip[u.id]||null,
                  hadTruck: !veh && !!prior,
                  priorVeh: prior ? (devById[prior]||{}).name : null,
@@ -299,6 +307,7 @@ geotab.addin.driverAssignments = function () {
       orphan.push({id:id, name:devById[id].name, office:off,
                    model:makeModel(devById[id].vinInfoMake, devById[id].vinInfoModel),
                    year:devById[id].vinInfoYear||'',
+                   vin:last6(devById[id].vehicleIdentificationNumber),
                    miles:miles[id]||0, unattributed:milesNoDrv[id]||0,
                    last:lastMove[id]||null});
     });
@@ -395,6 +404,7 @@ geotab.addin.driverAssignments = function () {
       var a,b;
       if(sortKey==='truck'){ a=x.veh||''; b=y.veh||''; }
       else if(sortKey==='vehmodel'){ a=x.vehModel||''; b=y.vehModel||''; }
+      else if(sortKey==='vehvin'){ a=x.vehVin||''; b=y.vehVin||''; }
       else if(sortKey==='start'){ a=x.hired?x.hired.getTime():0; b=y.hired?y.hired.getTime():0; }
       else if(sortKey==='title'){ a=x.title||''; b=y.title||''; }
       else if(sortKey==='office'){ a=x.office||''; b=y.office||''; }
@@ -405,7 +415,8 @@ geotab.addin.driverAssignments = function () {
     el('da-listtitle').textContent='Roster'+(list.length?' ('+list.length+')':'');
     var cols=[['name','Name'],['title','Title']];
     if(!officeFilter) cols.push(['office','Location']);
-    cols.push(['truck','Truck'],['vehmodel','Model'],['start','Start Date']);
+    cols.push(['truck','Truck'],['vehmodel','Model'],['vehvin','VIN (last 6)'],
+              ['start','Start Date']);
     el('da-list').innerHTML = list.length ?
       '<table class="da-t"><thead><tr>'+
       cols.map(function(c){
@@ -422,6 +433,7 @@ geotab.addin.driverAssignments = function () {
             ? linked('da-link', deviceUrl(c.vehId), c.veh||c.vehId, 'Open this vehicle in a new tab')
             : (c.hadTruck ? 'was on '+esc(c.priorVeh)+', '+daysAgo(c.lastTrip) : '\u2013'))+'</td>'+
           '<td'+(c.vehModel?'':' class="mut"')+'>'+esc(c.vehModel||'\u2013')+'</td>'+
+          '<td'+(c.vehVin?'':' class="mut"')+'>'+esc(c.vehVin||'\u2013')+'</td>'+
           '<td>'+fmtDate(c.hired)+'</td>'+
           '<td>'+(c.vehId ? ''
             : c.onboarding ? '<span class="da-pill new">onboarding</span>'
@@ -434,6 +446,7 @@ geotab.addin.driverAssignments = function () {
     el('da-veh-title').textContent='Trucks with nobody assigned'+(orph.length?' ('+orph.length+')':'');
     el('da-vehicles').innerHTML = orph.length ?
       '<table class="da-t"><thead><tr><th>Truck</th><th>Model</th><th>Year</th>'+
+      '<th>VIN (last 6)</th>'+
       (officeFilter?'':'<th>Location</th>')+
       '<th style="text-align:right">Miles, '+WINDOW_DAYS+' days</th>'+
       '<th>Last moved</th></tr></thead><tbody>'+
@@ -444,6 +457,7 @@ geotab.addin.driverAssignments = function () {
                  'Open this vehicle in a new tab')+'</td>'+
           '<td'+(o.model?'':' class="mut"')+'>'+esc(o.model||'\u2013')+'</td>'+
           '<td'+(o.year?'':' class="mut"')+'>'+esc(o.year||'\u2013')+'</td>'+
+          '<td'+(o.vin?'':' class="mut"')+'>'+esc(o.vin||'\u2013')+'</td>'+
           (officeFilter?'':'<td>'+esc(o.office)+'</td>')+
           '<td class="num"'+(driven?' style="color:var(--critical-ink);font-weight:650"':'')+'>'+
             (o.miles>=1?f0(o.miles):'\u2013')+'</td>'+
@@ -570,11 +584,12 @@ geotab.addin.driverAssignments = function () {
     });
     el('da-csv').addEventListener('click', function(){
       if(!MODEL) return;
-      var rows=[['Name','Title','Location','Start Date','Days','Truck','Model','Status']];
+      var rows=[['Name','Title','Location','Start Date','Days','Truck','Model',
+                 'VIN (last 6)','Status']];
       view().slice().sort(function(x,y){ return x.name.localeCompare(y.name); })
         .forEach(function(c){
           rows.push([c.name, c.title||'', c.office||'', fmtDate(c.hired),
-                     c.days==null?'':c.days, c.veh||'', c.vehModel||'',
+                     c.days==null?'':c.days, c.veh||'', c.vehModel||'', c.vehVin||'',
                      c.vehId?'assigned':(c.onboarding?'onboarding':'no truck')]);
         });
       var csv=rows.map(function(r){
