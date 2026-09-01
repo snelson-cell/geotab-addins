@@ -431,7 +431,7 @@ geotab.addin.driverAssignments = function () {
           (officeFilter?'':'<td>'+esc(c.office||'\u2013')+'</td>')+
           '<td'+(c.vehId?' class="nm"':' class="mut"')+'>'+(c.vehId
             ? linked('da-link', deviceUrl(c.vehId), c.veh||c.vehId, 'Open this vehicle in a new tab')
-            : (c.hadTruck ? 'was on '+esc(c.priorVeh)+', '+daysAgo(c.lastTrip) : '\u2013'))+'</td>'+
+            : '\u2013')+'</td>'+
           '<td'+(c.vehModel?'':' class="mut"')+'>'+esc(c.vehModel||'\u2013')+'</td>'+
           '<td'+(c.vehVin?'':' class="mut"')+'>'+esc(c.vehVin||'\u2013')+'</td>'+
           '<td>'+fmtDate(c.hired)+'</td>'+
