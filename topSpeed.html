@@ -1134,11 +1134,31 @@ geotab.addin.topSpeed = function () {
     el('ts-csv').addEventListener('click', exportCsv);
   }
 
+  // MyGeotab leaves the document title empty for add-ins, so every dashboard
+  // shows the same bare "| MyGeotab" in the browser tab. Name it on focus and
+  // put the original back on blur, so navigating away never strands a stale
+  // name on a page this add-in no longer owns. Wrapped because the title is
+  // the host's, not ours, and a throw here must not take the page down.
+  var PAGE_TITLE = 'Top Speed by Driver';
+  var priorTitle = null;
+  function setTabTitle(){
+    try {
+      if(priorTitle === null) priorTitle = document.title;
+      document.title = PAGE_TITLE + ' | MyGeotab';
+    } catch(e){}
+  }
+  function restoreTabTitle(){
+    try {
+      if(priorTitle !== null){ document.title = priorTitle; priorTitle = null; }
+    } catch(e){}
+  }
+
   return {
     initialize:function(api,state,cb){
       injectStyles(); buildDates(); wireOffice(); wireTools(); watchResize(); cb();
     },
     focus:function(api,state){
+      setTabTitle();
       stateRef=state; startPoll();
       // Re-resolve a relative preset on every focus. Without this a tab left
       // open across midnight keeps yesterday's dates under a "Today" button —
@@ -1147,7 +1167,7 @@ geotab.addin.topSpeed = function () {
                      if(p) applyPreset(p); }
       load(api);
     },
-    blur:function(){ stopPoll(); }
+    blur:function(){ restoreTabTitle(); stopPoll(); }
   };
 };
 </script>

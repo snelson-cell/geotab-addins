@@ -410,6 +410,25 @@ geotab.addin.fleetRegister = function () {
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
   }
 
+  // MyGeotab leaves the document title empty for add-ins, so every dashboard
+  // shows the same bare "| MyGeotab" in the browser tab. Name it on focus and
+  // put the original back on blur, so navigating away never strands a stale
+  // name on a page this add-in no longer owns. Wrapped because the title is
+  // the host's, not ours, and a throw here must not take the page down.
+  var PAGE_TITLE = 'Fleet Roster';
+  var priorTitle = null;
+  function setTabTitle(){
+    try {
+      if(priorTitle === null) priorTitle = document.title;
+      document.title = PAGE_TITLE + ' | MyGeotab';
+    } catch(e){}
+  }
+  function restoreTabTitle(){
+    try {
+      if(priorTitle !== null){ document.title = priorTitle; priorTitle = null; }
+    } catch(e){}
+  }
+
   return {
     initialize: function(api, state, cb){
       apiRef=api; stateRef=state;
@@ -420,8 +439,8 @@ geotab.addin.fleetRegister = function () {
       var c=el('fr-csv'); if(c) c.onclick=exportCsv;
       cb();
     },
-    focus: function(api, state){ apiRef=api; stateRef=state; load(); },
-    blur: function(){}
+    focus: function(api, state){ setTabTitle(); apiRef=api; stateRef=state; load(); },
+    blur: function(){ restoreTabTitle(); }
   };
 };
 </script>
