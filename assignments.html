@@ -56,9 +56,7 @@ geotab.addin.driverAssignments = function () {
     '  --good:#0ca30c; --warning:#fab219; --critical:#d03b3b;',
     '  --good-ink:#0a6b18; --warning-ink:#7a5300; --critical-ink:#9b2626;',
     '  --accent:#2a78d6;',
-    '  font-family:"Inter",system-ui,-apple-system,"Segoe UI",sans-serif;',
-    '  font-feature-settings:"tnum" 1;',   /* tabular figures: the tables line up */
-    '  -webkit-font-smoothing:antialiased;',
+    '  font-family:system-ui,-apple-system,"Segoe UI",sans-serif;',
     '  color:var(--ink-1); background:var(--page); padding:18px 20px 32px; width:100%;}',
     '#da-root, #da-root *{box-sizing:border-box;}',
     '#da-root.busy{opacity:.55;}',
@@ -124,27 +122,7 @@ geotab.addin.driverAssignments = function () {
     '.da-foot p{margin:0 0 7px;}'
   ].join('\n');
 
-  var FONT_ID = 'da-font';
-  function injectFont(){
-    if(document.getElementById(FONT_ID)) return;
-    // preconnect first: the font file lives on a second host, and without this
-    // the browser will not open that connection until the CSS has parsed.
-    ['https://fonts.googleapis.com','https://fonts.gstatic.com'].forEach(function(h,i){
-      var p=document.createElement('link');
-      p.rel='preconnect'; p.href=h;
-      if(i) p.crossOrigin='anonymous';
-      document.head.appendChild(p);
-    });
-    var l=document.createElement('link');
-    l.id=FONT_ID; l.rel='stylesheet';
-    // display=swap so the page renders in the fallback immediately rather than
-    // holding text invisible while the font downloads.
-    l.href='https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap';
-    document.head.appendChild(l);
-  }
-
   function injectStyles(){
-    injectFont();
     if(document.getElementById(STYLE_ID)) return;
     var s=document.createElement('style'); s.id=STYLE_ID; s.textContent=CSS;
     document.head.appendChild(s);
