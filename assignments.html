@@ -241,7 +241,13 @@ geotab.addin.driverAssignments = function () {
     status.forEach(function(s){
       var dev=(s.device||{}).id, dr=s.driver;
       var did=(dr && typeof dr==='object') ? dr.id : null;
-      if(did && did!=='UnknownDriverId'){ drvVeh[did]=dev; vehDrv[dev]=did; }
+      if(!did || did==='UnknownDriverId') return;
+      // MyGeotab keeps the assignment when a vehicle is archived, so a returned
+      // rental still names its last driver. That is not a truck the person has:
+      // counting it put two drivers in "with a truck" whose vehicle no longer
+      // exists, and printed the raw device id because the record was filtered out.
+      if(!devById[dev]) return;
+      drvVeh[did]=dev; vehDrv[dev]=did;
     });
     var miles={}, milesNoDrv={}, drvMiles={}, lastTrip={}, priorVeh={}, lastMove={};
     trips.forEach(function(t){
@@ -430,7 +436,8 @@ geotab.addin.driverAssignments = function () {
           '<td'+(c.title?'':' class="mut"')+'>'+esc(c.title||'\u2013')+'</td>'+
           (officeFilter?'':'<td>'+esc(c.office||'\u2013')+'</td>')+
           '<td'+(c.vehId?' class="nm"':' class="mut"')+'>'+(c.vehId
-            ? linked('da-link', deviceUrl(c.vehId), c.veh||c.vehId, 'Open this vehicle in a new tab')
+            ? linked('da-link', deviceUrl(c.vehId), c.veh||'(unnamed asset)',
+                     'Open this vehicle in a new tab')
             : '\u2013')+'</td>'+
           '<td'+(c.vehModel?'':' class="mut"')+'>'+esc(c.vehModel||'\u2013')+'</td>'+
           '<td'+(c.vehVin?'':' class="mut"')+'>'+esc(c.vehVin||'\u2013')+'</td>'+
