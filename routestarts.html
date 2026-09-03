@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>Route Starts</title>
+</head>
+<body>
+<div id="rs-root">
+  <div class="rs-topbar">
+    <div>
+      <h1 class="rs-h1">Route starts</h1>
+      <p class="rs-scope" id="rs-scope">Loading&hellip;</p>
+    </div>
+    <div class="rs-controls">
+      <label class="rs-lab">Location
+        <select id="rs-office"><option value="">All locations</option></select>
+      </label>
+      <label class="rs-lab">Window
+        <select id="rs-window">
+          <option value="14">Last 14 days</option>
+          <option value="28">Last 28 days</option>
+          <option value="7">Last 7 days</option>
+        </select>
+      </label>
+      <button type="button" id="rs-csv" class="rs-btn">Export CSV</button>
+    </div>
+  </div>
+
+  <div id="rs-notes"></div>
+  <div id="rs-kpis" class="rs-kpis"></div>
+
+  <div class="rs-head">
+    <div class="rs-title" id="rs-listtitle">Where each route starts</div>
+    <div class="rs-tools"><button type="button" id="rs-away">Only away from branch</button></div>
+  </div>
+  <div class="rs-card" id="rs-list"></div>
+
+  <div class="rs-head"><div class="rs-title">Distance from branch</div></div>
+  <div class="rs-card" id="rs-hist"></div>
+
+  <div class="rs-foot" id="rs-foot"></div>
+</div>
+
+<script>
+geotab.addin.routeStarts = function () {
+  'use strict';
+
+  var STYLE_ID = 'rs-styles';
+  var CSS = [
+    '#rs-root{',
+    '  --page:#f9f9f7; --surface:#fcfcfb; --ink-1:#0b0b0b; --ink-2:#52514e; --ink-3:#898781;',
+    '  --grid:#e1e0d9; --hairline:rgba(11,11,11,.10); --sunk:#f0efe9;',
+    '  --good:#0ca30c; --warning:#fab219; --critical:#d03b3b;',
+    '  --good-ink:#0a6b18; --warning-ink:#7a5300; --critical-ink:#9b2626;',
+    '  font-family:system-ui,-apple-system,"Segoe UI",sans-serif;',
+    '  color:var(--ink-1); background:var(--page); padding:18px 20px 32px; width:100%;}',
+    '#rs-root, #rs-root *{box-sizing:border-box;}',
+    '#rs-root.busy{opacity:.55;}',
+    '.rs-topbar{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:12px;}',
+    '.rs-h1{font-size:19px;font-weight:650;margin:0;letter-spacing:-.01em;}',
+    '.rs-scope{font-size:12.5px;color:var(--ink-3);margin:3px 0 0;}',
+    '.rs-controls{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;}',
+    '.rs-lab{font-size:11px;color:var(--ink-3);display:flex;flex-direction:column;gap:3px;}',
+    '.rs-lab select{font-size:13px;padding:5px 8px;border:1px solid var(--grid);border-radius:6px;background:#fff;color:var(--ink-1);}',
+    '.rs-btn{font-size:12.5px;padding:6px 11px;border:1px solid var(--grid);border-radius:6px;background:#fff;color:var(--ink-2);cursor:pointer;}',
+    '.rs-btn:hover{border-color:var(--ink-3);}',
+    '.rs-note{font-size:12.5px;padding:9px 12px;border-radius:7px;margin:12px 0 0;',
+    '  background:#fdf6e3;border:1px solid #f0e2bd;color:#6b5316;}',
+    '.rs-note.err{background:#fdeceb;border-color:#f3c9c5;color:#8f2a22;}',
+    '.rs-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin:14px 0 0;}',
+    '.rs-kpi{background:var(--surface);border:1px solid var(--grid);border-radius:9px;padding:12px 14px;}',
+    '.rs-kpi .k{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);}',
+    '.rs-kpi .v{font-size:25px;font-weight:680;letter-spacing:-.02em;line-height:1.15;margin-top:2px;',
+    '  font-variant-numeric:tabular-nums;}',
+    '.rs-kpi .s{font-size:11.5px;color:var(--ink-3);margin-top:1px;}',
+    '.rs-head{display:flex;align-items:baseline;justify-content:space-between;margin:26px 0 8px;gap:12px;}',
+    '.rs-title{font-size:15px;font-weight:640;}',
+    '.rs-tools button{font-size:11.5px;padding:3px 9px;border:1px solid var(--grid);',
+    '  border-radius:5px;background:#fff;color:var(--ink-3);cursor:pointer;}',
+    '.rs-tools button.on{background:var(--ink-1);color:#fff;border-color:var(--ink-1);}',
+    '.rs-card{border:1px solid var(--grid);border-radius:9px;background:var(--surface);overflow-x:auto;}',
+    '.rs-t{border-collapse:collapse;width:100%;font-size:13px;min-width:820px;}',
+    '.rs-t th,.rs-t td{padding:7px 10px;text-align:left;border-bottom:1px solid #eeede7;white-space:nowrap;}',
+    '.rs-t th{position:sticky;top:0;background:#faf9f5;font-weight:600;font-size:12px;',
+    '  color:var(--ink-2);z-index:1;cursor:pointer;}',
+    '.rs-t th:hover{background:#f2f1ea;}',
+    '.rs-t tr:hover td{background:#fbfaf6;}',
+    '.rs-t tr:last-child td{border-bottom:none;}',
+    '.rs-t td.num{text-align:right;font-variant-numeric:tabular-nums;}',
+    '.rs-t td.nm{font-weight:600;color:var(--ink-1);}',
+    '.rs-t td.mut{color:var(--ink-3);}',
+    'a.rs-link{color:#185FA5;text-decoration:none;}',
+    'a.rs-link:hover{text-decoration:underline;}',
+    '.rs-pill{display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.04em;',
+    '  padding:1px 7px;border-radius:20px;}',
+    '.rs-pill.depot{background:#e7f4e9;color:var(--good-ink);}',
+    '.rs-pill.home{background:var(--sunk);color:var(--ink-2);}',
+    '.rs-pill.vary{background:#fdf3e3;color:var(--warning-ink);}',
+    '.rs-bar{height:16px;background:var(--sunk);border-radius:3px;overflow:hidden;min-width:120px;}',
+    '.rs-bar i{display:block;height:100%;background:#7fa8d4;}',
+    '.rs-sub{font-size:11.5px;color:var(--ink-3);}',
+    '.rs-empty{padding:26px 14px;text-align:center;color:var(--ink-3);font-size:13px;}',
+    '.rs-foot{margin:22px 0 0;font-size:12px;color:var(--ink-3);max-width:84ch;line-height:1.6;}',
+    '.rs-foot p{margin:0 0 7px;}'
+  ].join('\n');
+
+  function injectStyles(){
+    if(document.getElementById(STYLE_ID)) return;
+    var s=document.createElement('style'); s.id=STYLE_ID; s.textContent=CSS;
+    document.head.appendChild(s);
+  }
+
+  var OFFICES = {
+    'b27AB':'Orlando','b27AC':'Tampa','b27AD':'ATL North','b27AE':'ATL South',
+    'b27AF':'Chicago','b27B0':'Indianapolis','b27B1':'Northern Indy','b27B2':'Louisville',
+    'b27B3':'Detroit','b27B4':'Grand Rapids','b27B5':'Cincinnati','b27B6':'Cleveland',
+    'b27B7':'Columbus','b27B8':'American Fork'
+  };
+
+  // Branch coordinates, geocoded from the real suite addresses. These are NOT
+  // city centres and must not be guessed from the office name: the Detroit
+  // branch is in Ann Arbor, Louisville's in Crestwood KY, Cleveland's in
+  // Brecksville OH, Chicago's in Elgin IL.
+  var BRANCH = {
+    'ATL North':{lat:33.90909,lng:-84.20993},'ATL South':{lat:33.59037,lng:-84.40772},
+    'American Fork':{lat:40.34985,lng:-111.78355},'Chicago':{lat:42.07367,lng:-88.30051},
+    'Cincinnati':{lat:39.29182,lng:-84.40766},'Cleveland':{lat:41.2816,lng:-81.63863},
+    'Columbus':{lat:39.95572,lng:-82.94601},'Detroit':{lat:42.22739,lng:-83.7439},
+    'Grand Rapids':{lat:42.99865,lng:-85.68227},'Indianapolis':{lat:39.88046,lng:-86.26591},
+    'Louisville':{lat:38.33453,lng:-85.46303},'Northern Indy':{lat:41.46487,lng:-87.29387},
+    'Orlando':{lat:28.59659,lng:-81.42065},'Tampa':{lat:27.99388,lng:-82.39628}
+  };
+
+  var AT_BRANCH_MI = 0.5;    // within this of the branch, the truck is depot-based
+  var SAME_SPOT_MI = 0.2;    // two overnight points this close are one place
+  var MIN_NIGHTS   = 3;      // fewer than this and there is no pattern to report
+
+  var apiRef=null, MODEL=null, officeFilter='', windowDays=14, awayOnly=false, loading=false;
+  var sortKey='distance', sortDir=-1;
+
+  function el(id){ return document.getElementById(id); }
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+  function f1(n){ return (n==null||!isFinite(n)) ? '–' : (Math.round(n*10)/10).toFixed(1); }
+  function note(html, err){
+    var d=document.createElement('div'); d.className='rs-note'+(err?' err':'');
+    d.innerHTML=html; el('rs-notes').appendChild(d);
+  }
+  function officeOf(groups){
+    for(var i=0;i<(groups||[]).length;i++){
+      var g=groups[i]; if(g && OFFICES[g.id]) return OFFICES[g.id];
+    }
+    return null;
+  }
+  function userUrl(id){
+    return id ? location.origin+location.pathname+'#user,currentTab:user,id:'+id : null;
+  }
+  function deviceUrl(id){
+    return id ? location.origin+location.pathname+'#device,id:'+id : null;
+  }
+  function linked(url, text){
+    return url ? '<a class="rs-link" href="'+esc(url)+'" target="_blank" rel="noopener">'+esc(text)+'</a>'
+               : esc(text);
+  }
+
+  function miles(a, b){
+    var R=3958.8, p=Math.PI/180;
+    var dLat=(b.lat-a.lat)*p, dLng=(b.lng-a.lng)*p;
+    var h=Math.sin(dLat/2)*Math.sin(dLat/2) +
+          Math.cos(a.lat*p)*Math.cos(b.lat*p)*Math.sin(dLng/2)*Math.sin(dLng/2);
+    return 2*R*Math.asin(Math.sqrt(h));
+  }
+  function bearing(from, to){
+    var p=Math.PI/180;
+    var y=Math.sin((to.lng-from.lng)*p)*Math.cos(to.lat*p);
+    var x=Math.cos(from.lat*p)*Math.sin(to.lat*p) -
+          Math.sin(from.lat*p)*Math.cos(to.lat*p)*Math.cos((to.lng-from.lng)*p);
+    var deg=(Math.atan2(y,x)/p+360)%360;
+    return ['N','NE','E','SE','S','SW','W','NW'][Math.round(deg/45)%8];
+  }
+
+  // A working day runs to 4am local, so a truck parked at 9pm belongs to the day
+  // it worked rather than the next one. Grouping on UTC dates splits every
+  // evening park onto the following day and destroys the pattern -- it dropped
+  // the share of trucks with a consistent overnight spot from 27/37 to 18/37.
+  function localDayKey(iso, tzOffsetMin){
+    var t=new Date(iso).getTime() - tzOffsetMin*60000;
+    var d=new Date(t);
+    if(d.getUTCHours() < 4) t -= 5*3600000;
+    return new Date(t).toISOString().slice(0,10);
+  }
+
+  // Offsets are resolved from the device's own timeZoneId via the Intl data the
+  // browser already has, so DST is handled without a lookup table.
+  var offsetCache={};
+  function tzOffsetMin(tz, when){
+    var key=tz+'|'+when.slice(0,10);
+    if(offsetCache[key]!=null) return offsetCache[key];
+    var off=0;
+    try {
+      var dt=new Date(when);
+      var s=new Intl.DateTimeFormat('en-US',{timeZone:tz,timeZoneName:'shortOffset'})
+              .formatToParts(dt).find(function(p){ return p.type==='timeZoneName'; });
+      var m=/GMT([+-]\d{1,2})(?::(\d{2}))?/.exec((s&&s.value)||'');
+      if(m) off = (parseInt(m[1],10)*60) + (m[2]?parseInt(m[2],10)*Math.sign(parseInt(m[1],10)):0);
+    } catch(e){ off=0; }
+    offsetCache[key]=off;
+    return off;
+  }
+
+  function build(users, devices, status, trips){
+    var devById={}, devOffice={}, devTz={};
+    devices.forEach(function(d){
+      devById[d.id]=d;
+      devOffice[d.id]=officeOf(d.groups);
+      devTz[d.id]=d.timeZoneId || 'America/New_York';
+    });
+
+    var drvVeh={};
+    status.forEach(function(s){
+      var dev=(s.device||{}).id, dr=s.driver;
+      var did=(dr && typeof dr==='object') ? dr.id : null;
+      if(did && did!=='UnknownDriverId' && devById[dev]) drvVeh[did]=dev;
+    });
+
+    // last trip of each local day per device = where it parked overnight
+    var lastOfDay={};
+    trips.forEach(function(t){
+      var dev=(t.device||{}).id;
+      if(!devById[dev]) return;
+      var sp=t.stopPoint;
+      if(!sp || sp.x==null || sp.y==null) return;
+      var when=t.stop || t.start;
+      if(!when) return;
+      var key=dev+'|'+localDayKey(when, tzOffsetMin(devTz[dev], when));
+      var prev=lastOfDay[key];
+      if(!prev || String(when) > String(prev.when)){
+        lastOfDay[key]={when:when, lat:sp.y, lng:sp.x};
+      }
+    });
+    var nights={};
+    Object.keys(lastOfDay).forEach(function(k){
+      var dev=k.split('|')[0];
+      (nights[dev]=nights[dev]||[]).push(lastOfDay[k]);
+    });
+
+    var rows=[];
+    users.forEach(function(u){
+      if(!u.isDriver) return;
+      if(!(u.employeeNo||'').trim()) return;          // frontline only
+      var dev=drvVeh[u.id];
+      if(!dev) return;                                // no truck, no route start
+      var office=devOffice[dev] || officeOf(u.driverGroups||u.companyGroups);
+      var pts=nights[dev]||[];
+      if(pts.length < MIN_NIGHTS) {
+        rows.push({id:u.id, name:((u.firstName||'')+' '+(u.lastName||'')).trim(),
+                   office:office, vehId:dev, veh:(devById[dev]||{}).name,
+                   nights:pts.length, thin:true});
+        return;
+      }
+      // cluster the overnight points; the biggest cluster is the usual spot
+      var clusters=[];
+      pts.forEach(function(p){
+        for(var i=0;i<clusters.length;i++){
+          if(miles(clusters[i][0], p) < SAME_SPOT_MI){ clusters[i].push(p); return; }
+        }
+        clusters.push([p]);
+      });
+      clusters.sort(function(a,b){ return b.length-a.length; });
+      var main=clusters[0];
+      // centroid of the main cluster, so one stray reading cannot move it
+      var lat=0, lng=0;
+      main.forEach(function(p){ lat+=p.lat; lng+=p.lng; });
+      var spot={lat:lat/main.length, lng:lng/main.length};
+      var br=BRANCH[office];
+      var dist=br ? miles(br, spot) : null;
+      rows.push({
+        id:u.id, name:((u.firstName||'')+' '+(u.lastName||'')).trim(),
+        office:office, vehId:dev, veh:(devById[dev]||{}).name,
+        nights:pts.length, spots:clusters.length,
+        consistency: main.length/pts.length,
+        distance: dist,
+        direction: (br && dist!=null && dist>=AT_BRANCH_MI) ? bearing(br, spot) : null,
+        atBranch: dist!=null && dist < AT_BRANCH_MI,
+        thin:false
+      });
+    });
+    return {rows:rows};
+  }
+
+  function view(){
+    if(!MODEL) return [];
+    var r=MODEL.rows;
+    if(officeFilter) r=r.filter(function(x){ return x.office===officeFilter; });
+    if(awayOnly) r=r.filter(function(x){ return !x.thin && !x.atBranch; });
+    return r;
+  }
+
+  function render(){
+    var all=view();
+    var solid=all.filter(function(r){ return !r.thin; });
+    var depot=solid.filter(function(r){ return r.atBranch; });
+    var away=solid.filter(function(r){ return !r.atBranch; });
+    var vary=solid.filter(function(r){ return r.consistency < 0.6; });
+    var where=officeFilter||'All locations';
+
+    el('rs-scope').textContent = where+' · '+all.length+' with a truck · '+
+      'overnight parking over the last '+windowDays+' days';
+
+    function kpi(k,v,s,col){
+      return '<div class="rs-kpi"><div class="k">'+k+'</div><div class="v"'+
+             (col?' style="color:'+col+'"':'')+'>'+v+'</div><div class="s">'+s+'</div></div>';
+    }
+    var dists=away.map(function(r){ return r.distance; }).sort(function(a,b){ return a-b; });
+    var med=dists.length ? dists[Math.floor(dists.length/2)] : null;
+    el('rs-kpis').innerHTML =
+      kpi('Routes measured', solid.length, where) +
+      kpi('Start at the branch', depot.length,
+          solid.length ? Math.round(100*depot.length/solid.length)+'% of them' : '–') +
+      kpi('Start away from it', away.length, 'truck kept off site') +
+      kpi('Median distance out', med==null?'–':f1(med)+' mi', 'for those starting away') +
+      kpi('Start varies', vary.length, 'no settled overnight spot',
+          vary.length?'var(--warning-ink)':'');
+
+    var list=all.slice().sort(function(x,y){
+      var a,b;
+      if(sortKey==='name'){ a=x.name||''; b=y.name||''; }
+      else if(sortKey==='truck'){ a=x.veh||''; b=y.veh||''; }
+      else if(sortKey==='office'){ a=x.office||''; b=y.office||''; }
+      else if(sortKey==='consistency'){ a=x.consistency||0; b=y.consistency||0; }
+      else if(sortKey==='nights'){ a=x.nights||0; b=y.nights||0; }
+      else { a=x.distance==null?-1:x.distance; b=y.distance==null?-1:y.distance; }
+      if(typeof a==='string') return a.localeCompare(b)*sortDir || (x.name||'').localeCompare(y.name||'');
+      return (a<b?-1:a>b?1:0)*sortDir || (x.name||'').localeCompare(y.name||'');
+    });
+
+    el('rs-listtitle').textContent='Where each route starts'+(list.length?' ('+list.length+')':'');
+    var cols=[['name','Driver']];
+    if(!officeFilter) cols.push(['office','Location']);
+    cols.push(['truck','Truck'],['distance','From branch'],['consistency','Same spot'],
+              ['nights','Nights']);
+    el('rs-list').innerHTML = list.length ?
+      '<table class="rs-t"><thead><tr>'+
+      cols.map(function(c){
+        return '<th data-k="'+c[0]+'">'+c[1]+
+               (sortKey===c[0]?(sortDir>0?' ↑':' ↓'):'')+'</th>';
+      }).join('')+'<th></th></tr></thead><tbody>'+
+      list.map(function(r){
+        var dist = r.thin ? '<span class="rs-sub">not enough nights</span>'
+                 : r.distance==null ? '<span class="rs-sub">branch not located</span>'
+                 : r.atBranch ? '<span class="rs-sub">at the branch</span>'
+                 : f1(r.distance)+' mi '+r.direction;
+        var pill = r.thin ? ''
+                 : r.consistency < 0.6 ? '<span class="rs-pill vary">varies</span>'
+                 : r.atBranch ? '<span class="rs-pill depot">depot</span>'
+                              : '<span class="rs-pill home">kept off site</span>';
+        return '<tr>'+
+          '<td class="nm">'+linked(userUrl(r.id), r.name)+'</td>'+
+          (officeFilter?'':'<td>'+esc(r.office||'–')+'</td>')+
+          '<td class="nm">'+linked(deviceUrl(r.vehId), r.veh||r.vehId)+'</td>'+
+          '<td'+(r.thin||r.distance==null?' class="mut"':' class="num"')+'>'+dist+'</td>'+
+          '<td>'+(r.thin?'<span class="rs-sub">–</span>'
+                        :'<div class="rs-bar" title="'+Math.round(r.consistency*100)+
+                         '% of nights at the same spot, '+r.spots+' spot(s) seen">'+
+                         '<i style="width:'+Math.round(r.consistency*100)+'%"></i></div>')+'</td>'+
+          '<td class="num">'+r.nights+'</td>'+
+          '<td>'+pill+'</td></tr>';
+      }).join('')+'</tbody></table>'
+      : '<div class="rs-empty">No drivers with a truck in this view.</div>';
+    wireSort();
+
+    // distance distribution, so the shape is visible rather than just a median
+    var buckets=[[0,1,'under 1 mi'],[1,5,'1–5'],[5,10,'5–10'],[10,20,'10–20'],
+                 [20,40,'20–40'],[40,Infinity,'40+']];
+    var counts=buckets.map(function(b){
+      return away.filter(function(r){ return r.distance>=b[0] && r.distance<b[1]; }).length;
+    });
+    var max=Math.max.apply(null, counts.concat([1]));
+    el('rs-hist').innerHTML = away.length ?
+      '<table class="rs-t" style="min-width:420px"><tbody>'+
+      buckets.map(function(b,i){
+        return '<tr><td class="mut" style="width:90px">'+b[2]+'</td>'+
+          '<td><div class="rs-bar" style="min-width:200px"><i style="width:'+
+          Math.round(100*counts[i]/max)+'%"></i></div></td>'+
+          '<td class="num" style="width:60px">'+counts[i]+'</td></tr>';
+      }).join('')+'</tbody></table>'
+      : '<div class="rs-empty">Every measured route starts at the branch.</div>';
+
+    el('rs-foot').innerHTML =
+      '<p><b>What this measures.</b> The last trip of each working day tells you where the truck '+
+      'was parked overnight, which is where the next route begins. It is derived from trip data '+
+      'the fleet already records &mdash; no home address is read, stored or shown.</p>'+
+      '<p><b>Distance and direction, not a location.</b> For a driver who keeps the truck off site, '+
+      'the overnight spot is usually their home. The page deliberately reports how far and which way '+
+      'from the branch rather than a point on a map, because route planning needs the positioning '+
+      'and does not need the address.</p>'+
+      '<p><b>A day ends at 4am local.</b> A truck parked at 9pm belongs to the day it worked. '+
+      'Grouping on calendar dates in UTC pushes every evening park onto the following day: on a '+
+      'sample of two branches it cut the number of trucks with a settled overnight spot from 27 to 18.</p>'+
+      '<p><b>Same spot</b> is the share of nights spent at the largest cluster of overnight points, '+
+      'where anything within '+SAME_SPOT_MI+' mi counts as one place. Below 60% the start is not '+
+      'settled enough to plan around, and the row is marked <i>varies</i>. Fewer than '+MIN_NIGHTS+
+      ' nights of data and no pattern is claimed at all.</p>'+
+      '<p><b>At the branch</b> means within '+AT_BRANCH_MI+' mi of the branch address &mdash; the real '+
+      'suite address, not the city. Several branches are well outside their namesake city: Detroit&rsquo;s '+
+      'is in Ann Arbor, Louisville&rsquo;s in Crestwood KY, Cleveland&rsquo;s in Brecksville OH.</p>';
+  }
+
+  function wireSort(){
+    var ths=el('rs-list').querySelectorAll('th[data-k]');
+    Array.prototype.forEach.call(ths, function(th){
+      th.addEventListener('click', function(){
+        var k=th.getAttribute('data-k');
+        if(sortKey===k) sortDir=-sortDir; else { sortKey=k; sortDir=(k==='name'||k==='truck'||k==='office')?1:-1; }
+        render();
+      });
+    });
+  }
+
+  // Trip hard-caps at 25,000 rows whatever resultsLimit says, so the window is
+  // fetched a day at a time rather than in one call that would silently truncate.
+  function fetchTrips(api, days, done, fail){
+    var out=[], i=0;
+    function step(){
+      if(i>=days){ done(out); return; }
+      var to=new Date(Date.now() - i*86400000);
+      var from=new Date(to.getTime() - 86400000);
+      api.call('Get', {typeName:'Trip', resultsLimit:25000,
+        search:{fromDate:from.toISOString(), toDate:to.toISOString()}},
+        function(rows){ out=out.concat(rows||[]); i++; step(); }, fail);
+    }
+    step();
+  }
+
+  function load(api){
+    if(loading) return;
+    loading=true; apiRef=api;
+    el('rs-notes').innerHTML='';
+    el('rs-root').classList.add('busy');
+    el('rs-scope').textContent='Loading trips…';
+    function fail(e){
+      loading=false; el('rs-root').classList.remove('busy');
+      el('rs-scope').textContent='Could not load.';
+      note('Could not load this dashboard: '+esc((e&&(e.message||e.name))||e)+'.', true);
+    }
+    api.multiCall([
+      ['Get', {typeName:'User', search:{isDriver:true}}],
+      ['Get', {typeName:'Device', resultsLimit:50000}],
+      ['Get', {typeName:'DeviceStatusInfo'}]
+    ], function(res){
+      var now=Date.now();
+      var users=(res[0]||[]).filter(function(u){
+        var t=u.activeTo; return !t || new Date(t).getTime()>now;
+      });
+      var devices=(res[1]||[]).filter(function(d){
+        var t=d.activeTo; return !t || new Date(t).getTime()>now;
+      });
+      fetchTrips(api, windowDays, function(trips){
+        MODEL=build(users, devices, res[2]||[], trips);
+        var offs={};
+        MODEL.rows.forEach(function(r){ if(r.office) offs[r.office]=1; });
+        var sel=el('rs-office'), keep=sel.value;
+        sel.innerHTML='<option value="">All locations</option>'+
+          Object.keys(offs).sort().map(function(o){
+            return '<option value="'+esc(o)+'">'+esc(o)+'</option>'; }).join('');
+        sel.value=keep;
+        loading=false; el('rs-root').classList.remove('busy');
+        render();
+      }, fail);
+    }, fail);
+  }
+
+  function wire(){
+    el('rs-office').addEventListener('change', function(){
+      officeFilter=this.value; if(MODEL) render();
+    });
+    el('rs-window').addEventListener('change', function(){
+      windowDays=parseInt(this.value,10)||14;
+      if(apiRef){ MODEL=null; load(apiRef); }
+    });
+    el('rs-away').addEventListener('click', function(){
+      awayOnly=!awayOnly;
+      this.className=awayOnly?'on':'';
+      this.textContent=awayOnly?'Show everyone':'Only away from branch';
+      if(MODEL) render();
+    });
+    el('rs-csv').addEventListener('click', function(){
+      if(!MODEL) return;
+      var rows=[['Driver','Location','Truck','Miles from branch','Direction',
+                 'Same spot %','Spots seen','Nights','Classification']];
+      view().slice().sort(function(x,y){ return x.name.localeCompare(y.name); })
+        .forEach(function(r){
+          rows.push([r.name, r.office||'', r.veh||'',
+                     r.thin||r.distance==null?'':f1(r.distance),
+                     r.direction||'',
+                     r.thin?'':Math.round(r.consistency*100),
+                     r.thin?'':r.spots, r.nights,
+                     r.thin?'not enough nights':(r.atBranch?'at the branch':'kept off site')]);
+        });
+      var csv=rows.map(function(r){
+        return r.map(function(x){ return '"'+String(x).replace(/"/g,'""')+'"'; }).join(','); }).join('\n');
+      var a=document.createElement('a');
+      a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+      a.download='route-starts'+(officeFilter?'-'+officeFilter.toLowerCase().replace(/[^a-z0-9]+/g,'-'):'')+'.csv';
+      a.click();
+    });
+  }
+
+  return {
+    initialize: function(api, state, cb){ injectStyles(); wire(); cb(); },
+    focus: function(api){ load(api); },
+    blur: function(){}
+  };
+};
+</script>
+</body>
+</html>
