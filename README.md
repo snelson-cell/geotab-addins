@@ -467,6 +467,6 @@ infrastructure reasons; verify with the hash check as always.
 ## Where the data tooling lives (NOT here)
 
 The Python API tooling that pulls/analyzes Geotab data, plus `NOTES.md`, lives
-locally in `~/Documents/Archive/GeoTab/` and is **intentionally not in this
+locally in `~/Documents/geotab-scripts/` and is **intentionally not in this
 repo** — it contains credentials and must stay off GitHub. This repo is
 frontend/deployed assets only.

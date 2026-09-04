@@ -21,7 +21,7 @@ All rules live under **Groups & Rules → Rules**, section **SAFETY**.
       "before" measurement:
 
 ```bash
-cd ~/Documents/Archive/GeoTab && python3 rule_snapshot.py before
+cd ~/Documents/geotab-scripts && python3 rule_snapshot.py before
 ```
 
 It writes `rule_snapshot_before.json` containing every rule's full condition
@@ -77,7 +77,7 @@ Then, with those three selected:
 this checklist I could not confirm in advance. After it finishes:
 
 ```bash
-cd ~/Documents/Archive/GeoTab && python3 rule_snapshot.py after
+cd ~/Documents/geotab-scripts && python3 rule_snapshot.py after
 ```
 
 - Expect **Harsh Braking (New)** around **1.8 per 1,000 mi**,

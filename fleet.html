@@ -32,10 +32,10 @@ geotab.addin.fleetRegister = function () {
 
   // Everything on this page is read live from Geotab in the signed-in user's
   // session. Ownership is NOT derived here — it is a custom property written
-  // by Archive/GeoTab/backfill_ownership.py from the Enterprise monthly
+  // by geotab-scripts/backfill_ownership.py from the Enterprise monthly
   // export. That keeps the Enterprise data (VINs, plates) inside Geotab
   // behind auth, instead of on this repo's public GitHub Pages site.
-  // Custom properties created by Archive/GeoTab/setup_fleet_properties.py.
+  // Custom properties created by geotab-scripts/setup_fleet_properties.py.
   // Matched by NAME at runtime, never by hardcoded id — the ids differ per
   // database, and a wrong id fails silently as an always-blank column.
   var BOOL_PROPS = ['Insurance Card', 'Registration', 'Vehicle Check-Out Form',
