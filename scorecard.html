@@ -295,6 +295,10 @@ geotab.addin.driverScorecard = function () {
   var SHRINK_K  = 0.25;
   // Under this, the median still supplies a quarter or more of the score.
   var PROVISIONAL_MILES = 750;
+  // The short-window note is parked, not deleted -- flip to true to bring it
+  // back. The thin tag stays suppressed either way (tagIsNoise), and the footer
+  // legend still says why no row is singled out, so nothing goes unexplained.
+  var SHOW_SHORT_WINDOW_NOTE = false;
   // Set per render, read by render() and renderExample(): true when so much of the view
   // is thin that the per-row tag singles nobody out. Module-level because the two
   // readers are different functions.
@@ -911,7 +915,7 @@ geotab.addin.driverScorecard = function () {
         'before that date, so older events are not the same measurement and cannot be compared against '+
         'the current benchmark. The full '+days+'-day window returns once '+days+' days have passed under '+
         'the new rules.');
-    } else if(days < 30){
+    } else if(SHOW_SHORT_WINDOW_NOTE && days < 30){
       // Short windows genuinely carry less evidence. Say so, so a wall of "thin"
       // tags on the 7-day view reads as expected rather than broken.
       //
@@ -939,13 +943,43 @@ geotab.addin.driverScorecard = function () {
     var totEv = view.reduce(function(s,d){
       return s + METRICS.reduce(function(a,m){ return a+(d.ev[m.id]||0); }, 0); }, 0);
 
+    // Same window length, one window back. DATA.prev is already fetched for the
+    // per-driver trend, so this costs nothing extra -- but it is only comparable
+    // when the earlier window has real mileage behind it. Measured 2026-09-03,
+    // the prior window carries 93% of current miles at 7 days and 98% at 14,
+    // and 21% at 30, because July was still device rollout. That thin base makes
+    // the 30-day comparison read -19% off a population 4.8x smaller, which is an
+    // artifact and not an improvement, so it is withheld rather than shown with
+    // a caveat nobody would read. Clears itself once the window leaves July.
+    var PREV_MIN_COVERAGE = 0.5;
+    var prevView = Object.keys(DATA.prev || {}).map(function(k){ return DATA.prev[k]; })
+      .filter(function(d){ return !d.archived && d.miles >= MIN_MILES; })
+      .filter(function(d){ return !officeFilter || d.office === officeFilter; });
+    var prevMi = prevView.reduce(function(s,d){ return s+d.miles; }, 0);
+    var prevEv = prevView.reduce(function(s,d){
+      return s + METRICS.reduce(function(a,m){ return a+(d.ev[m.id]||0); }, 0); }, 0);
+
+    var evTrend = '';
+    if(totMi && prevMi >= totMi*PREV_MIN_COVERAGE){
+      var curR = totEv/(totMi/1000), prevR = prevEv/(prevMi/1000);
+      if(prevR > 0){
+        var pd = (curR-prevR)/prevR*100;
+        // Fewer events is better, so a fall is the good direction.
+        var cls  = Math.abs(pd) < 1 ? 'steady' : (pd < 0 ? 'better' : 'worse');
+        var mark = Math.abs(pd) < 1 ? 'flat'
+                 : (pd < 0 ? '&#9660;' : '&#9650;')+Math.abs(pd).toFixed(0)+'%';
+        evTrend = ' &middot; <span class="ds-trend '+cls+'">'+mark+'</span>'+
+                  '<span class="muted"> vs prior '+effDays+' days ('+prevR.toFixed(1)+')</span>';
+      }
+    }
+
     el('ds-kpis').innerHTML =
       kpi('Drivers ranked', String(view.length),
           unranked.length+' below '+MIN_MILES+' mi'+
           (goneCount ? ' &middot; <span class="muted">'+goneCount+' left the company, excluded</span>'
                      : ' &middot; <span class="muted">not scored</span>')) +
       kpi('Events per 1,000 mi', totMi ? (totEv/(totMi/1000)).toFixed(1) : '—',
-          f0(totEv)+' events over '+f0(totMi)+' mi') +
+          f0(totEv)+' events over '+f0(totMi)+' mi'+evTrend) +
       (myOffice && rankOfOffice[myOffice]
         ? kpi('Office rank',
               rankOfOffice[myOffice].rank+'<span style="font-size:17px;color:var(--ink-3)"> of '+
@@ -972,8 +1006,8 @@ geotab.addin.driverScorecard = function () {
       (myOffice ? ' <span style="font-weight:400;color:var(--ink-3)">&mdash; all offices shown, '+
         esc(myOffice)+' highlighted</span>' : '') +
       ' <span style="font-weight:400;color:var(--ink-3)">&middot; company snapshot '+
-        esc(String(BENCHMARK.generated).slice(0,10))+
-        (prevGen ? ' vs '+esc(String(prevGen).slice(0,10)) : '')+'</span>';
+        esc(prettyDate(BENCHMARK.generated))+
+        (prevGen ? ' vs '+esc(prettyDate(prevGen)) : '')+'</span>';
     var oh = '<table class="ds-t"><thead><tr><th class="r">#</th><th>Office</th>'+
       '<th class="r" title="How many drivers this office had when the benchmark was built on '+
       esc(String(BENCHMARK.generated).slice(0,10))+'. The live number moves as people cross the '+
@@ -1283,6 +1317,20 @@ geotab.addin.driverScorecard = function () {
           'worse it gets &mdash; which is why the score can say &ldquo;worst&rdquo; but never '+
           '&ldquo;catastrophic&rdquo;.</p>';
       })();
+  }
+
+  // Parse the yyyy-mm-dd parts directly. new Date('2026-09-04') is UTC midnight,
+  // which in any negative-offset timezone reads back as September 3rd.
+  var MONTHS = ['January','February','March','April','May','June','July','August',
+                'September','October','November','December'];
+  function prettyDate(iso){
+    var p = String(iso).slice(0,10).split('-');
+    if(p.length !== 3) return String(iso).slice(0,10);
+    var d = +p[2], m = +p[1] - 1;
+    if(!(m >= 0 && m < 12) || !d) return String(iso).slice(0,10);
+    var t = (d % 100 >= 11 && d % 100 <= 13) ? 'th'
+          : ({1:'st', 2:'nd', 3:'rd'}[d % 10] || 'th');
+    return MONTHS[m]+' '+d+t;
   }
 
   function kpi(label, value, sub){
