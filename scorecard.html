@@ -994,7 +994,7 @@ geotab.addin.driverScorecard = function () {
       var cls = d === 0 ? 'steady' : (d > 0 ? 'better' : 'worse');
       var mark = d === 0 ? '&mdash;' : (d > 0 ? '&#9650;'+d : '&#9660;'+(-d));
       return '<td class="c" style="white-space:nowrap">'+
-        '<span style="color:var(--ink-3)">#'+s.prev.rank+' '+s.prev.med.toFixed(2)+'&times;</span> '+
+        '<span style="color:var(--ink-3)">#'+s.prev.rank+'</span> '+
         '<span class="ds-trend '+cls+'">'+mark+'</span></td>';
     }
     // Share of an office's drivers falling in each color band, per metric.
