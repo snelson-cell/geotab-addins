@@ -50,9 +50,12 @@
 
   <div class="vh-tablehead">
     <div class="vh-tabletitle" id="vh-blind-title">Not reporting maintenance data</div>
-    <div class="vh-tools"><button type="button" id="vh-blind-toggle">Show</button></div>
+    <div class="vh-tools"><button type="button" id="vh-blind-toggle" class="on">Hide</button></div>
   </div>
-  <div class="vh-tablewrap" id="vh-blind"></div>
+  <!-- Open by default: a truck reporting no maintenance data at all is the most
+       actionable row on the page, and behind an unclicked Show button it was the
+       one nobody looked at. -->
+  <div class="vh-tablewrap on" id="vh-blind"></div>
 
   <div class="vh-foot" id="vh-foot"></div>
 </div>
@@ -232,6 +235,24 @@ geotab.addin.vehicleHealth = function () {
       .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
   function f0(n){ return Math.round(n).toLocaleString(); }
+
+  // Copied verbatim from fleet.html so the two dashboards name a truck the same
+  // way. Ram is deliberately absent: it is a brand name, not an acronym, and the
+  // VIN decoder already returns it as "Ram". Forcing it uppercase gave "RAM 1500".
+  var ACRONYMS = {GMC:1, BMW:1, GM:1, MB:1, VW:1};
+  function titleish(s){
+    s=String(s==null?'':s).trim();
+    if(!s) return '';
+    return s.split(/\s+/).map(function(w){
+      if(ACRONYMS[w.toUpperCase()]) return w.toUpperCase();
+      if(!/^[A-Za-z]+$/.test(w)) return w;
+      return w.charAt(0).toUpperCase()+w.slice(1).toLowerCase();
+    }).join(' ');
+  }
+  function makeModel(mk, md){
+    md=String(md==null?'':md).replace(/\s+Truck$/i,'').trim();
+    return (titleish(mk)+' '+titleish(md)).trim();
+  }
   function clearNotes(){ ['vh-stop','vh-warn'].forEach(function(i){ el(i).className='vh-note'; el(i).innerHTML=''; }); }
   function note(id,cls,html){ el(id).className='vh-note '+cls+' on'; el(id).innerHTML=html; }
   function fail(m){ el('vh-root').classList.remove('busy'); note('vh-stop','vh-note--stop',m);
@@ -359,6 +380,7 @@ geotab.addin.vehicleHealth = function () {
         (d.groups||[]).forEach(function(g){ if(LEAF[g.id]) off=LEAF[g.id]; });
         if(!off) return;
         veh[d.id]={id:d.id, name:d.name||d.id, office:off,
+                   model:makeModel(d.vinInfoMake, d.vinInfoModel),
                    camera:!!camSerial[(d.serialNumber||'').trim()],
                    assigned:!!assigned[d.id], last:lastComm[d.id]||null,
                    faults:faultCount[d.id]||0,
@@ -525,7 +547,7 @@ geotab.addin.vehicleHealth = function () {
     el('vh-title').textContent = (attnOnly ? 'Needs attention (' : 'Vehicles (')+rows.length+')';
 
     var head='<table class="vh-t"><thead><tr>'+
-      '<th>Vehicle</th><th>Branch</th><th class="r">Odometer</th><th class="r">Mi/day</th>'+
+      '<th>Vehicle</th><th>Branch</th><th>Model</th><th class="r">Odometer</th><th class="r">Mi/day</th>'+
       '<th>Oil life</th><th class="c">Service</th><th>Tires</th><th class="c">Fault codes</th><th>Device</th>'+
       '<th class="c">Camera</th><th class="c">Driver</th><th class="c">Last heard</th>'+
       '<th class="c">Open</th></tr></thead><tbody>';
@@ -540,6 +562,7 @@ geotab.addin.vehicleHealth = function () {
                      : esc(v.name);
           })()+'</td>'+
         '<td>'+esc(v.office)+'</td>'+
+        '<td>'+(v.model?esc(v.model):'&mdash;')+'</td>'+
         '<td class="r">'+(v.odo!=null ? f0(v.odo)+' <span class="vh-age">'+ageText(now-v.odoAt)+'</span>' : '&mdash;')+'</td>'+
         '<td class="r">'+(v.miles>0 ? v.mpd.toFixed(0) : '<span class="vh-age">0</span>')+'</td>'+
         '<td>'+oilCell(v)+'</td>'+
@@ -563,7 +586,8 @@ geotab.addin.vehicleHealth = function () {
 
     el('vh-blind-title').textContent='Not reporting maintenance data ('+blind.length+')';
     el('vh-blind').innerHTML = blind.length
-      ? '<table class="vh-t"><thead><tr><th>Vehicle</th><th>Branch</th><th class="r">Odometer</th>'+
+      ? '<table class="vh-t"><thead><tr><th>Vehicle</th><th>Branch</th><th>Model</th>'+
+        '<th class="r">Odometer</th>'+
         '<th class="r">Mi/day</th><th class="c">Last heard</th></tr></thead><tbody>'+
         blind.sort(function(a,b){ return b.miles-a.miles; }).map(function(v){
           var bu = deviceUrl(v.id, 'health');
@@ -571,6 +595,7 @@ geotab.addin.vehicleHealth = function () {
               ? '<a class="vh-link" href="'+esc(bu)+'" target="_blank" rel="noopener" '+
                 'title="Open this vehicle&rsquo;s Maintenance tab in a new tab">'+esc(v.name)+'</a>'
               : esc(v.name))+'</td><td>'+esc(v.office)+'</td>'+
+              '<td>'+(v.model?esc(v.model):'&mdash;')+'</td>'+
             '<td class="r">'+(v.odo!=null?f0(v.odo):'&mdash;')+'</td>'+
             '<td class="r">'+(v.miles>0?v.mpd.toFixed(0):'0')+'</td>'+
             '<td class="c"><span class="vh-age">'+(v.last?ageText(now-v.last.getTime()):'never')+'</span></td></tr>';
@@ -703,12 +728,13 @@ geotab.addin.vehicleHealth = function () {
 
   function exportCsv(){
     if(!lastRows.length) return;
-    var head=['Vehicle','Branch','Odometer_mi','MilesPerDay','OilLife_pct','ServiceInDays',
+    var head=['Vehicle','Branch','Model','Odometer_mi','MilesPerDay','OilLife_pct','ServiceInDays',
               'TireMin_psi','TireSpread_psi','ActiveFaults','DeviceIssues','Camera','DriverAssigned',
               'LastHeard_hours','Flags'];
     var now=DATA.to.getTime();
     var lines=[head.join(',')].concat(lastRows.map(function(v){
       return ['"'+String(v.name).replace(/"/g,'""')+'"','"'+v.office+'"',
+        '"'+String(v.model||'').replace(/"/g,'""')+'"',
         v.odo!=null?Math.round(v.odo):'', v.mpd.toFixed(1),
         v.oil!=null?v.oil.toFixed(1):'', v.oilDays!=null?v.oilDays:'',
         v.tireMin!=null?v.tireMin.toFixed(1):'', v.tireSpread!=null?v.tireSpread.toFixed(1):'',
