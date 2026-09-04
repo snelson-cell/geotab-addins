@@ -121,6 +121,13 @@ geotab.addin.driverScorecard = function () {
     '  margin:9px 0 0;overflow-x:auto;}',
     '.ds-tablehead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:20px 0 0;}',
     '.ds-tabletitle{font-size:14px;font-weight:650;}',
+    '.ds-snap{display:inline-flex;align-items:center;gap:8px;vertical-align:middle;',
+    '  margin-left:10px;padding:4px 11px;border:1px solid var(--axis);',
+    '  border-radius:999px;background:var(--surface-1);white-space:nowrap;}',
+    '.ds-snap-k{font-size:10px;font-weight:700;letter-spacing:.07em;',
+    '  text-transform:uppercase;color:var(--ink-3);}',
+    '.ds-snap-v{font-size:13px;font-weight:650;color:var(--ink-1);}',
+    '.ds-snap-vs{font-weight:400;color:var(--ink-3);}',
     '.ds-tools{display:flex;flex-wrap:wrap;gap:8px;}',
     '.ds-tools button{font:inherit;font-size:12.5px;font-weight:600;color:var(--ink-2);',
     '  background:var(--surface-1);border:1px solid var(--axis);border-radius:6px;padding:5px 11px;cursor:pointer;}',
@@ -1005,9 +1012,13 @@ geotab.addin.driverScorecard = function () {
     el('ds-offtitle').innerHTML = 'Office standings' +
       (myOffice ? ' <span style="font-weight:400;color:var(--ink-3)">&mdash; all offices shown, '+
         esc(myOffice)+' highlighted</span>' : '') +
-      ' <span style="font-weight:400;color:var(--ink-3)">&middot; company snapshot '+
-        esc(prettyDate(BENCHMARK.generated))+
-        (prevGen ? ' vs '+esc(prettyDate(prevGen)) : '')+'</span>';
+      ' <span class="ds-snap" title="These standings are a frozen company-wide '+
+        'snapshot, not the live view. They do not change with the 7d / 14d / 30d '+
+        'selector, and they refresh when the benchmark is rebuilt.">'+
+        '<span class="ds-snap-k">Snapshot</span>'+
+        '<span class="ds-snap-v">'+esc(prettyDate(BENCHMARK.generated))+
+          (prevGen ? ' <span class="ds-snap-vs">vs</span> '+esc(prettyDate(prevGen)) : '')+
+        '</span></span>';
     var oh = '<table class="ds-t"><thead><tr><th class="r">#</th><th>Office</th>'+
       '<th class="r" title="How many drivers this office had when the benchmark was built on '+
       esc(String(BENCHMARK.generated).slice(0,10))+'. The live number moves as people cross the '+
