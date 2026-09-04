@@ -1,5 +1,5 @@
 # This repo is PUBLIC and frontend-only. Never commit credentials or the
-# Python data tooling (which lives in ~/Documents/Archive/GeoTab, off GitHub).
+# Python data tooling (which lives in ~/Documents/geotab-scripts, off GitHub).
 # '*.py' does NOT match '*.pyc' — the compiled form of engine.py slipped
 # through that gap and was tracked in this PUBLIC repo from 5b4673e until
 # 2026-08-07, swept in by a broad `git add` on an unrelated commit. Ignore the
