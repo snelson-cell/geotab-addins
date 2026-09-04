@@ -11,6 +11,17 @@
           "en": "Market Standings"
         }
       }
+    },
+    {
+      "hiddenOn": "2026-09-04",
+      "reason": "taken out of the menu; page and its 4am-local day-boundary logic kept",
+      "item": {
+        "url": "https://snelson-cell.github.io/geotab-addins/routestarts.html?v=2026-09-03.1",
+        "path": "ActivityLink/",
+        "menuName": {
+          "en": "Route Starts"
+        }
+      }
     }
   ]
 }
