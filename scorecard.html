@@ -1021,11 +1021,11 @@ geotab.addin.driverScorecard = function () {
         '</span></span>';
     var oh = '<table class="ds-t"><thead><tr><th class="r">#</th><th>Office</th>'+
       '<th class="r" title="How many drivers this office had when the benchmark was built on '+
-      esc(String(BENCHMARK.generated).slice(0,10))+'. The live number moves as people cross the '+
+      esc(prettyDate(BENCHMARK.generated))+'. The live number moves as people cross the '+
       MIN_MILES+'-mile floor, so it can differ from a count taken today.">Drivers</th>'+
       '<th class="c">Typical driver</th>'+
       (prevGen ? '<th class="c" title="Where this office stood on '+
-        esc(String(prevGen).slice(0,10))+', and how far it has moved since. '+
+        esc(prettyDate(prevGen))+', and how far it has moved since. '+
         'Rank 1 is safest, so an up arrow is an improvement.">Last week</th>' : '')+
       METRICS.map(function(m){ return '<th class="c">'+esc(m.id)+'</th>'; }).join('')+
       '</tr></thead><tbody>';
@@ -1417,7 +1417,7 @@ geotab.addin.driverScorecard = function () {
       'steadier than a 7-day one.</p>'+
       '<p><b>Every login scores against the same company yardstick.</b> Scores and ranks are '+
       'measured against a stored snapshot of the whole company &mdash; '+
-      f0(BENCHMARK.drivers)+' drivers as of '+esc(String(BENCHMARK.generated).slice(0,10))+' &mdash; '+
+      f0(BENCHMARK.drivers)+' drivers as of '+esc(prettyDate(BENCHMARK.generated))+' &mdash; '+
       'not against whoever the login happens to see. A branch manager and an all-branch login read '+
       'the identical number for the same driver, which is the point: the two of them look at it '+
       'together. Left to rank only its own people a branch centers itself on 50 whatever its real '+
