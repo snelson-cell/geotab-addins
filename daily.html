@@ -6,10 +6,10 @@
 <!--
   Yesterday: a manager's daily review of one branch's driving.
 
-  Every driver in the branch, ranked by what happened on the chosen day, events
-  worst-first with where and how bad, and one line for the branch's day.
-  It is triage, not a scorecard: no scores, no percentiles, no ranks against
-  the company. Those need 30 days of miles; an event needs none.
+  Every driver in the branch and every event Geotab recorded for them on the
+  chosen day -- counts, facts, and a Trip History link to check each one.
+  No scores, no weighting, no ranks against the company: this page is raw
+  exposure to what happened, so a manager can diagnose it themselves.
 
   Head CSS is dropped by MyGeotab, so styles are injected from JS on initialize.
 -->
@@ -38,7 +38,7 @@
   <div class="dy-card" id="dy-drivers"></div>
 
   <div class="dy-tablehead">
-    <div class="dy-tabletitle" id="dy-events-title">Events, worst first</div>
+    <div class="dy-tabletitle" id="dy-events-title">Events</div>
     <div class="dy-tools"><button type="button" id="dy-events-toggle" class="dy-btn on">Hide</button></div>
   </div>
   <div class="dy-card on" id="dy-events"></div>
@@ -95,18 +95,11 @@ geotab.addin.dailyReview = function () {
     '.dy-t .quiet td{color:var(--ink-3);}',
     '.dy-cell{font-variant-numeric:tabular-nums;text-align:right;}',
     '.dy-cell.z{color:var(--axis);}',
-    '.dy-sev{display:inline-block;min-width:34px;text-align:center;padding:2px 7px;border-radius:999px;',
-    '  font-weight:700;font-variant-numeric:tabular-nums;font-size:12px;}',
-    '.dy-sev.s0{background:var(--sunk);color:var(--ink-3);}',
-    '.dy-sev.s1{background:#fdf6e3;color:var(--warn-ink);}',
-    '.dy-sev.s2{background:#fbe3e3;color:var(--bad-ink);}',
-    '.dy-sev.s3{background:var(--bad);color:#fff;}',
-    '.dy-how{font-weight:650;} .dy-how.hot{color:var(--bad-ink);}',
+    '.dy-how{font-weight:650;}',
     '.dy-where{color:var(--ink-2);} .dy-when{white-space:nowrap;font-variant-numeric:tabular-nums;}',
     '.dy-link{color:var(--accent);text-decoration:none;} .dy-link:hover{text-decoration:underline;}',
     '.dy-chip{display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;',
     '  padding:2px 7px;border-radius:999px;background:var(--sunk);color:var(--ink-2);white-space:nowrap;}',
-    '.dy-chip.hot{background:#fbe3e3;color:var(--bad-ink);}',
     '.dy-empty{padding:16px;font-size:12.5px;color:var(--ink-3);}',
     '.dy-foot{font-size:12px;color:var(--ink-3);margin:18px 0 0;line-height:1.5;max-width:900px;}',
     '.dy-foot b{color:var(--ink-2);}'
@@ -131,7 +124,6 @@ geotab.addin.dailyReview = function () {
   var DAY_START_HOUR = 4;
   var KM_TO_MI = 0.621371;
   var BASE_DAYS = 14;
-  var SUSTAINED_TAILGATE_S = 10;   // p90 is 13s; 82% of events are under 10s
   var IN_TOWN_KMH = 56.4;          // 35 mph: where +15 is a school zone, not a merge
   var ADDRESS_CAP = 60;            // GetAddresses is one call; keep it to what is shown
 
@@ -164,29 +156,9 @@ geotab.addin.dailyReview = function () {
     {id:'corner',    label:'Corner'},
     {id:'accel',     label:'Accel'}
   ];
-  // Severity: what one event is worth on the day. This is where "reduce
-  // accidents" lives. Collision-proximate on top; the accelerometer-ish
-  // metrics low. Speeding is scored from the ACTUAL over-limit read off GPS,
-  // not from which rule fired.
-  function weightOf(ev){
-    switch(ev.cat){
-      case 'collision': return 50;
-      case 'nearcoll':  return 30;
-      case 'phone':     return 8;
-      case 'speed':
-        if(ev.overMph == null) return 1;
-        var w = ev.overMph >= 20 ? 8 : ev.overMph >= 15 ? 5 : ev.overMph >= 10 ? 2 : 1;
-        return ev.inTown ? w*1.5 : w;
-      case 'tailgate':  return ev.seconds >= SUSTAINED_TAILGATE_S ? 5 : 1;
-      case 'distract':  return 4;
-      case 'brake':     return 3;
-      case 'rollstop':  return 3;
-      case 'belt':      return 3;
-      case 'corner':    return 1;
-      case 'accel':     return 1;
-      default:          return 0;
-    }
-  }
+  // There is no scoring here on purpose. The page exists to show a manager
+  // exactly what happened, in counts and facts they can open and check. The
+  // moment a number needs a formula explained, it stops being evidence.
 
   // ── State ────────────────────────────────────────────────────────────────
   var apiRef = null, office = '', dateStr = '', DATA = null, lastRows = [], lastEvents = [];
@@ -394,50 +366,53 @@ geotab.addin.dailyReview = function () {
     // of the 14-day window -- it is what keeps a driver with a clean day on
     // the page instead of silently absent. Zero-event rows stay.
     var drivers={};
-    function ensure(id){ if(!drivers[id]) drivers[id]={id:id, name:ctx.uname[id]||id, n:{}, w:0, events:[]}; return drivers[id]; }
+    function ensure(id){ if(!drivers[id]) drivers[id]={id:id, name:ctx.uname[id]||id, n:{}, events:[]}; return drivers[id]; }
     DATA.baseEv.forEach(function(e){ var d=driverId(e.driver); if(d && !ctx.gone[d] && CAT[refId(e.rule)]) ensure(d); });
     var unattributed=[];
     DATA.events.forEach(function(ev){
-      ev.w=weightOf(ev);
       if(!ev.drv || ctx.gone[ev.drv]){ unattributed.push(ev); return; }
-      var d=ensure(ev.drv); d.n[ev.cat]=(d.n[ev.cat]||0)+1; d.w+=ev.w; d.events.push(ev);
+      var d=ensure(ev.drv); d.n[ev.cat]=(d.n[ev.cat]||0)+1; d.events.push(ev);
     });
     var rows=Object.keys(drivers).map(function(k){ return drivers[k]; });
-    rows.sort(function(a,b){ return b.w-a.w || b.events.length-a.events.length || a.name.localeCompare(b.name); });
+    // Most events first. A count is a count; nobody has to be told what it means.
+    rows.sort(function(a,b){ return b.events.length-a.events.length || a.name.localeCompare(b.name); });
     lastRows=rows;
 
-    var evs=DATA.events.slice().sort(function(a,b){ return b.w-a.w || a.from-b.from; });
+    // Events grouped the same way the table reads -- by driver, most events
+    // first, then in the order they happened. Unattributed last.
+    var order={}; rows.forEach(function(d,i){ order[d.id]=i; });
+    var evs=DATA.events.slice().sort(function(a,b){
+      var oa=(a.drv in order)?order[a.drv]:1e9, ob=(b.drv in order)?order[b.drv]:1e9;
+      return oa-ob || a.from-b.from; });
     lastEvents=evs;
     var withEv=rows.filter(function(d){ return d.events.length; }).length;
     var trucks={}; DATA.events.forEach(function(e){ trucks[e.dev]=1; });
 
+    var sp=evs.filter(function(e){ return e.cat==='speed'; });
+    var worst=sp.reduce(function(m,e){ return (e.overMph!=null && (!m || e.overMph>m.overMph)) ? e : m; }, null);
     el('dy-kpis').innerHTML =
       kpi('Drivers', String(rows.length), withEv+' with an event · '+(rows.length-withEv)+' clean') +
-      kpi('Events', String(evs.length), 'across '+withEv+' driver'+(withEv===1?'':'s')) +
-      kpi('Needs a word', String(rows.filter(function(d){ return d.w>=10; }).length), 'drivers at 10+ severity') +
+      kpi('Events', String(evs.length), 'across '+withEv+' driver'+(withEv===1?'':'s')+' · '+Object.keys(trucks).length+' trucks') +
+      kpi('Speeding', String(sp.length), worst ? 'worst +'+f0(worst.overMph)+' in a '+f0(worst.limitKmh*KM_TO_MI) : (sp.length ? 'limits unknown' : 'none')) +
       kpi('Unattributed', String(unattributed.length), unattributed.length ? 'on a truck with no driver assigned' : 'every event has a driver');
 
     el('dy-drivers-title').textContent='Drivers ('+rows.length+')';
     el('dy-drivers').innerHTML = rows.length ? driverTable(rows) : '<div class="dy-empty">No drivers found for this branch in the last '+BASE_DAYS+' days.</div>';
-    el('dy-events-title').textContent='Events, worst first ('+evs.length+')';
+    el('dy-events-title').textContent='Events ('+evs.length+')';
     renderEvents(evs, unattributed, ctx);
     el('dy-foot').innerHTML = foot(ctx);
   }
   function kpi(k,v,s){ return '<div class="dy-kpi"><div class="k">'+esc(k)+'</div><div class="v">'+v+'</div><div class="s">'+s+'</div></div>'; }
-  function sevClass(w){ return w>=25?'s3':w>=10?'s2':w>0?'s1':'s0'; }
 
   function driverTable(rows){
-    // Day and Events sit together on the left: at 16 columns a trailing Total
-    // fell off the right edge of a 1400px screen, which is where it was least
-    // useful. The two summary numbers first, then the breakdown.
-    var h='<table class="dy-t"><thead><tr><th>Driver</th><th class="c" title="Severity-weighted total for the day. Collision 50, near collision 30, phone 8, speeding 1-12 by how far over, sustained tailgating 5, distraction 4, braking / rolling stop / seatbelt 3.">Day</th><th class="r">Events</th>';
+    // Events total sits on the left next to the name; the breakdown follows.
+    var h='<table class="dy-t"><thead><tr><th>Driver</th><th class="r">Events</th>';
     COLS.forEach(function(c){ h+='<th class="r">'+esc(c.label)+'</th>'; });
     h+='</tr></thead><tbody>';
     rows.forEach(function(d){
       var tot=d.events.length;
       h+='<tr'+(tot?'':' class="quiet"')+'><td class="name">'+esc(d.name)+'</td>'+
-         '<td class="c"><span class="dy-sev '+sevClass(d.w)+'">'+f0(d.w)+'</span></td>'+
-         '<td class="r">'+(tot||'<span class="dy-cell z">·</span>')+'</td>';
+         '<td class="r"><b>'+(tot||'<span class="dy-cell z">·</span>')+'</b></td>';
       COLS.forEach(function(c){ var n=d.n[c.id]||0; h+='<td class="dy-cell'+(n?'':' z')+'">'+(n||'·')+'</td>'; });
       h+='</tr>';
     });
@@ -455,8 +430,8 @@ geotab.addin.dailyReview = function () {
         var name = e.drv ? (ctx.uname[e.drv]||e.drv) : '<span class="dy-chip">no driver</span>';
         h+='<tr><td class="dy-when">'+fmtTime(e.from, ctx.tz)+'</td>'+
            '<td class="name">'+name+'</td>'+
-           '<td><span class="dy-chip'+(e.w>=8?' hot':'')+'">'+esc(catLabel(e.cat))+'</span></td>'+
-           '<td class="dy-how'+(e.w>=8?' hot':'')+'">'+howBad(e)+'</td>'+
+           '<td><span class="dy-chip">'+esc(catLabel(e.cat))+'</span></td>'+
+           '<td class="dy-how">'+howBad(e)+'</td>'+
            '<td class="dy-where">'+(e.lat!=null ? esc(addr[e.lat+','+e.lon]||'') : '')+'</td>'+
            '<td><a class="dy-link" href="'+esc(deviceUrl(e.dev))+'" target="_blank" rel="noopener">'+esc(ctx.devName[e.dev]||e.dev)+'</a></td>'+
            '<td><a class="dy-link" href="'+esc(tripUrl(e.dev,e.from,e.to))+'" target="_blank" rel="noopener" '+
@@ -477,21 +452,21 @@ geotab.addin.dailyReview = function () {
   function howBad(e){
     if(e.cat==='speed'){
       if(e.overMph==null) return e.peakKmh ? f0(e.peakKmh*KM_TO_MI)+' mph, limit unknown' : 'speeding, '+f0(e.seconds)+'s';
-      return '+'+f0(e.overMph)+' in a '+f0(e.limitKmh*KM_TO_MI)+(e.inTown?' <span class="dy-chip hot">in town</span>':'');
+      return '+'+f0(e.overMph)+' in a '+f0(e.limitKmh*KM_TO_MI)+(e.inTown?' <span class="dy-chip">in town</span>':'');
     }
-    if(e.cat==='tailgate') return f0(e.seconds)+'s'+(e.seconds>=SUSTAINED_TAILGATE_S?' <span class="dy-chip hot">sustained</span>':'');
+    if(e.cat==='tailgate') return f0(e.seconds)+'s';
     if(e.seconds>=2) return f0(e.seconds)+'s';
     return '';
   }
 
   function foot(ctx){
-    return '<p><b>What this page is.</b> One branch, one day, every driver. Rows are ordered by how bad the day was, '+
-      'not by how many things happened: one <b>+22 in a 35</b> outranks ten brief tailgates. There are no scores or '+
-      'company ranks here on purpose &mdash; those need 30 days of miles. An event needs none.</p>'+
+    return '<p><b>What this page is.</b> One branch, one day, every driver, and every event Geotab recorded for them '+
+      '&mdash; no scores, no weighting, no ranking against the company. Most events first, that is all. '+
+      'Every event opens in <b>Trip History</b> so it can be checked, not taken on faith.</p>'+
       '<p><b>Speeding</b> is read off the truck&rsquo;s own GPS: the worst point inside the event against the posted limit '+
-      'in force at that moment. The three speeding rules are merged first, because most events fire two of them. '+
-      '<b>Tailgating</b> counts as sustained at '+SUSTAINED_TAILGATE_S+' seconds; most events are a 4-second merge. '+
-      'A driver with nothing listed drove a branch truck in the last '+BASE_DAYS+' days and had a clean day.</p>'+
+      'in force at that moment, so <b>+14 in a 35</b> is what the truck did, not what a rule decided. The three speeding '+
+      'rules are merged first, because most events fire two of them. <b>Tailgating</b> shows how long the truck followed '+
+      'too close. A driver with nothing listed drove a branch truck in the last '+BASE_DAYS+' days and had a clean day.</p>'+
       '<p>'+(ctx.unknownRule ? ctx.unknownRule+' events from deleted rules were ignored. ' : '')+
       'Days run 4am to 4am in the branch&rsquo;s own time zone.</p>';
   }
@@ -508,9 +483,9 @@ geotab.addin.dailyReview = function () {
   }
   function exportCsv(){
     if(!lastRows.length) return;
-    var head=['Driver','DaySeverity','Events'].concat(COLS.map(function(c){ return c.label.replace(/[^A-Za-z]/g,''); }));
+    var head=['Driver','Events'].concat(COLS.map(function(c){ return c.label.replace(/[^A-Za-z]/g,''); }));
     var lines=[head.join(',')].concat(lastRows.map(function(d){
-      return ['"'+String(d.name).replace(/"/g,'""')+'"', Math.round(d.w), d.events.length]
+      return ['"'+String(d.name).replace(/"/g,'""')+'"', d.events.length]
         .concat(COLS.map(function(c){ return d.n[c.id]||0; })).join(',');
     }));
     var blob=new Blob([lines.join('\n')],{type:'text/csv'}), a=document.createElement('a');
