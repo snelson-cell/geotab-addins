@@ -126,6 +126,12 @@ geotab.addin.dailyReview = function () {
   var BASE_DAYS = 14;
   var ADDRESS_CHUNK = 50;          // GetAddresses per call; the rest go in the same multiCall
   var POSITION_WINDOW_MS = 60000;  // nearest GPS point within a minute, else no location
+  // Tailgating under this is not listed. Measured on one Friday: 1,707 events
+  // fleet-wide, median 4s, 82% under 10s -- merges and stop-and-go, not
+  // following too close. This is a filter on the page, not a change to the
+  // rule: the rule still records everything, the scorecard and the camera
+  // chime still see it, and the footer says how many were left out.
+  var TAILGATE_MIN_S = 10;
 
   // Rule -> behaviour. The three speeding rules are MERGED into one category and
   // overlapping windows collapsed, because 86% of 10-over events also fire the
@@ -148,7 +154,7 @@ geotab.addin.dailyReview = function () {
     {id:'nearcoll',  label:'Near coll.'},
     {id:'phone',     label:'Phone'},
     {id:'speed',     label:'Speeding'},
-    {id:'tailgate',  label:'Tailgating'},
+    {id:'tailgate',  label:'Tailgating 10s+', csv:'Tailgating10sPlus'},
     {id:'distract',  label:'Distracted'},
     {id:'brake',     label:'Braking'},
     {id:'rollstop',  label:'Roll. stop'},
@@ -290,16 +296,17 @@ geotab.addin.dailyReview = function () {
   // behaviour, merge overlapping speeding windows per truck, then read the
   // actual speed and limit for each merged window off GPS.
   function enrichSpeeding(api, ctx, raw, cb){
-    var events=[], speedByDev={}, unknownRule=0;
+    var events=[], speedByDev={}, unknownRule=0, shortTailgates=0;
     raw.forEach(function(e){
       var rid=refId(e.rule), cat=CAT[rid];
       if(!cat){ if(!ctx.ruleName[rid]) unknownRule++; return; }
       var ev={cat:cat, rule:rid, dev:refId(e.device), drv:driverId(e.driver),
               from:P(e.activeFrom), to:P(e.activeTo), seconds:(P(e.activeTo)-P(e.activeFrom))/1000};
+      if(cat==='tailgate' && ev.seconds<TAILGATE_MIN_S){ shortTailgates++; return; }
       if(cat==='speed'){ (speedByDev[ev.dev]=speedByDev[ev.dev]||[]).push(ev); }
       else events.push(ev);
     });
-    ctx.unknownRule=unknownRule;
+    ctx.unknownRule=unknownRule; ctx.shortTailgates=shortTailgates;
     var merged=[];
     Object.keys(speedByDev).forEach(function(dev){
       var list=speedByDev[dev].sort(function(a,b){ return a.from-b.from; }), cur=null;
@@ -538,8 +545,10 @@ geotab.addin.dailyReview = function () {
       'Every event opens in <b>Trip History</b> so it can be checked, not taken on faith.</p>'+
       '<p><b>Speeding</b> is read off the truck&rsquo;s own GPS: the worst point inside the event against the posted limit '+
       'in force at that moment, so <b>+14 in a 35</b> is what the truck did, not what a rule decided. The three speeding '+
-      'rules are merged first, because most events fire two of them. <b>Tailgating</b> shows how long the truck followed '+
-      'too close. <b>Started</b> and <b>Finished</b> are the first and last trip of the day and <b>Miles</b> is the '+
+      'rules are merged first, because most events fire two of them. <b>Tailgating</b> lists only events of '+
+      TAILGATE_MIN_S+' seconds or more'+(ctx.shortTailgates ? ' &mdash; '+ctx.shortTailgates+' shorter one'+
+      (ctx.shortTailgates===1?'':'s')+' on this day '+(ctx.shortTailgates===1?'was':'were')+' not listed' : '')+
+      '. <b>Started</b> and <b>Finished</b> are the first and last trip of the day and <b>Miles</b> is the '+
       'driving between them; dashes mean the driver did not drive. Someone on the page with no trips drove a branch '+
       'truck in the last '+BASE_DAYS+' days.</p>'+
       '<p>'+(ctx.unknownRule ? ctx.unknownRule+' events from deleted rules were ignored. ' : '')+
@@ -559,7 +568,7 @@ geotab.addin.dailyReview = function () {
   function exportCsv(){
     if(!lastRows.length) return;
     var tz=DATA?DATA.ctx.tz:'UTC';
-    var head=['Driver','Events','Started','Finished','Miles'].concat(COLS.map(function(c){ return c.label.replace(/[^A-Za-z]/g,''); }));
+    var head=['Driver','Events','Started','Finished','Miles'].concat(COLS.map(function(c){ return c.csv||c.label.replace(/[^A-Za-z]/g,''); }));
     var lines=[head.join(',')].concat(lastRows.map(function(d){
       return ['"'+String(d.name).replace(/"/g,'""')+'"', d.events.length,
               d.trips?fmtTime(d.started,tz):'', d.trips?fmtTime(d.finished,tz):'', d.trips?Math.round(d.miles):'']
