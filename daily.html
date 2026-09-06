@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Yesterday</title>
+<!--
+  Yesterday: a manager's daily review of one branch's driving.
+
+  Every driver in the branch, ranked by what happened on the chosen day, events
+  worst-first with where and how bad, and one line for the branch's day.
+  It is triage, not a scorecard: no scores, no percentiles, no ranks against
+  the company. Those need 30 days of miles; an event needs none.
+
+  Head CSS is dropped by MyGeotab, so styles are injected from JS on initialize.
+-->
+</head>
+<body>
+<div id="dy-root">
+  <div class="dy-topbar">
+    <div>
+      <h1 class="dy-h1">Yesterday</h1>
+      <p class="dy-scope" id="dy-scope">Loading…</p>
+    </div>
+    <div class="dy-controls">
+      <label class="dy-lab">Branch<select id="dy-office"></select></label>
+      <label class="dy-lab">Day<input type="date" id="dy-date"></label>
+      <button type="button" class="dy-btn" id="dy-prev" title="Previous day">‹</button>
+      <button type="button" class="dy-btn" id="dy-next" title="Next day">›</button>
+    </div>
+  </div>
+  <div id="dy-note" class="dy-note" hidden></div>
+  <div class="dy-kpis" id="dy-kpis"></div>
+
+  <div class="dy-tablehead">
+    <div class="dy-tabletitle" id="dy-drivers-title">Drivers</div>
+    <div class="dy-tools"><button type="button" id="dy-csv" class="dy-btn">Export CSV</button></div>
+  </div>
+  <div class="dy-card" id="dy-drivers"></div>
+
+  <div class="dy-tablehead">
+    <div class="dy-tabletitle" id="dy-events-title">Events, worst first</div>
+    <div class="dy-tools"><button type="button" id="dy-events-toggle" class="dy-btn on">Hide</button></div>
+  </div>
+  <div class="dy-card on" id="dy-events"></div>
+
+  <div class="dy-foot" id="dy-foot"></div>
+</div>
+
+<script>
+geotab.addin.dailyReview = function () {
+  'use strict';
+
+  var STYLE_ID = 'dy-styles';
+  var CSS = [
+    '#dy-root{',
+    '  --page:#f9f9f7; --surface:#fcfcfb; --ink-1:#0b0b0b; --ink-2:#52514e; --ink-3:#898781;',
+    '  --grid:#e1e0d9; --axis:#c3c2b7; --hairline:rgba(11,11,11,.10); --sunk:#f0efe9;',
+    '  --bad:#d03b3b; --bad-ink:#9b2626; --warn:#fab219; --warn-ink:#7a5300;',
+    '  --good-ink:#0a6b18; --accent:#2a78d6;',
+    '  font-family:system-ui,-apple-system,"Segoe UI",sans-serif;',
+    '  color:var(--ink-1); background:var(--page); padding:18px 20px 32px; width:100%;}',
+    '#dy-root, #dy-root *{box-sizing:border-box;}',
+    '#dy-root.busy{opacity:.55;}',
+    '.dy-topbar{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:12px;}',
+    '.dy-h1{font-size:19px;font-weight:650;margin:0;letter-spacing:-.01em;}',
+    '.dy-scope{font-size:12.5px;color:var(--ink-3);margin:3px 0 0;}',
+    '.dy-controls{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;}',
+    '.dy-lab{font-size:11px;color:var(--ink-3);display:flex;flex-direction:column;gap:3px;}',
+    '.dy-lab select,.dy-lab input{font:inherit;font-size:13px;padding:5px 8px;border:1px solid var(--grid);',
+    '  border-radius:6px;background:#fff;color:var(--ink-1);}',
+    '.dy-btn{font:inherit;font-size:12.5px;font-weight:600;padding:6px 11px;border:1px solid var(--grid);',
+    '  border-radius:6px;background:#fff;color:var(--ink-2);cursor:pointer;}',
+    '.dy-btn:hover{border-color:var(--ink-3);} .dy-btn.on{border-color:var(--accent);color:var(--accent);}',
+    '.dy-note{font-size:12.5px;padding:9px 12px;border-radius:7px;margin:12px 0 0;',
+    '  background:#fdf6e3;border:1px solid #f0e2bd;color:#6b5316;}',
+    '.dy-note.err{background:#fdeceb;border-color:#f3c9c5;color:#8f2a22;}',
+    '.dy-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin:14px 0 0;}',
+    '.dy-kpi{background:var(--surface);border:1px solid var(--grid);border-radius:9px;padding:12px 14px;}',
+    '.dy-kpi .k{font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3);}',
+    '.dy-kpi .v{font-size:25px;font-weight:680;letter-spacing:-.02em;line-height:1.15;margin-top:2px;',
+    '  font-variant-numeric:tabular-nums;}',
+    '.dy-kpi .s{font-size:12px;color:var(--ink-3);margin-top:3px;}',
+    '.dy-tablehead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:22px 0 0;}',
+    '.dy-tabletitle{font-size:14px;font-weight:650;}',
+    '.dy-card{background:var(--surface);border:1px solid var(--hairline);border-radius:9px;margin:9px 0 0;',
+    '  overflow-x:auto;}',
+    '#dy-events{display:none;} #dy-events.on{display:block;}',
+    '.dy-t{width:100%;border-collapse:collapse;font-size:12.5px;}',
+    '.dy-t th{font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3);',
+    '  text-align:left;padding:9px 10px;border-bottom:1px solid var(--grid);white-space:nowrap;}',
+    '.dy-t td{padding:8px 10px;border-bottom:1px solid var(--hairline);vertical-align:top;}',
+    '.dy-t tr:last-child td{border-bottom:0;}',
+    '.dy-t .r{text-align:right;font-variant-numeric:tabular-nums;} .dy-t .c{text-align:center;}',
+    '.dy-t .name{font-weight:600;white-space:nowrap;}',
+    '.dy-t .quiet td{color:var(--ink-3);}',
+    '.dy-cell{font-variant-numeric:tabular-nums;text-align:right;}',
+    '.dy-cell.z{color:var(--axis);}',
+    '.dy-sev{display:inline-block;min-width:34px;text-align:center;padding:2px 7px;border-radius:999px;',
+    '  font-weight:700;font-variant-numeric:tabular-nums;font-size:12px;}',
+    '.dy-sev.s0{background:var(--sunk);color:var(--ink-3);}',
+    '.dy-sev.s1{background:#fdf6e3;color:var(--warn-ink);}',
+    '.dy-sev.s2{background:#fbe3e3;color:var(--bad-ink);}',
+    '.dy-sev.s3{background:var(--bad);color:#fff;}',
+    '.dy-flag{font-size:11px;font-weight:700;color:var(--bad-ink);margin-left:6px;white-space:nowrap;}',
+    '.dy-how{font-weight:650;} .dy-how.hot{color:var(--bad-ink);}',
+    '.dy-where{color:var(--ink-2);} .dy-when{white-space:nowrap;font-variant-numeric:tabular-nums;}',
+    '.dy-link{color:var(--accent);text-decoration:none;} .dy-link:hover{text-decoration:underline;}',
+    '.dy-chip{display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;',
+    '  padding:2px 7px;border-radius:999px;background:var(--sunk);color:var(--ink-2);white-space:nowrap;}',
+    '.dy-chip.hot{background:#fbe3e3;color:var(--bad-ink);}',
+    '.dy-empty{padding:16px;font-size:12.5px;color:var(--ink-3);}',
+    '.dy-foot{font-size:12px;color:var(--ink-3);margin:18px 0 0;line-height:1.5;max-width:900px;}',
+    '.dy-foot b{color:var(--ink-2);}'
+  ].join('\n');
+
+  // ── Constants ────────────────────────────────────────────────────────────
+  var LEAF = {b27AB:'Orlando', b27AC:'Tampa', b27AD:'ATL North', b27AE:'ATL South',
+              b27AF:'Chicago', b27B0:'Indianapolis', b27B1:'Northern Indy',
+              b27B2:'Louisville', b27B3:'Detroit', b27B4:'Grand Rapids',
+              b27B5:'Cincinnati', b27B6:'Cleveland', b27B7:'Columbus',
+              b27B8:'American Fork'};
+  // Same map roster-sync uses. Northern Indy is Central on purpose.
+  var TZ = {'Orlando':'America/New_York','Tampa':'America/New_York','ATL North':'America/New_York',
+            'ATL South':'America/New_York','Chicago':'America/Chicago',
+            'Indianapolis':'America/Indiana/Indianapolis','Northern Indy':'America/Chicago',
+            'Louisville':'America/New_York','Detroit':'America/Detroit','Grand Rapids':'America/Detroit',
+            'Cincinnati':'America/New_York','Cleveland':'America/New_York','Columbus':'America/New_York',
+            'American Fork':'America/Denver'};
+  // A "day" runs 4am to 4am LOCAL. UTC midnight split overnight driving across
+  // two days badly enough on Route Starts that only 18 of 37 routes read
+  // consistently; 4am local sits in the one hour nobody is driving.
+  var DAY_START_HOUR = 4;
+  var KM_TO_MI = 0.621371;
+  var BASE_DAYS = 14;
+  var SUSTAINED_TAILGATE_S = 10;   // p90 is 13s; 82% of events are under 10s
+  var IN_TOWN_KMH = 56.4;          // 35 mph: where +15 is a school zone, not a merge
+  var ADDRESS_CAP = 60;            // GetAddresses is one call; keep it to what is shown
+
+  // Rule -> behaviour. The three speeding rules are MERGED into one category and
+  // overlapping windows collapsed, because 86% of 10-over events also fire the
+  // 20%-over rule: counting both doubles the same incident. Legacy accelerometer
+  // harsh rules are deliberately absent -- they double the GPS "(New)" ones.
+  var CAT = {
+    RuleGpsSpeedingWindowId:'speed', RulePostedSpeedingId:'speed', aeBRJsSHVeE6Q3Qt8dh4uSQ:'speed',
+    RuleFollowingDistanceId:'tailgate', RulePhoneUsageId:'phone', RuleDistractionId:'distract',
+    RuleHarshGpsBrakingId:'brake', RuleHarshGpsCorneringId:'corner', RuleHarshGpsAccelerationId:'accel',
+    RuleRollingStopId:'rollstop', RuleNearCollisionWarningId:'nearcoll',
+    RuleEnhancedMajorCollisionId:'collision', RuleEnhancedMinorCollisionId:'collision', RuleAccidentId:'collision',
+    RuleCameraDetectedDriverSeatbeltId:'belt', RuleSeatbeltId:'belt',
+    RuleDrinkingOrEatingId:'eat', RuleDriverYawningId:'yawn', RuleDriverEyeRubbingId:'yawn'
+  };
+  // Columns in the driver table, in the order a manager should read them.
+  var COLS = [
+    {id:'collision', label:'Collision'},
+    {id:'nearcoll',  label:'Near coll.'},
+    {id:'phone',     label:'Phone'},
+    {id:'speed',     label:'Speeding'},
+    {id:'tailgate',  label:'Tailgating'},
+    {id:'distract',  label:'Distracted'},
+    {id:'brake',     label:'Braking'},
+    {id:'rollstop',  label:'Roll. stop'},
+    {id:'belt',      label:'Seatbelt'},
+    {id:'corner',    label:'Corner'},
+    {id:'accel',     label:'Accel'},
+    {id:'eat',       label:'Eating'},
+    {id:'yawn',      label:'Fatigue'}
+  ];
+  // Severity: what one event is worth on the day. This is where "reduce
+  // accidents" lives. Collision-proximate on top; the accelerometer-ish
+  // metrics low; comfort events shown but worth nothing. Speeding is scored
+  // from the ACTUAL over-limit read off GPS, not from which rule fired.
+  function weightOf(ev){
+    switch(ev.cat){
+      case 'collision': return 50;
+      case 'nearcoll':  return 30;
+      case 'phone':     return 8;
+      case 'speed':
+        if(ev.overMph == null) return 1;
+        var w = ev.overMph >= 20 ? 8 : ev.overMph >= 15 ? 5 : ev.overMph >= 10 ? 2 : 1;
+        return ev.inTown ? w*1.5 : w;
+      case 'tailgate':  return ev.seconds >= SUSTAINED_TAILGATE_S ? 5 : 1;
+      case 'distract':  return 4;
+      case 'brake':     return 3;
+      case 'rollstop':  return 3;
+      case 'belt':      return 3;
+      case 'corner':    return 1;
+      case 'accel':     return 1;
+      default:          return 0;      // eat, yawn: listed, unranked
+    }
+  }
+
+  // ── State ────────────────────────────────────────────────────────────────
+  var apiRef = null, office = '', dateStr = '', DATA = null, lastRows = [], lastEvents = [];
+
+  // ── Helpers ──────────────────────────────────────────────────────────────
+  function el(id){ return document.getElementById(id); }
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+  function f0(n){ return Math.round(n).toLocaleString(); }
+  function note(msg, err){ var n=el('dy-note'); n.textContent=msg; n.className='dy-note'+(err?' err':''); n.hidden=false; }
+  function clearNote(){ el('dy-note').hidden=true; }
+  function fail(msg){ note(msg, true); el('dy-root').classList.remove('busy'); }
+  function refId(x){ if(x && typeof x==='object') return x.id; if(typeof x==='string') return x; return null; }
+  function driverId(x){ var i=refId(x); return (i && i!=='UnknownDriverId') ? i : null; }
+  function P(s){ return new Date(s).getTime(); }
+
+  // The UTC instant of HH:00 local on a yyyy-mm-dd, for a named zone. Two
+  // passes so a DST edge on that date resolves to the zone's own offset.
+  function offsetMinutes(tz, atMs){
+    var parts = new Intl.DateTimeFormat('en-US', {timeZone:tz, hour12:false, year:'numeric',
+      month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'}).formatToParts(new Date(atMs));
+    var o = {}; parts.forEach(function(p){ o[p.type]=p.value; });
+    var asUtc = Date.UTC(+o.year, +o.month-1, +o.day, (+o.hour)%24, +o.minute);
+    return Math.round((asUtc - atMs)/60000);
+  }
+  function localToUtc(ymd, tz, hour){
+    var p = ymd.split('-').map(Number);
+    var guess = Date.UTC(p[0], p[1]-1, p[2], hour, 0);
+    var ms = guess - offsetMinutes(tz, guess)*60000;
+    return ms - (offsetMinutes(tz, ms) - offsetMinutes(tz, guess))*60000;
+  }
+  function ymdInTz(ms, tz){
+    var parts = new Intl.DateTimeFormat('en-CA', {timeZone:tz, year:'numeric', month:'2-digit', day:'2-digit'})
+      .formatToParts(new Date(ms)); var o={}; parts.forEach(function(p){ o[p.type]=p.value; });
+    return o.year+'-'+o.month+'-'+o.day;
+  }
+  function addDays(ymd, n){ var p=ymd.split('-').map(Number); var d=new Date(Date.UTC(p[0],p[1]-1,p[2]+n));
+    return d.toISOString().slice(0,10); }
+  function fmtTime(ms, tz){ return new Intl.DateTimeFormat('en-US',{timeZone:tz,hour:'numeric',minute:'2-digit'}).format(new Date(ms)); }
+  function fmtDay(ymd){ var p=ymd.split('-').map(Number); return new Intl.DateTimeFormat('en-US',
+    {weekday:'long', month:'long', day:'numeric', timeZone:'UTC'}).format(new Date(Date.UTC(p[0],p[1]-1,p[2]))); }
+
+  // Real MyGeotab URLs, the same ones the Slack monitors post.
+  function deviceUrl(id){ return id ? location.origin+location.pathname+'#device,id:'+id : null; }
+  function eventUrl(devId, fromMs, toMs){
+    var from = new Date(fromMs-5*60000).toISOString(), to = new Date(toMs+5*60000).toISOString();
+    return location.origin+location.pathname+'#exceptionsInsights,activeTab:overview,assetsFilter:!('+devId+
+      '),dateRangeFilter:(from:\''+from+'\',label:Custom,to:\''+to+'\')';
+  }
+
+  // ── Load ─────────────────────────────────────────────────────────────────
+  function load(api){
+    apiRef = api;
+    el('dy-root').classList.add('busy'); clearNote();
+    api.multiCall([
+      ['Get', {typeName:'Device', resultsLimit:50000}],
+      ['Get', {typeName:'User', search:{isDriver:true}}],
+      ['Get', {typeName:'Rule'}]
+    ], function(res){
+      var devices=res[0]||[], users=res[1]||[], rules=res[2]||[];
+      var devOffice={}, devName={};
+      devices.forEach(function(d){
+        devName[d.id]=d.name||d.id;
+        (d.groups||[]).forEach(function(g){ if(LEAF[g.id]) devOffice[d.id]=LEAF[g.id]; });
+      });
+      var offices={}; Object.keys(devOffice).forEach(function(k){ offices[devOffice[k]]=1; });
+      var names=Object.keys(offices).sort();
+      if(!names.length){ fail('No vehicle in your data scope is in one of the '+Object.keys(LEAF).length+' branch groups.'); return; }
+      var sel=el('dy-office');
+      if(!sel.options.length){
+        names.forEach(function(n){ var o=document.createElement('option'); o.value=n; o.textContent=n; sel.appendChild(o); });
+        sel.disabled = names.length===1;
+      }
+      if(!office || !offices[office]) office = names[0];
+      sel.value = office;
+      var tz = TZ[office] || 'America/New_York';
+      if(!dateStr){
+        // "Yesterday" in the branch's own clock. Before 4am local, yesterday
+        // is still today's day-in-progress minus one.
+        var nowLocal = ymdInTz(Date.now() - DAY_START_HOUR*3600000, tz);
+        dateStr = addDays(nowLocal, -1);
+      }
+      el('dy-date').value = dateStr;
+
+      var from = localToUtc(dateStr, tz, DAY_START_HOUR);
+      var to   = localToUtc(addDays(dateStr,1), tz, DAY_START_HOUR);
+      var baseFrom = localToUtc(addDays(dateStr,-BASE_DAYS), tz, DAY_START_HOUR);
+      var uname={}, gone={}, now=Date.now();
+      users.forEach(function(u){
+        uname[u.id]=((u.firstName||'')+' '+(u.lastName||'')).trim()||u.id;
+        if(u.activeTo && new Date(u.activeTo).getTime()<=now) gone[u.id]=true;
+      });
+      var ruleName={}; rules.forEach(function(r){ ruleName[r.id]=r.name; });
+      var ctx={devOffice:devOffice, devName:devName, uname:uname, gone:gone, ruleName:ruleName,
+               tz:tz, from:from, to:to, baseFrom:baseFrom};
+
+      api.multiCall([
+        ['Get', {typeName:'ExceptionEvent', resultsLimit:50000,
+                 search:{fromDate:new Date(from).toISOString(), toDate:new Date(to).toISOString()}}],
+        ['Get', {typeName:'ExceptionEvent', resultsLimit:50000,
+                 search:{fromDate:new Date(baseFrom).toISOString(), toDate:new Date(from).toISOString()}}]
+      ], function(r2){
+        var dayEv=(r2[0]||[]).filter(function(e){ return devOffice[refId(e.device)]===office; });
+        var baseEv=(r2[1]||[]).filter(function(e){ return devOffice[refId(e.device)]===office; });
+        enrichSpeeding(api, ctx, dayEv, function(events){
+          DATA={ctx:ctx, events:events, baseEv:baseEv};
+          el('dy-root').classList.remove('busy');
+          render();
+        });
+      }, function(err){ fail('Error loading events: '+esc(err)); });
+    }, function(err){ fail('Error loading vehicles and drivers: '+esc(err)); });
+  }
+
+  // Build behaviour events from raw exceptions: categorise, drop what is not
+  // behaviour, merge overlapping speeding windows per truck, then read the
+  // actual speed and limit for each merged window off GPS.
+  function enrichSpeeding(api, ctx, raw, cb){
+    var events=[], speedByDev={}, unknownRule=0;
+    raw.forEach(function(e){
+      var rid=refId(e.rule), cat=CAT[rid];
+      if(!cat){ if(!ctx.ruleName[rid]) unknownRule++; return; }
+      var ev={cat:cat, rule:rid, dev:refId(e.device), drv:driverId(e.driver),
+              from:P(e.activeFrom), to:P(e.activeTo), seconds:(P(e.activeTo)-P(e.activeFrom))/1000};
+      if(cat==='speed'){ (speedByDev[ev.dev]=speedByDev[ev.dev]||[]).push(ev); }
+      else events.push(ev);
+    });
+    ctx.unknownRule=unknownRule;
+    var merged=[];
+    Object.keys(speedByDev).forEach(function(dev){
+      var list=speedByDev[dev].sort(function(a,b){ return a.from-b.from; }), cur=null;
+      list.forEach(function(ev){
+        if(cur && ev.from<=cur.to+2000){ cur.to=Math.max(cur.to,ev.to); cur.rules.push(ev.rule); if(ev.drv&&!cur.drv) cur.drv=ev.drv; }
+        else { cur={cat:'speed', dev:dev, drv:ev.drv, from:ev.from, to:ev.to, rules:[ev.rule]}; merged.push(cur); }
+      });
+    });
+    merged.forEach(function(m){ m.seconds=(m.to-m.from)/1000; });
+    var devs=Object.keys(speedByDev);
+    if(!devs.length){ cb(events); return; }
+    var calls=[];
+    devs.forEach(function(dev){
+      calls.push(['Get',{typeName:'LogRecord', resultsLimit:50000,
+        search:{deviceSearch:{id:dev}, fromDate:new Date(ctx.from).toISOString(), toDate:new Date(ctx.to).toISOString()}}]);
+      calls.push(['GetPostedRoadSpeedsForDevice',{deviceSearch:{id:dev},
+        fromDate:new Date(ctx.from).toISOString(), toDate:new Date(ctx.to).toISOString()}]);
+    });
+    api.multiCall(calls, function(res){
+      var logs={}, posted={};
+      devs.forEach(function(dev,i){ logs[dev]=res[2*i]||[]; posted[dev]=res[2*i+1]||[]; });
+      merged.forEach(function(m){ readSpeed(m, logs[m.dev], posted[m.dev]); });
+      cb(events.concat(merged));
+    }, function(err){
+      // Severity degrades to "a speeding event happened", which is still true.
+      note('Could not read GPS speed for speeding events: '+err+'. Speeding shown without how-far-over.');
+      cb(events.concat(merged));
+    });
+  }
+  // The WORST point inside the window: each GPS point is scored against the
+  // posted limit in force at its own moment, and the largest over-limit wins.
+  // Scoring the single fastest point against the limit at that instant read
+  // "+-1 in a 25" on a real event -- the truck was fastest in the 35 zone and
+  // over the limit only after the sign dropped to 25. Posted limits are a step
+  // function keyed by time; the one in force is the last entry at or before
+  // the point. Estimates are skipped, so a point with no known limit cannot win.
+  function readSpeed(m, logs, posted){
+    var lo=m.from-5000, hi=m.to+5000;
+    var steps=(posted||[]).filter(function(s){ return s.maxSpeed>0 && !s.isEstimate; })
+      .map(function(s){ return {t:P(s.date), v:s.maxSpeed}; }).sort(function(a,b){ return a.t-b.t; });
+    function limitAt(t){ var v=null; for(var i=0;i<steps.length && steps[i].t<=t;i++) v=steps[i].v; return v; }
+    var best=null, peak=null;
+    (logs||[]).forEach(function(p){
+      var t=P(p.dateTime); if(t<lo||t>hi) return;
+      var spd=p.speed||0;
+      if(!peak || spd>peak.spd) peak={spd:spd, p:p, t:t};
+      var lim=limitAt(t); if(lim==null) return;
+      var over=spd-lim;
+      if(!best || over>best.over) best={over:over, lim:lim, spd:spd, p:p, t:t};
+    });
+    if(!peak) return;
+    // Always report where and how fast; report "over" only when a limit was
+    // known and actually exceeded. A rule can fire off a limit this lookup
+    // never saw (an estimate, or a sign between two samples); that shows as
+    // the speed with "limit unknown" rather than a made-up negative.
+    var use = (best && best.over>0) ? best : {spd:peak.spd, p:peak.p, t:peak.t};
+    m.peakKmh=use.spd; m.lat=use.p.latitude; m.lon=use.p.longitude; m.at=use.t;
+    if(best && best.over>0){ m.limitKmh=best.lim; m.overMph=best.over*KM_TO_MI; m.inTown=best.lim<=IN_TOWN_KMH; }
+  }
+
+  // ── Render ───────────────────────────────────────────────────────────────
+  function render(){
+    if(!DATA) return;
+    var ctx=DATA.ctx, tz=ctx.tz;
+    el('dy-scope').textContent = office+' · '+fmtDay(dateStr)+' · 4am to 4am local';
+
+    // Every driver in the branch: anyone who drove a branch truck in the base
+    // window or on the day, minus people who have left. Zero-event rows stay.
+    var drivers={};
+    function ensure(id){ if(!drivers[id]) drivers[id]={id:id, name:ctx.uname[id]||id, n:{}, w:0, events:[], base:0}; return drivers[id]; }
+    DATA.baseEv.forEach(function(e){ var d=driverId(e.driver); if(d && !ctx.gone[d] && CAT[refId(e.rule)]) ensure(d).base+=weightOf({cat:CAT[refId(e.rule)], seconds:(P(e.activeTo)-P(e.activeFrom))/1000}); });
+    var unattributed=[];
+    DATA.events.forEach(function(ev){
+      ev.w=weightOf(ev);
+      if(!ev.drv || ctx.gone[ev.drv]){ unattributed.push(ev); return; }
+      var d=ensure(ev.drv); d.n[ev.cat]=(d.n[ev.cat]||0)+1; d.w+=ev.w; d.events.push(ev);
+    });
+    var rows=Object.keys(drivers).map(function(k){ return drivers[k]; });
+    // Unusual for them: only a FLAG. The chronic 50-a-day speeder must top the
+    // table every day, and "normal for him" must never hide him.
+    rows.forEach(function(d){ d.norm=d.base/BASE_DAYS; d.unusual = d.w>0 && d.w > Math.max(2*d.norm, d.norm+10); });
+    rows.sort(function(a,b){ return b.w-a.w || b.events.length-a.events.length || a.name.localeCompare(b.name); });
+    lastRows=rows;
+
+    var evs=DATA.events.slice().sort(function(a,b){ return b.w-a.w || a.from-b.from; });
+    lastEvents=evs;
+    var withEv=rows.filter(function(d){ return d.events.length; }).length;
+    var trucks={}; DATA.events.forEach(function(e){ trucks[e.dev]=1; });
+    var ranked=evs.filter(function(e){ return e.w>0; }).length;
+
+    el('dy-kpis').innerHTML =
+      kpi('Drivers', String(rows.length), withEv+' with an event · '+(rows.length-withEv)+' clean') +
+      kpi('Events', String(evs.length), ranked+' that count · '+(evs.length-ranked)+' comfort') +
+      kpi('Needs a word', String(rows.filter(function(d){ return d.w>=10; }).length), 'drivers at 10+ severity') +
+      kpi('Unattributed', String(unattributed.length), unattributed.length ? 'on a truck with no driver assigned' : 'every event has a driver');
+
+    el('dy-drivers-title').textContent='Drivers ('+rows.length+')';
+    el('dy-drivers').innerHTML = rows.length ? driverTable(rows) : '<div class="dy-empty">No drivers found for this branch in the last '+BASE_DAYS+' days.</div>';
+    el('dy-events-title').textContent='Events, worst first ('+evs.length+')';
+    renderEvents(evs, unattributed, ctx);
+    el('dy-foot').innerHTML = foot(ctx);
+  }
+  function kpi(k,v,s){ return '<div class="dy-kpi"><div class="k">'+esc(k)+'</div><div class="v">'+v+'</div><div class="s">'+s+'</div></div>'; }
+  function sevClass(w){ return w>=25?'s3':w>=10?'s2':w>0?'s1':'s0'; }
+
+  function driverTable(rows){
+    var h='<table class="dy-t"><thead><tr><th>Driver</th><th class="c" title="Severity-weighted total for the day. Collision 50, near collision 30, phone 8, speeding 1-12 by how far over, sustained tailgating 5, distraction 4, braking / rolling stop / seatbelt 3.">Day</th>';
+    COLS.forEach(function(c){ h+='<th class="r">'+esc(c.label)+'</th>'; });
+    h+='<th class="r">Total</th></tr></thead><tbody>';
+    rows.forEach(function(d){
+      var tot=d.events.length;
+      h+='<tr'+(tot?'':' class="quiet"')+'><td class="name">'+esc(d.name)+
+         (d.unusual?'<span class="dy-flag" title="Well above this driver\'s own last '+BASE_DAYS+' days">unusual for them</span>':'')+'</td>'+
+         '<td class="c"><span class="dy-sev '+sevClass(d.w)+'">'+f0(d.w)+'</span></td>';
+      COLS.forEach(function(c){ var n=d.n[c.id]||0; h+='<td class="dy-cell'+(n?'':' z')+'">'+(n||'·')+'</td>'; });
+      h+='<td class="r">'+tot+'</td></tr>';
+    });
+    return h+'</tbody></table>';
+  }
+
+  function renderEvents(evs, unattributed, ctx){
+    if(!evs.length){ el('dy-events').innerHTML='<div class="dy-empty">Nothing happened. That is the answer.</div>'; return; }
+    // Addresses for what is on screen, one call. Positions exist only for
+    // speeding (read off GPS); other events link to the truck's map instead.
+    var need=evs.filter(function(e){ return e.lat!=null; }).slice(0,ADDRESS_CAP);
+    function draw(addr){
+      var h='<table class="dy-t"><thead><tr><th>When</th><th>Driver</th><th>What</th><th>How bad</th><th>Where</th><th>Truck</th><th></th></tr></thead><tbody>';
+      evs.forEach(function(e){
+        var name = e.drv ? (ctx.uname[e.drv]||e.drv) : '<span class="dy-chip">no driver</span>';
+        h+='<tr><td class="dy-when">'+fmtTime(e.from, ctx.tz)+'</td>'+
+           '<td class="name">'+name+'</td>'+
+           '<td><span class="dy-chip'+(e.w>=8?' hot':'')+'">'+esc(catLabel(e.cat))+'</span></td>'+
+           '<td class="dy-how'+(e.w>=8?' hot':'')+'">'+howBad(e)+'</td>'+
+           '<td class="dy-where">'+(e.lat!=null ? esc(addr[e.lat+','+e.lon]||'') : '')+'</td>'+
+           '<td><a class="dy-link" href="'+esc(deviceUrl(e.dev))+'" target="_blank" rel="noopener">'+esc(ctx.devName[e.dev]||e.dev)+'</a></td>'+
+           '<td><a class="dy-link" href="'+esc(eventUrl(e.dev,e.from,e.to))+'" target="_blank" rel="noopener">open</a></td></tr>';
+      });
+      el('dy-events').innerHTML=h+'</tbody></table>';
+    }
+    if(!need.length || !apiRef){ draw({}); return; }
+    apiRef.call('GetAddresses', {coordinates:need.map(function(e){ return {x:e.lon, y:e.lat}; })}, function(res){
+      var addr={}; (res||[]).forEach(function(a,i){ var e=need[i]; if(a) addr[e.lat+','+e.lon]=shortAddr(a); });
+      draw(addr);
+    }, function(){ draw({}); });
+  }
+  function shortAddr(a){ return a.street ? a.street+(a.city?', '+a.city:'') : (a.formattedAddress||''); }
+  function catLabel(c){ for(var i=0;i<COLS.length;i++) if(COLS[i].id===c) return COLS[i].label; return c; }
+  function howBad(e){
+    if(e.cat==='speed'){
+      if(e.overMph==null) return e.peakKmh ? f0(e.peakKmh*KM_TO_MI)+' mph, limit unknown' : 'speeding, '+f0(e.seconds)+'s';
+      return '+'+f0(e.overMph)+' in a '+f0(e.limitKmh*KM_TO_MI)+(e.inTown?' <span class="dy-chip hot">in town</span>':'');
+    }
+    if(e.cat==='tailgate') return f0(e.seconds)+'s'+(e.seconds>=SUSTAINED_TAILGATE_S?' <span class="dy-chip hot">sustained</span>':'');
+    if(e.seconds>=2) return f0(e.seconds)+'s';
+    return '';
+  }
+
+  function foot(ctx){
+    return '<p><b>What this page is.</b> One branch, one day, every driver. Rows are ordered by how bad the day was, '+
+      'not by how many things happened: one <b>+22 in a 35</b> outranks ten brief tailgates. There are no scores or '+
+      'company ranks here on purpose &mdash; those need 30 days of miles. An event needs none.</p>'+
+      '<p><b>Speeding</b> is read off the truck&rsquo;s own GPS: the peak speed inside the event against the posted limit '+
+      'in force at that moment. The three speeding rules are merged first, because most events fire two of them. '+
+      '<b>Tailgating</b> counts as sustained at '+SUSTAINED_TAILGATE_S+' seconds; most events are a 4-second merge. '+
+      '<b>Unusual for them</b> compares today to the driver&rsquo;s own last '+BASE_DAYS+' days &mdash; it flags, it never hides.</p>'+
+      '<p><b>Eating and fatigue</b> are listed and worth nothing. '+
+      (ctx.unknownRule ? ctx.unknownRule+' events from deleted rules were ignored. ' : '')+
+      'Days run 4am to 4am in the branch&rsquo;s own time zone.</p>';
+  }
+
+  // ── Wiring ───────────────────────────────────────────────────────────────
+  function wire(){
+    el('dy-office').addEventListener('change', function(){ office=this.value; if(apiRef) load(apiRef); });
+    el('dy-date').addEventListener('change', function(){ if(this.value){ dateStr=this.value; if(apiRef) load(apiRef); } });
+    el('dy-prev').addEventListener('click', function(){ dateStr=addDays(dateStr,-1); if(apiRef) load(apiRef); });
+    el('dy-next').addEventListener('click', function(){ dateStr=addDays(dateStr,1); if(apiRef) load(apiRef); });
+    el('dy-events-toggle').addEventListener('click', function(){
+      var w=el('dy-events'), on=w.classList.toggle('on'); this.className='dy-btn'+(on?' on':''); this.textContent=on?'Hide':'Show'; });
+    el('dy-csv').addEventListener('click', exportCsv);
+  }
+  function exportCsv(){
+    if(!lastRows.length) return;
+    var head=['Driver','DaySeverity','UnusualForThem'].concat(COLS.map(function(c){ return c.label.replace(/[^A-Za-z]/g,''); })).concat(['Total']);
+    var lines=[head.join(',')].concat(lastRows.map(function(d){
+      return ['"'+String(d.name).replace(/"/g,'""')+'"', Math.round(d.w), d.unusual?'yes':'']
+        .concat(COLS.map(function(c){ return d.n[c.id]||0; })).concat([d.events.length]).join(',');
+    }));
+    var blob=new Blob([lines.join('\n')],{type:'text/csv'}), a=document.createElement('a');
+    a.href=URL.createObjectURL(blob); a.download='yesterday-'+office.toLowerCase().replace(/[^a-z0-9]+/g,'-')+'-'+dateStr+'.csv';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  }
+  function injectStyles(){
+    if(document.getElementById(STYLE_ID)) return;
+    var s=document.createElement('style'); s.id=STYLE_ID; s.textContent=CSS;
+    document.head.appendChild(s);
+  }
+
+  return {
+    initialize: function(api, state, cb){ injectStyles(); wire(); cb(); },
+    focus: function(api){ load(api); },
+    blur: function(){}
+  };
+};
+</script>
+</body>
+</html>
