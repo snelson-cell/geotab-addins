@@ -124,8 +124,8 @@ geotab.addin.dailyReview = function () {
   var DAY_START_HOUR = 4;
   var KM_TO_MI = 0.621371;
   var BASE_DAYS = 14;
-  var IN_TOWN_KMH = 56.4;          // 35 mph: where +15 is a school zone, not a merge
-  var ADDRESS_CAP = 60;            // GetAddresses is one call; keep it to what is shown
+  var ADDRESS_CHUNK = 50;          // GetAddresses per call; the rest go in the same multiCall
+  var POSITION_WINDOW_MS = 60000;  // nearest GPS point within a minute, else no location
 
   // Rule -> behaviour. The three speeding rules are MERGED into one category and
   // overlapping windows collapsed, because 86% of 10-over events also fire the
@@ -304,23 +304,29 @@ geotab.addin.dailyReview = function () {
       });
     });
     merged.forEach(function(m){ m.seconds=(m.to-m.from)/1000; });
-    var devs=Object.keys(speedByDev);
+    // GPS for every truck that had any event, so every row can say where.
+    // Posted limits only for trucks that sped; nothing else needs them.
+    var allDevs={}; events.forEach(function(e){ allDevs[e.dev]=1; }); merged.forEach(function(m){ allDevs[m.dev]=1; });
+    var devs=Object.keys(allDevs), spDevs=Object.keys(speedByDev);
     if(!devs.length){ cb(events); return; }
-    var calls=[];
+    var fromIso=new Date(ctx.from).toISOString(), toIso=new Date(ctx.to).toISOString(), calls=[];
     devs.forEach(function(dev){
       calls.push(['Get',{typeName:'LogRecord', resultsLimit:50000,
-        search:{deviceSearch:{id:dev}, fromDate:new Date(ctx.from).toISOString(), toDate:new Date(ctx.to).toISOString()}}]);
-      calls.push(['GetPostedRoadSpeedsForDevice',{deviceSearch:{id:dev},
-        fromDate:new Date(ctx.from).toISOString(), toDate:new Date(ctx.to).toISOString()}]);
+        search:{deviceSearch:{id:dev}, fromDate:fromIso, toDate:toIso}}]);
+    });
+    spDevs.forEach(function(dev){
+      calls.push(['GetPostedRoadSpeedsForDevice',{deviceSearch:{id:dev}, fromDate:fromIso, toDate:toIso}]);
     });
     api.multiCall(calls, function(res){
       var logs={}, posted={};
-      devs.forEach(function(dev,i){ logs[dev]=res[2*i]||[]; posted[dev]=res[2*i+1]||[]; });
+      devs.forEach(function(dev,i){ logs[dev]=res[i]||[]; });
+      spDevs.forEach(function(dev,i){ posted[dev]=res[devs.length+i]||[]; });
       merged.forEach(function(m){ readSpeed(m, logs[m.dev], posted[m.dev]); });
+      events.forEach(function(e){ readPosition(e, logs[e.dev]); });
       cb(events.concat(merged));
     }, function(err){
-      // Severity degrades to "a speeding event happened", which is still true.
-      note('Could not read GPS speed for speeding events: '+err+'. Speeding shown without how-far-over.');
+      // Everything still lists; it just cannot say where or how far over.
+      note('Could not read GPS for this day: '+err+'. Events shown without location or how-far-over.');
       cb(events.concat(merged));
     });
   }
@@ -352,7 +358,17 @@ geotab.addin.dailyReview = function () {
     // the speed with "limit unknown" rather than a made-up negative.
     var use = (best && best.over>0) ? best : {spd:peak.spd, p:peak.p, t:peak.t};
     m.peakKmh=use.spd; m.lat=use.p.latitude; m.lon=use.p.longitude; m.at=use.t;
-    if(best && best.over>0){ m.limitKmh=best.lim; m.overMph=best.over*KM_TO_MI; m.inTown=best.lim<=IN_TOWN_KMH; }
+    if(best && best.over>0){ m.limitKmh=best.lim; m.overMph=best.over*KM_TO_MI; }
+  }
+  // Where a non-speeding event happened: the GPS point nearest its start.
+  // The exception itself carries no position, only a time.
+  function readPosition(ev, logs){
+    var best=null;
+    (logs||[]).forEach(function(p){
+      var d=Math.abs(P(p.dateTime)-ev.from);
+      if(d<=POSITION_WINDOW_MS && (!best || d<best.d)) best={d:d, p:p};
+    });
+    if(best){ ev.lat=best.p.latitude; ev.lon=best.p.longitude; ev.at=P(best.p.dateTime); }
   }
 
   // ── Render ───────────────────────────────────────────────────────────────
@@ -421,11 +437,11 @@ geotab.addin.dailyReview = function () {
 
   function renderEvents(evs, unattributed, ctx){
     if(!evs.length){ el('dy-events').innerHTML='<div class="dy-empty">Nothing happened. That is the answer.</div>'; return; }
-    // Addresses for what is on screen, one call. Positions exist only for
-    // speeding (read off GPS); other events link to the truck's map instead.
-    var need=evs.filter(function(e){ return e.lat!=null; }).slice(0,ADDRESS_CAP);
+    // A street for every event that has a position, in chunks of ADDRESS_CHUNK
+    // inside one multiCall.
+    var need=evs.filter(function(e){ return e.lat!=null; });
     function draw(addr){
-      var h='<table class="dy-t"><thead><tr><th>When</th><th>Driver</th><th>What</th><th>How bad</th><th>Where</th><th>Truck</th><th>Open</th></tr></thead><tbody>';
+      var h='<table class="dy-t"><thead><tr><th>When</th><th>Driver</th><th>What</th><th>How bad</th><th>Location</th><th>Truck</th><th>Open</th></tr></thead><tbody>';
       evs.forEach(function(e){
         var name = e.drv ? (ctx.uname[e.drv]||e.drv) : '<span class="dy-chip">no driver</span>';
         h+='<tr><td class="dy-when">'+fmtTime(e.from, ctx.tz)+'</td>'+
@@ -442,17 +458,20 @@ geotab.addin.dailyReview = function () {
       el('dy-events').innerHTML=h+'</tbody></table>';
     }
     if(!need.length || !apiRef){ draw({}); return; }
-    apiRef.call('GetAddresses', {coordinates:need.map(function(e){ return {x:e.lon, y:e.lat}; })}, function(res){
-      var addr={}; (res||[]).forEach(function(a,i){ var e=need[i]; if(a) addr[e.lat+','+e.lon]=shortAddr(a); });
-      draw(addr);
-    }, function(){ draw({}); });
+    var chunks=[]; for(var i=0;i<need.length;i+=ADDRESS_CHUNK) chunks.push(need.slice(i,i+ADDRESS_CHUNK));
+    apiRef.multiCall(chunks.map(function(c){ return ['GetAddresses',{coordinates:c.map(function(e){ return {x:e.lon, y:e.lat}; })}]; }),
+      function(res){
+        var addr={};
+        chunks.forEach(function(c,ci){ (res[ci]||[]).forEach(function(a,i){ var e=c[i]; if(a) addr[e.lat+','+e.lon]=shortAddr(a); }); });
+        draw(addr);
+      }, function(){ draw({}); });
   }
   function shortAddr(a){ return a.street ? a.street+(a.city?', '+a.city:'') : (a.formattedAddress||''); }
   function catLabel(c){ for(var i=0;i<COLS.length;i++) if(COLS[i].id===c) return COLS[i].label; return c; }
   function howBad(e){
     if(e.cat==='speed'){
       if(e.overMph==null) return e.peakKmh ? f0(e.peakKmh*KM_TO_MI)+' mph, limit unknown' : 'speeding, '+f0(e.seconds)+'s';
-      return '+'+f0(e.overMph)+' in a '+f0(e.limitKmh*KM_TO_MI)+(e.inTown?' <span class="dy-chip">in town</span>':'');
+      return '+'+f0(e.overMph)+' in a '+f0(e.limitKmh*KM_TO_MI);
     }
     if(e.cat==='tailgate') return f0(e.seconds)+'s';
     if(e.seconds>=2) return f0(e.seconds)+'s';
