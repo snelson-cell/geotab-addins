@@ -268,10 +268,15 @@ geotab.addin.dailyReview = function () {
         ['Get', {typeName:'ExceptionEvent', resultsLimit:50000,
                  search:{fromDate:new Date(from).toISOString(), toDate:new Date(to).toISOString()}}],
         ['Get', {typeName:'ExceptionEvent', resultsLimit:50000,
-                 search:{fromDate:new Date(baseFrom).toISOString(), toDate:new Date(from).toISOString()}}]
+                 search:{fromDate:new Date(baseFrom).toISOString(), toDate:new Date(from).toISOString()}}],
+        // Trip hard-caps at 25,000 rows whatever resultsLimit says. One day
+        // fleet-wide is ~4,000, and a branch login is scoped below that anyway.
+        ['Get', {typeName:'Trip', resultsLimit:25000,
+                 search:{fromDate:new Date(from).toISOString(), toDate:new Date(to).toISOString()}}]
       ], function(r2){
         var dayEv=(r2[0]||[]).filter(function(e){ return devOffice[refId(e.device)]===office; });
         var baseEv=(r2[1]||[]).filter(function(e){ return devOffice[refId(e.device)]===office; });
+        ctx.trips=(r2[2]||[]).filter(function(t){ return devOffice[refId(t.device)]===office; });
         enrichSpeeding(api, ctx, dayEv, function(events){
           DATA={ctx:ctx, events:events, baseEv:baseEv};
           el('dy-root').classList.remove('busy');
@@ -307,7 +312,9 @@ geotab.addin.dailyReview = function () {
     // GPS for every truck that had any event, so every row can say where.
     // Posted limits only for trucks that sped; nothing else needs them.
     var allDevs={}; events.forEach(function(e){ allDevs[e.dev]=1; }); merged.forEach(function(m){ allDevs[m.dev]=1; });
+    (ctx.trips||[]).forEach(function(t){ allDevs[refId(t.device)]=1; });
     var devs=Object.keys(allDevs), spDevs=Object.keys(speedByDev);
+    ctx.dayTrips=[];
     if(!devs.length){ cb(events); return; }
     var fromIso=new Date(ctx.from).toISOString(), toIso=new Date(ctx.to).toISOString(), calls=[];
     devs.forEach(function(dev){
@@ -323,6 +330,7 @@ geotab.addin.dailyReview = function () {
       spDevs.forEach(function(dev,i){ posted[dev]=res[devs.length+i]||[]; });
       merged.forEach(function(m){ readSpeed(m, logs[m.dev], posted[m.dev]); });
       events.forEach(function(e){ readPosition(e, logs[e.dev]); });
+      ctx.dayTrips=tripStats(ctx.trips, logs);
       cb(events.concat(merged));
     }, function(err){
       // Everything still lists; it just cannot say where or how far over.
@@ -370,6 +378,30 @@ geotab.addin.dailyReview = function () {
     });
     if(best){ ev.lat=best.p.latitude; ev.lon=best.p.longitude; ev.at=P(best.p.dateTime); }
   }
+  // One record per driver+truck for the day: first trip start, last trip stop,
+  // miles and trip count. A driver who switched trucks gets one per truck.
+  // Started takes the GPS point nearest the first start (a Trip carries no
+  // start position); Finished uses the last trip's own stopPoint.
+  function tripStats(trips, logs){
+    var g={};
+    (trips||[]).forEach(function(t){
+      var drv=driverId(t.driver), dev=refId(t.device); if(!drv||!dev) return;
+      var k=drv+'|'+dev, r=g[k]||(g[k]={drv:drv, dev:dev, start:Infinity, stop:-Infinity, km:0, n:0, stopPoint:null});
+      var a=P(t.start), b=P(t.stop);
+      if(a<r.start) r.start=a;
+      if(b>r.stop){ r.stop=b; r.stopPoint=t.stopPoint||null; }
+      r.km+=t.distance||0; r.n++;
+    });
+    return Object.keys(g).map(function(k){
+      var r=g[k], st={cat:'started', drv:r.drv, dev:r.dev, from:r.start, to:r.start, seconds:0};
+      readPosition(st, logs[r.dev]);
+      var fi={cat:'finished', drv:r.drv, dev:r.dev, from:r.stop, to:r.stop, seconds:0,
+              miles:r.km*KM_TO_MI, trips:r.n};
+      if(r.stopPoint){ fi.lat=r.stopPoint.y; fi.lon=r.stopPoint.x; fi.at=r.stop; }
+      r.startedRow=st; r.finishedRow=fi; r.miles=r.km*KM_TO_MI;
+      return r;
+    });
+  }
 
   // ── Render ───────────────────────────────────────────────────────────────
   function render(){
@@ -384,6 +416,13 @@ geotab.addin.dailyReview = function () {
     var drivers={};
     function ensure(id){ if(!drivers[id]) drivers[id]={id:id, name:ctx.uname[id]||id, n:{}, events:[]}; return drivers[id]; }
     DATA.baseEv.forEach(function(e){ var d=driverId(e.driver); if(d && !ctx.gone[d] && CAT[refId(e.rule)]) ensure(d); });
+    // Anyone who drove a branch truck today is on the page whatever the last
+    // 14 days say, and carries when they started, when they finished, and
+    // how far they drove. Dashes mean they did not drive.
+    var trips=ctx.dayTrips||[];
+    trips.forEach(function(t){ if(!ctx.gone[t.drv]){ var d=ensure(t.drv);
+      d.started=Math.min(d.started||Infinity, t.start); d.finished=Math.max(d.finished||-Infinity, t.stop);
+      d.miles=(d.miles||0)+t.miles; d.trips=(d.trips||0)+t.n; } });
     var unattributed=[];
     DATA.events.forEach(function(ev){
       if(!ev.drv || ctx.gone[ev.drv]){ unattributed.push(ev); return; }
@@ -397,17 +436,24 @@ geotab.addin.dailyReview = function () {
     // Events grouped the same way the table reads -- by driver, most events
     // first, then in the order they happened. Unattributed last.
     var order={}; rows.forEach(function(d,i){ order[d.id]=i; });
-    var evs=DATA.events.slice().sort(function(a,b){
+    var evs=DATA.events.slice();
+    // Started and Finished sit in the list with everything else, in time
+    // order, so a driver's block reads start to finish. They are not events
+    // and are not counted as such.
+    var listed=evs.slice();
+    trips.forEach(function(t){ if(!ctx.gone[t.drv]){ listed.push(t.startedRow); listed.push(t.finishedRow); } });
+    listed.sort(function(a,b){
       var oa=(a.drv in order)?order[a.drv]:1e9, ob=(b.drv in order)?order[b.drv]:1e9;
       return oa-ob || a.from-b.from; });
     lastEvents=evs;
     var withEv=rows.filter(function(d){ return d.events.length; }).length;
+    var drove=rows.filter(function(d){ return d.trips; }).length;
     var trucks={}; DATA.events.forEach(function(e){ trucks[e.dev]=1; });
 
     var sp=evs.filter(function(e){ return e.cat==='speed'; });
     var worst=sp.reduce(function(m,e){ return (e.overMph!=null && (!m || e.overMph>m.overMph)) ? e : m; }, null);
     el('dy-kpis').innerHTML =
-      kpi('Drivers', String(rows.length), withEv+' with an event · '+(rows.length-withEv)+' clean') +
+      kpi('Drivers', String(rows.length), drove+' drove · '+withEv+' with an event · '+(rows.length-drove)+' did not drive') +
       kpi('Events', String(evs.length), 'across '+withEv+' driver'+(withEv===1?'':'s')+' · '+Object.keys(trucks).length+' trucks') +
       kpi('Speeding', String(sp.length), worst ? 'worst +'+f0(worst.overMph)+' in a '+f0(worst.limitKmh*KM_TO_MI) : (sp.length ? 'limits unknown' : 'none')) +
       kpi('Unattributed', String(unattributed.length), unattributed.length ? 'on a truck with no driver assigned' : 'every event has a driver');
@@ -415,20 +461,24 @@ geotab.addin.dailyReview = function () {
     el('dy-drivers-title').textContent='Drivers ('+rows.length+')';
     el('dy-drivers').innerHTML = rows.length ? driverTable(rows) : '<div class="dy-empty">No drivers found for this branch in the last '+BASE_DAYS+' days.</div>';
     el('dy-events-title').textContent='Events ('+evs.length+')';
-    renderEvents(evs, unattributed, ctx);
+    renderEvents(listed, unattributed, ctx);
     el('dy-foot').innerHTML = foot(ctx);
   }
   function kpi(k,v,s){ return '<div class="dy-kpi"><div class="k">'+esc(k)+'</div><div class="v">'+v+'</div><div class="s">'+s+'</div></div>'; }
 
   function driverTable(rows){
     // Events total sits on the left next to the name; the breakdown follows.
-    var h='<table class="dy-t"><thead><tr><th>Driver</th><th class="r">Events</th>';
+    var h='<table class="dy-t"><thead><tr><th>Driver</th><th class="r">Events</th>'+
+      '<th class="r">Started</th><th class="r">Finished</th><th class="r">Miles</th>';
     COLS.forEach(function(c){ h+='<th class="r">'+esc(c.label)+'</th>'; });
     h+='</tr></thead><tbody>';
     rows.forEach(function(d){
       var tot=d.events.length;
       h+='<tr'+(tot?'':' class="quiet"')+'><td class="name">'+esc(d.name)+'</td>'+
-         '<td class="r"><b>'+(tot||'<span class="dy-cell z">·</span>')+'</b></td>';
+         '<td class="r"><b>'+(tot||'<span class="dy-cell z">·</span>')+'</b></td>'+
+         '<td class="r dy-when">'+(d.trips?fmtTime(d.started, DATA.ctx.tz):'<span class="dy-cell z">&mdash;</span>')+'</td>'+
+         '<td class="r dy-when">'+(d.trips?fmtTime(d.finished, DATA.ctx.tz):'<span class="dy-cell z">&mdash;</span>')+'</td>'+
+         '<td class="r">'+(d.trips?f0(d.miles):'<span class="dy-cell z">&mdash;</span>')+'</td>';
       COLS.forEach(function(c){ var n=d.n[c.id]||0; h+='<td class="dy-cell'+(n?'':' z')+'">'+(n||'·')+'</td>'; });
       h+='</tr>';
     });
@@ -451,9 +501,10 @@ geotab.addin.dailyReview = function () {
            '<td class="dy-where">'+(e.lat!=null ? esc(addr[e.lat+','+e.lon]||'') : '')+'</td>'+
            '<td><a class="dy-link" href="'+esc(deviceUrl(e.dev))+'" target="_blank" rel="noopener">'+esc(ctx.devName[e.dev]||e.dev)+'</a></td>'+
            '<td><a class="dy-link" href="'+esc(tripUrl(e.dev,e.from,e.to))+'" target="_blank" rel="noopener" '+
-             'title="Trip History for this truck, the ten minutes around the event">trip</a> &middot; '+
-             '<a class="dy-link" href="'+esc(eventUrl(e.dev,e.from,e.to))+'" target="_blank" rel="noopener" '+
-             'title="The exception itself, in Exceptions Insights">event</a></td></tr>';
+             'title="Trip History for this truck, the ten minutes around this">trip</a>'+
+             (e.cat==='started'||e.cat==='finished' ? '' :
+             ' &middot; <a class="dy-link" href="'+esc(eventUrl(e.dev,e.from,e.to))+'" target="_blank" rel="noopener" '+
+             'title="The exception itself, in Exceptions Insights">event</a>')+'</td></tr>';
       });
       el('dy-events').innerHTML=h+'</tbody></table>';
     }
@@ -467,8 +518,11 @@ geotab.addin.dailyReview = function () {
       }, function(){ draw({}); });
   }
   function shortAddr(a){ return a.street ? a.street+(a.city?', '+a.city:'') : (a.formattedAddress||''); }
-  function catLabel(c){ for(var i=0;i<COLS.length;i++) if(COLS[i].id===c) return COLS[i].label; return c; }
+  function catLabel(c){ if(c==='started') return 'Started'; if(c==='finished') return 'Finished';
+    for(var i=0;i<COLS.length;i++) if(COLS[i].id===c) return COLS[i].label; return c; }
   function howBad(e){
+    if(e.cat==='started') return '';
+    if(e.cat==='finished') return f0(e.miles)+' mi &middot; '+e.trips+' trip'+(e.trips===1?'':'s');
     if(e.cat==='speed'){
       if(e.overMph==null) return e.peakKmh ? f0(e.peakKmh*KM_TO_MI)+' mph, limit unknown' : 'speeding, '+f0(e.seconds)+'s';
       return '+'+f0(e.overMph)+' in a '+f0(e.limitKmh*KM_TO_MI);
@@ -485,7 +539,9 @@ geotab.addin.dailyReview = function () {
       '<p><b>Speeding</b> is read off the truck&rsquo;s own GPS: the worst point inside the event against the posted limit '+
       'in force at that moment, so <b>+14 in a 35</b> is what the truck did, not what a rule decided. The three speeding '+
       'rules are merged first, because most events fire two of them. <b>Tailgating</b> shows how long the truck followed '+
-      'too close. A driver with nothing listed drove a branch truck in the last '+BASE_DAYS+' days and had a clean day.</p>'+
+      'too close. <b>Started</b> and <b>Finished</b> are the first and last trip of the day and <b>Miles</b> is the '+
+      'driving between them; dashes mean the driver did not drive. Someone on the page with no trips drove a branch '+
+      'truck in the last '+BASE_DAYS+' days.</p>'+
       '<p>'+(ctx.unknownRule ? ctx.unknownRule+' events from deleted rules were ignored. ' : '')+
       'Days run 4am to 4am in the branch&rsquo;s own time zone.</p>';
   }
@@ -502,9 +558,11 @@ geotab.addin.dailyReview = function () {
   }
   function exportCsv(){
     if(!lastRows.length) return;
-    var head=['Driver','Events'].concat(COLS.map(function(c){ return c.label.replace(/[^A-Za-z]/g,''); }));
+    var tz=DATA?DATA.ctx.tz:'UTC';
+    var head=['Driver','Events','Started','Finished','Miles'].concat(COLS.map(function(c){ return c.label.replace(/[^A-Za-z]/g,''); }));
     var lines=[head.join(',')].concat(lastRows.map(function(d){
-      return ['"'+String(d.name).replace(/"/g,'""')+'"', d.events.length]
+      return ['"'+String(d.name).replace(/"/g,'""')+'"', d.events.length,
+              d.trips?fmtTime(d.started,tz):'', d.trips?fmtTime(d.finished,tz):'', d.trips?Math.round(d.miles):'']
         .concat(COLS.map(function(c){ return d.n[c.id]||0; })).join(',');
     }));
     var blob=new Blob([lines.join('\n')],{type:'text/csv'}), a=document.createElement('a');
