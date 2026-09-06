@@ -101,7 +101,6 @@ geotab.addin.dailyReview = function () {
     '.dy-sev.s1{background:#fdf6e3;color:var(--warn-ink);}',
     '.dy-sev.s2{background:#fbe3e3;color:var(--bad-ink);}',
     '.dy-sev.s3{background:var(--bad);color:#fff;}',
-    '.dy-flag{font-size:11px;font-weight:700;color:var(--bad-ink);margin-left:6px;white-space:nowrap;}',
     '.dy-how{font-weight:650;} .dy-how.hot{color:var(--bad-ink);}',
     '.dy-where{color:var(--ink-2);} .dy-when{white-space:nowrap;font-variant-numeric:tabular-nums;}',
     '.dy-link{color:var(--accent);text-decoration:none;} .dy-link:hover{text-decoration:underline;}',
@@ -146,8 +145,10 @@ geotab.addin.dailyReview = function () {
     RuleHarshGpsBrakingId:'brake', RuleHarshGpsCorneringId:'corner', RuleHarshGpsAccelerationId:'accel',
     RuleRollingStopId:'rollstop', RuleNearCollisionWarningId:'nearcoll',
     RuleEnhancedMajorCollisionId:'collision', RuleEnhancedMinorCollisionId:'collision', RuleAccidentId:'collision',
-    RuleCameraDetectedDriverSeatbeltId:'belt', RuleSeatbeltId:'belt',
-    RuleDrinkingOrEatingId:'eat', RuleDriverYawningId:'yawn', RuleDriverEyeRubbingId:'yawn'
+    RuleCameraDetectedDriverSeatbeltId:'belt', RuleSeatbeltId:'belt'
+    // Eating, drinking, yawning and eye-rubbing are deliberately unmapped: they
+    // are not behaviours a manager acts on, and listing them at zero weight
+    // only padded the totals (45 of 283 events on one Friday).
   };
   // Columns in the driver table, in the order a manager should read them.
   var COLS = [
@@ -161,14 +162,12 @@ geotab.addin.dailyReview = function () {
     {id:'rollstop',  label:'Roll. stop'},
     {id:'belt',      label:'Seatbelt'},
     {id:'corner',    label:'Corner'},
-    {id:'accel',     label:'Accel'},
-    {id:'eat',       label:'Eating'},
-    {id:'yawn',      label:'Fatigue'}
+    {id:'accel',     label:'Accel'}
   ];
   // Severity: what one event is worth on the day. This is where "reduce
   // accidents" lives. Collision-proximate on top; the accelerometer-ish
-  // metrics low; comfort events shown but worth nothing. Speeding is scored
-  // from the ACTUAL over-limit read off GPS, not from which rule fired.
+  // metrics low. Speeding is scored from the ACTUAL over-limit read off GPS,
+  // not from which rule fired.
   function weightOf(ev){
     switch(ev.cat){
       case 'collision': return 50;
@@ -185,7 +184,7 @@ geotab.addin.dailyReview = function () {
       case 'belt':      return 3;
       case 'corner':    return 1;
       case 'accel':     return 1;
-      default:          return 0;      // eat, yawn: listed, unranked
+      default:          return 0;
     }
   }
 
@@ -236,6 +235,15 @@ geotab.addin.dailyReview = function () {
     var from = new Date(fromMs-5*60000).toISOString(), to = new Date(toMs+5*60000).toISOString();
     return location.origin+location.pathname+'#exceptionsInsights,activeTab:overview,assetsFilter:!('+devId+
       '),dateRangeFilter:(from:\''+from+'\',label:Custom,to:\''+to+'\')';
+  }
+  // Trip History for the truck, opened on the ten minutes around the event.
+  // Shape is from Geotab's own URL reference (docs/mygeotaburls.txt), not
+  // inferred: dateRange:(interval:custom,startDate:'..',endDate:'..'),
+  // entityType:Device,selectedEntities:!(id).
+  function tripUrl(devId, fromMs, toMs){
+    var from = new Date(fromMs-5*60000).toISOString(), to = new Date(toMs+5*60000).toISOString();
+    return location.origin+location.pathname+'#tripsHistory,dateRange:(interval:custom,startDate:\''+from+
+      '\',endDate:\''+to+'\'),entityType:Device,selectedEntities:!('+devId+')';
   }
 
   // ── Load ─────────────────────────────────────────────────────────────────
@@ -381,11 +389,13 @@ geotab.addin.dailyReview = function () {
     var ctx=DATA.ctx, tz=ctx.tz;
     el('dy-scope').textContent = office+' · '+fmtDay(dateStr)+' · 4am to 4am local';
 
-    // Every driver in the branch: anyone who drove a branch truck in the base
-    // window or on the day, minus people who have left. Zero-event rows stay.
+    // Every driver in the branch: anyone who drove a branch truck in the last
+    // 14 days or on the day, minus people who have left. That is the ONLY use
+    // of the 14-day window -- it is what keeps a driver with a clean day on
+    // the page instead of silently absent. Zero-event rows stay.
     var drivers={};
-    function ensure(id){ if(!drivers[id]) drivers[id]={id:id, name:ctx.uname[id]||id, n:{}, w:0, events:[], base:0}; return drivers[id]; }
-    DATA.baseEv.forEach(function(e){ var d=driverId(e.driver); if(d && !ctx.gone[d] && CAT[refId(e.rule)]) ensure(d).base+=weightOf({cat:CAT[refId(e.rule)], seconds:(P(e.activeTo)-P(e.activeFrom))/1000}); });
+    function ensure(id){ if(!drivers[id]) drivers[id]={id:id, name:ctx.uname[id]||id, n:{}, w:0, events:[]}; return drivers[id]; }
+    DATA.baseEv.forEach(function(e){ var d=driverId(e.driver); if(d && !ctx.gone[d] && CAT[refId(e.rule)]) ensure(d); });
     var unattributed=[];
     DATA.events.forEach(function(ev){
       ev.w=weightOf(ev);
@@ -393,9 +403,6 @@ geotab.addin.dailyReview = function () {
       var d=ensure(ev.drv); d.n[ev.cat]=(d.n[ev.cat]||0)+1; d.w+=ev.w; d.events.push(ev);
     });
     var rows=Object.keys(drivers).map(function(k){ return drivers[k]; });
-    // Unusual for them: only a FLAG. The chronic 50-a-day speeder must top the
-    // table every day, and "normal for him" must never hide him.
-    rows.forEach(function(d){ d.norm=d.base/BASE_DAYS; d.unusual = d.w>0 && d.w > Math.max(2*d.norm, d.norm+10); });
     rows.sort(function(a,b){ return b.w-a.w || b.events.length-a.events.length || a.name.localeCompare(b.name); });
     lastRows=rows;
 
@@ -403,11 +410,10 @@ geotab.addin.dailyReview = function () {
     lastEvents=evs;
     var withEv=rows.filter(function(d){ return d.events.length; }).length;
     var trucks={}; DATA.events.forEach(function(e){ trucks[e.dev]=1; });
-    var ranked=evs.filter(function(e){ return e.w>0; }).length;
 
     el('dy-kpis').innerHTML =
       kpi('Drivers', String(rows.length), withEv+' with an event · '+(rows.length-withEv)+' clean') +
-      kpi('Events', String(evs.length), ranked+' that count · '+(evs.length-ranked)+' comfort') +
+      kpi('Events', String(evs.length), 'across '+withEv+' driver'+(withEv===1?'':'s')) +
       kpi('Needs a word', String(rows.filter(function(d){ return d.w>=10; }).length), 'drivers at 10+ severity') +
       kpi('Unattributed', String(unattributed.length), unattributed.length ? 'on a truck with no driver assigned' : 'every event has a driver');
 
@@ -421,16 +427,19 @@ geotab.addin.dailyReview = function () {
   function sevClass(w){ return w>=25?'s3':w>=10?'s2':w>0?'s1':'s0'; }
 
   function driverTable(rows){
-    var h='<table class="dy-t"><thead><tr><th>Driver</th><th class="c" title="Severity-weighted total for the day. Collision 50, near collision 30, phone 8, speeding 1-12 by how far over, sustained tailgating 5, distraction 4, braking / rolling stop / seatbelt 3.">Day</th>';
+    // Day and Events sit together on the left: at 16 columns a trailing Total
+    // fell off the right edge of a 1400px screen, which is where it was least
+    // useful. The two summary numbers first, then the breakdown.
+    var h='<table class="dy-t"><thead><tr><th>Driver</th><th class="c" title="Severity-weighted total for the day. Collision 50, near collision 30, phone 8, speeding 1-12 by how far over, sustained tailgating 5, distraction 4, braking / rolling stop / seatbelt 3.">Day</th><th class="r">Events</th>';
     COLS.forEach(function(c){ h+='<th class="r">'+esc(c.label)+'</th>'; });
-    h+='<th class="r">Total</th></tr></thead><tbody>';
+    h+='</tr></thead><tbody>';
     rows.forEach(function(d){
       var tot=d.events.length;
-      h+='<tr'+(tot?'':' class="quiet"')+'><td class="name">'+esc(d.name)+
-         (d.unusual?'<span class="dy-flag" title="Well above this driver\'s own last '+BASE_DAYS+' days">unusual for them</span>':'')+'</td>'+
-         '<td class="c"><span class="dy-sev '+sevClass(d.w)+'">'+f0(d.w)+'</span></td>';
+      h+='<tr'+(tot?'':' class="quiet"')+'><td class="name">'+esc(d.name)+'</td>'+
+         '<td class="c"><span class="dy-sev '+sevClass(d.w)+'">'+f0(d.w)+'</span></td>'+
+         '<td class="r">'+(tot||'<span class="dy-cell z">·</span>')+'</td>';
       COLS.forEach(function(c){ var n=d.n[c.id]||0; h+='<td class="dy-cell'+(n?'':' z')+'">'+(n||'·')+'</td>'; });
-      h+='<td class="r">'+tot+'</td></tr>';
+      h+='</tr>';
     });
     return h+'</tbody></table>';
   }
@@ -441,7 +450,7 @@ geotab.addin.dailyReview = function () {
     // speeding (read off GPS); other events link to the truck's map instead.
     var need=evs.filter(function(e){ return e.lat!=null; }).slice(0,ADDRESS_CAP);
     function draw(addr){
-      var h='<table class="dy-t"><thead><tr><th>When</th><th>Driver</th><th>What</th><th>How bad</th><th>Where</th><th>Truck</th><th></th></tr></thead><tbody>';
+      var h='<table class="dy-t"><thead><tr><th>When</th><th>Driver</th><th>What</th><th>How bad</th><th>Where</th><th>Truck</th><th>Open</th></tr></thead><tbody>';
       evs.forEach(function(e){
         var name = e.drv ? (ctx.uname[e.drv]||e.drv) : '<span class="dy-chip">no driver</span>';
         h+='<tr><td class="dy-when">'+fmtTime(e.from, ctx.tz)+'</td>'+
@@ -450,7 +459,10 @@ geotab.addin.dailyReview = function () {
            '<td class="dy-how'+(e.w>=8?' hot':'')+'">'+howBad(e)+'</td>'+
            '<td class="dy-where">'+(e.lat!=null ? esc(addr[e.lat+','+e.lon]||'') : '')+'</td>'+
            '<td><a class="dy-link" href="'+esc(deviceUrl(e.dev))+'" target="_blank" rel="noopener">'+esc(ctx.devName[e.dev]||e.dev)+'</a></td>'+
-           '<td><a class="dy-link" href="'+esc(eventUrl(e.dev,e.from,e.to))+'" target="_blank" rel="noopener">open</a></td></tr>';
+           '<td><a class="dy-link" href="'+esc(tripUrl(e.dev,e.from,e.to))+'" target="_blank" rel="noopener" '+
+             'title="Trip History for this truck, the ten minutes around the event">trip</a> &middot; '+
+             '<a class="dy-link" href="'+esc(eventUrl(e.dev,e.from,e.to))+'" target="_blank" rel="noopener" '+
+             'title="The exception itself, in Exceptions Insights">event</a></td></tr>';
       });
       el('dy-events').innerHTML=h+'</tbody></table>';
     }
@@ -476,12 +488,11 @@ geotab.addin.dailyReview = function () {
     return '<p><b>What this page is.</b> One branch, one day, every driver. Rows are ordered by how bad the day was, '+
       'not by how many things happened: one <b>+22 in a 35</b> outranks ten brief tailgates. There are no scores or '+
       'company ranks here on purpose &mdash; those need 30 days of miles. An event needs none.</p>'+
-      '<p><b>Speeding</b> is read off the truck&rsquo;s own GPS: the peak speed inside the event against the posted limit '+
+      '<p><b>Speeding</b> is read off the truck&rsquo;s own GPS: the worst point inside the event against the posted limit '+
       'in force at that moment. The three speeding rules are merged first, because most events fire two of them. '+
       '<b>Tailgating</b> counts as sustained at '+SUSTAINED_TAILGATE_S+' seconds; most events are a 4-second merge. '+
-      '<b>Unusual for them</b> compares today to the driver&rsquo;s own last '+BASE_DAYS+' days &mdash; it flags, it never hides.</p>'+
-      '<p><b>Eating and fatigue</b> are listed and worth nothing. '+
-      (ctx.unknownRule ? ctx.unknownRule+' events from deleted rules were ignored. ' : '')+
+      'A driver with nothing listed drove a branch truck in the last '+BASE_DAYS+' days and had a clean day.</p>'+
+      '<p>'+(ctx.unknownRule ? ctx.unknownRule+' events from deleted rules were ignored. ' : '')+
       'Days run 4am to 4am in the branch&rsquo;s own time zone.</p>';
   }
 
@@ -497,10 +508,10 @@ geotab.addin.dailyReview = function () {
   }
   function exportCsv(){
     if(!lastRows.length) return;
-    var head=['Driver','DaySeverity','UnusualForThem'].concat(COLS.map(function(c){ return c.label.replace(/[^A-Za-z]/g,''); })).concat(['Total']);
+    var head=['Driver','DaySeverity','Events'].concat(COLS.map(function(c){ return c.label.replace(/[^A-Za-z]/g,''); }));
     var lines=[head.join(',')].concat(lastRows.map(function(d){
-      return ['"'+String(d.name).replace(/"/g,'""')+'"', Math.round(d.w), d.unusual?'yes':'']
-        .concat(COLS.map(function(c){ return d.n[c.id]||0; })).concat([d.events.length]).join(',');
+      return ['"'+String(d.name).replace(/"/g,'""')+'"', Math.round(d.w), d.events.length]
+        .concat(COLS.map(function(c){ return d.n[c.id]||0; })).join(',');
     }));
     var blob=new Blob([lines.join('\n')],{type:'text/csv'}), a=document.createElement('a');
     a.href=URL.createObjectURL(blob); a.download='yesterday-'+office.toLowerCase().replace(/[^a-z0-9]+/g,'-')+'-'+dateStr+'.csv';
