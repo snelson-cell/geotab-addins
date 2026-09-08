@@ -236,9 +236,10 @@ geotab.addin.fleetRegister = function () {
     });
 
     rows.forEach(function(r){
-      r.status = r.vinned ? (r.comms ? 'In service' : 'No recent contact')
-               : r.engVin ? 'VIN not recorded'
-               : 'Not commissioned';
+      r.status = !r.vinned && !r.engVin ? 'Not commissioned'
+               : !r.comms ? 'No recent contact'
+               : r.vinned ? 'In service'
+               : 'VIN not recorded';
       // Default order puts working vehicles first. Sorting by truck number
       // alone buried them under 346 uncommissioned boxes still named after
       // their own serial, which is the least useful thing to open on.
@@ -393,9 +394,11 @@ geotab.addin.fleetRegister = function () {
     });
 
     var foot=[];
-    foot.push('<b>VIN not recorded</b> = the GO9 is in a vehicle and reading a VIN off ' +
-      'the engine, but nobody has entered that VIN on the asset in Geotab. The reported VIN ' +
-      'is in the VIN column in grey \u2014 copy it onto the asset and the truck commissions itself.');
+    foot.push('<b>VIN not recorded</b> = the GO9 is in a vehicle, reporting today, and ' +
+      'reading a VIN off the engine, but nobody has entered that VIN on the asset in Geotab. ' +
+      'The reported VIN is in the VIN column in grey \u2014 copy it onto the asset and the ' +
+      'truck commissions itself. A box that has gone quiet says <b>No recent contact</b> ' +
+      'instead, because the VIN it last read is the truck it used to be in.');
     foot.push('<b>Not commissioned</b> = a GO9 registered in Geotab that has never reported ' +
       'a VIN from any vehicle \u2014 a box on a shelf. Vehicles that have not reached Geotab ' +
       'at all are not on this page; <a class="fr-link" data-p="rollout">GO9 &amp; Camera ' +
