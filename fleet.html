@@ -53,7 +53,7 @@ geotab.addin.fleetRegister = function () {
   // Default order puts working vehicles first — sorting by truck number alone
   // buried them under 356 uncommissioned boxes still named after their serial.
   var STATUS_RANK = { 'In service':'1', 'No recent contact':'2',
-                      'Not commissioned':'3' };
+                      'VIN not recorded':'3', 'Not commissioned':'4' };
 
   var C = { ink:'#0b0b0b', sub:'#52514e', line:'#e1e0d9',
             good:'#0ca30c', watch:'#fab219', bad:'#d03b3b', accent:'#185FA5' };
@@ -99,6 +99,7 @@ geotab.addin.fleetRegister = function () {
     '.fr-own-Rental{background:#faeede;color:#854f0b;}',
     '.fr-own-Unconfirmed{background:#f1efe8;color:#5f5e5a;}',
     '.fr-st{font-size:12px;}',
+    '.fr-envin{color:' + C.sub + ';font-style:italic;}',
     '.fr-st b{font-weight:600;}',
     '.fr-yes{color:' + C.good + ';font-weight:600;}',
     '.fr-no{color:' + C.bad + ';}',
@@ -144,7 +145,7 @@ geotab.addin.fleetRegister = function () {
     return (titleish(mk)+' '+titleish(md)).trim();
   }
 
-  var apiRef=null, stateRef=null, rows=[], sortKey='rank', sortDir=1;
+  var apiRef=null, stateRef=null, rows=[], sortKey='rank', sortDir=1, archivedCount=0;
 
   function load(){
     apiRef.multiCall([
@@ -190,11 +191,25 @@ geotab.addin.fleetRegister = function () {
       return o;
     }
 
+    // A device Geotab has archived keeps coming back from Get with its serial
+    // blanked to 000-000-0000 and activeTo in the past. Left in, every rental
+    // ever handed back still counts as a vehicle on this page.
+    var nowMs = Date.now();
+    archivedCount = 0;
+    devices = devices.filter(function(d){
+      var to = d && d.activeTo ? Date.parse(d.activeTo) : NaN;
+      if(to && to < nowMs){ archivedCount++; return false; }
+      return true;
+    });
+
     rows=[];
     var seen={};
     devices.forEach(function(d){
       var vin=(d.vehicleIdentificationNumber||'').trim().toUpperCase();
       if(vin) seen[vin]=true;
+      var engVin=(d.engineVehicleIdentificationNumber||'').trim().toUpperCase();
+      // Geotab fills the reported VIN with @ until the box has read the bus.
+      if(engVin.length!==17 || engVin.indexOf('@')>=0) engVin='';
       var cp=cprops(d);
       var st=stByDev[d.id];
       var office=null;
@@ -216,13 +231,14 @@ geotab.addin.fleetRegister = function () {
         driver: drv,
         lastSeen: st ? st.dateTime : '',
         comms: st ? !!st.isDeviceCommunicating : false,
-        vinned: !!vin, cp: cp
+        vinned: !!vin, engVin: engVin, cp: cp
       });
     });
 
     rows.forEach(function(r){
-      r.status = !r.vinned ? 'Not commissioned'
-               : r.comms   ? 'In service' : 'No recent contact';
+      r.status = r.vinned ? (r.comms ? 'In service' : 'No recent contact')
+               : r.engVin ? 'VIN not recorded'
+               : 'Not commissioned';
       // Default order puts working vehicles first. Sorting by truck number
       // alone buried them under 346 uncommissioned boxes still named after
       // their own serial, which is the least useful thing to open on.
@@ -260,7 +276,7 @@ geotab.addin.fleetRegister = function () {
       if(ow && r.own!==ow) return false;
       if(st && r.status!==st) return false;
       if(q){
-        var hay=(r.truck+' '+r.vin+' '+r.driver+' '+r.plate+' '+r.model).toLowerCase();
+        var hay=(r.truck+' '+r.vin+' '+r.engVin+' '+r.driver+' '+r.plate+' '+r.model).toLowerCase();
         if(hay.indexOf(q)<0) return false;
       }
       return true;
@@ -292,9 +308,9 @@ geotab.addin.fleetRegister = function () {
     // KPIs describe what is on screen, not the whole fleet — otherwise
     // picking a location changes the table but leaves the headline numbers
     // describing something the viewer can no longer see.
-    var t={ total:list.length, vinned:0, service:0, camera:0 };
+    var t={ total:list.length, vinned:0, service:0, camera:0, engOnly:0 };
     list.forEach(function(r){
-      if(r.vinned) t.vinned++;
+      if(r.vinned) t.vinned++; else if(r.engVin) t.engOnly++;
       if(r.status==='In service') t.service++;
       if(r.camera) t.camera++;
     });
@@ -306,8 +322,13 @@ geotab.addin.fleetRegister = function () {
       ' vehicles · live from Geotab';
 
     el('fr-kpis').innerHTML=[
-      kpi(narrowed ? 'Vehicles — '+where : 'Vehicles', f0(t.total),
-          f0(t.vinned)+' commissioned, '+f0(t.total-t.vinned)+' not yet'),
+      kpi(narrowed ? 'Vehicles — '+where : 'Vehicles', f0(t.total), (function(){
+            var bits=[f0(t.vinned)+' commissioned'];
+            if(t.engOnly) bits.push(f0(t.engOnly)+' VIN not recorded');
+            var never=t.total-t.vinned-t.engOnly;
+            if(never) bits.push(f0(never)+' never installed');
+            return bits.join(', ');
+          })()),
       kpi('Owned', f0(own['Owned']||0),
           t.total ? Math.round(100*(own['Owned']||0)/t.total)+'% of these vehicles' : '—'),
       kpi('Rental', f0(own['Rental']||0), f0(own['Unconfirmed']||0)+' unconfirmed'),
@@ -334,7 +355,11 @@ geotab.addin.fleetRegister = function () {
       h.push('<td>'+(r.id?'<a class="fr-link" data-d="'+esc(r.id)+'">':'')+
              esc(r.truck||'&mdash;')+(r.id?'</a>':'')+'</td>');
       h.push('<td>'+esc(r.model||'')+'</td><td>'+esc(r.year||'')+'</td>');
-      h.push('<td title="'+esc(r.vin)+'">'+esc(r.vin?r.vin.slice(-6):'')+'</td>');
+      h.push(r.vin
+        ? '<td title="'+esc(r.vin)+'">'+esc(r.vin.slice(-6))+'</td>'
+        : r.engVin
+          ? '<td class="fr-envin" title="'+esc(r.engVin)+' &mdash; reported by the vehicle, not entered in Geotab">'+esc(r.engVin.slice(-6))+'</td>'
+          : '<td></td>');
       h.push('<td><span class="fr-tag fr-own-'+esc(r.own||'Unconfirmed')+'">'+esc(r.own||'?')+'</span></td>');
       h.push('<td>'+esc(r.office||'')+'</td>');
       h.push('<td class="fr-st">'+esc(r.status)+'</td>');
@@ -368,10 +393,15 @@ geotab.addin.fleetRegister = function () {
     });
 
     var foot=[];
-    foot.push('<b>Not commissioned</b> = a GO9 registered in Geotab that has never ' +
-      'reported a VIN — it is not plugged into a vehicle. Vehicles that have not reached ' +
-      'Geotab at all are not on this page; <a class="fr-link" data-p="rollout">GO9 &amp; ' +
-      'Camera Rollout</a> tracks those by location.');
+    foot.push('<b>VIN not recorded</b> = the GO9 is in a vehicle and reading a VIN off ' +
+      'the engine, but nobody has entered that VIN on the asset in Geotab. The reported VIN ' +
+      'is in the VIN column in grey \u2014 copy it onto the asset and the truck commissions itself.');
+    foot.push('<b>Not commissioned</b> = a GO9 registered in Geotab that has never reported ' +
+      'a VIN from any vehicle \u2014 a box on a shelf. Vehicles that have not reached Geotab ' +
+      'at all are not on this page; <a class="fr-link" data-p="rollout">GO9 &amp; Camera ' +
+      'Rollout</a> tracks those by location.');
+    if(archivedCount) foot.push(f0(archivedCount)+' archived '+(archivedCount===1?'device is':'devices are')+
+      ' left off this page entirely \u2014 a GO9 pulled out of a returned rental is not a vehicle.');
     foot.push('<b>Unconfirmed</b> ownership means the VIN is in Geotab but not on the ' +
       'Enterprise export and the vehicle is not named as a rental — almost ' +
       'always a new delivery the monthly export has not caught up with. It is deliberately ' +
@@ -390,12 +420,12 @@ geotab.addin.fleetRegister = function () {
 
   function exportCsv(){
     var list=filtered();
-    var head=['Truck #','Model','Year','VIN','Ownership','Location','Status','Driver',
+    var head=['Truck #','Model','Year','VIN','Reported VIN','Ownership','Location','Status','Driver',
       'Plate','Plate State','Plate Type','Reg Expiration','Camera']
       .concat(BOOL_PROPS).concat(['Check-Out Form Link']);
     var lines=[head.join(',')];
     list.forEach(function(r){
-      var v=[r.truck,r.model,r.year,r.vin,r.own,r.office,r.status,r.driver,
+      var v=[r.truck,r.model,r.year,r.vin,r.engVin,r.own,r.office,r.status,r.driver,
         r.plate,r.plateState,r.cp['Plate Type']||'',r.cp['Reg Expiration']||'',
         r.camera?'TRUE':'FALSE']
         .concat(BOOL_PROPS.map(function(p){ return r.cp[p]==null?'':String(r.cp[p]).toUpperCase(); }))
