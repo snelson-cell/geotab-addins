@@ -187,6 +187,37 @@ geotab.addin.vehicleHealth = function () {
     DiagnosticDisabledExcessiveAccelerometerDataId:             'accelerometer — check install',
     DiagnosticCanBusShortId:                                    'engine comms — short circuit'
   };
+
+  // These diagnostics are EVENTS, not states. Geotab writes a row when the box
+  // loses power and never writes a matching "plugged back in", so faultState
+  // stays Active on that row for ever. Reading any Active row as a live problem
+  // said "device unplugged" about 61 vehicles on 2026-09-10 and every one of
+  // them had reported since -- including ATN-5, whose seven events all landed
+  // inside one 2.5-hour window six days earlier and which was sending odometer
+  // readings the moment it was flagged. Same for low voltage: 17 flagged, 17
+  // already back. So a raw Active row means "this happened", never "this is".
+  //
+  // Two questions are worth asking of it instead.
+  //
+  //   Is it still down?  The event is newer than the device's last contact.
+  //                      That is a real, current fault.
+  //   Does it keep happening?  Events on RECUR_DAYS or more SEPARATE days.
+  //
+  // Distinct days, not event count, because count alone cannot tell a failing
+  // harness from one bad afternoon. Measured over the same week: 14 trucks lost
+  // power on 3+ separate days (A27243 on six, DET-148 on five), while ATN-5's
+  // seven events were one session and LOU-107's thirty-three spanned two days.
+  // Counting events would have ranked ATN-5 above ATS-102, which dropped power
+  // on three different days and is the one with an actual install problem.
+  var RECUR_DAYS = 3;
+  var DEV_RECUR = {
+    DiagnosticDeviceHasBeenUnpluggedId:                         'power dropping out',
+    DiagnosticDeviceRestartedBecauseOfLowVoltageInPowerSupplyId:'low voltage recurring',
+    'a6cIJwNbaQEG4DH_pZy-mSQ':                                  'low voltage recurring',
+    DiagnosticInvalidGpsMessagesReceivedId:                     'GPS dropping out',
+    DiagnosticDisabledExcessiveAccelerometerDataId:             'accelerometer resetting',
+    DiagnosticCanBusShortId:                                    'engine comms dropping out'
+  };
   // Device chatter nobody can act on: normal power cycling, modem and radio
   // restarts, watchdog resets. "All power removed" alone fires on 208 of 387
   // vehicles, which is what turned the attention list into the whole fleet.
@@ -375,14 +406,39 @@ geotab.addin.vehicleHealth = function () {
         if(d && typeof d==='object' && d.id && d.id!=='UnknownDriverId') assignedTo[id]=d.id;
         if(s.dateTime) lastComm[id]=new Date(s.dateTime);
       });
-      var faultCount={}, devIssue={};
+      // Keep WHEN each device fault happened, not just that it did — the
+      // decision below needs the newest one and how many separate days it
+      // covers. See DEV_ACTION for why.
+      var faultCount={}, devEvents={};
       faults.forEach(function(f){
         var id=(f.device||{}).id; if(!id || String(f.faultState)!=='Active') return;
         var dg=(f.diagnostic||{}).id;
-        if(DEV_ACTION[dg]){ (devIssue[id]=devIssue[id]||{})[DEV_ACTION[dg]]=true; return; }
+        if(DEV_ACTION[dg]){
+          var t=f.dateTime||'';
+          if(!t) return;
+          var byDg=(devEvents[id]=devEvents[id]||{});
+          var e=(byDg[dg]=byDg[dg]||{days:{}, last:''});
+          e.days[t.slice(0,10)]=1;
+          if(t>e.last) e.last=t;
+          return;
+        }
         if(DEV_NOISE[dg]) return;
         faultCount[id]=(faultCount[id]||0)+1;
       });
+
+      // A device fault counts as live only if the box has not been heard from
+      // since, and as a maintenance job only if it recurs across days.
+      function deviceIssues(id, lastSeen){
+        var byDg=devEvents[id], out=[];
+        if(!byDg) return out;
+        var lastIso = lastSeen ? new Date(lastSeen).toISOString() : '';
+        Object.keys(byDg).forEach(function(dg){
+          var e=byDg[dg], nDays=Object.keys(e.days).length;
+          if(!lastIso || e.last > lastIso){ out.push(DEV_ACTION[dg]); return; }
+          if(nDays>=RECUR_DAYS) out.push(DEV_RECUR[dg]+' — '+nDays+' days');
+        });
+        return out;
+      }
 
       var veh={};
       devices.forEach(function(d){
@@ -394,7 +450,7 @@ geotab.addin.vehicleHealth = function () {
                    camera:!!camSerial[(d.serialNumber||'').trim()],
                    driver:drvName[assignedTo[d.id]]||'', last:lastComm[d.id]||null,
                    faults:faultCount[d.id]||0,
-                   devIssues:Object.keys(devIssue[d.id]||{}),
+                   devIssues:deviceIssues(d.id, lastComm[d.id]||null),
                    miles:0, odo:null, odoAt:null, oil:null, oilAt:null, tire:{}, tireAt:null};
       });
       if(!Object.keys(veh).length){
@@ -543,7 +599,7 @@ geotab.addin.vehicleHealth = function () {
       kpi('Tire alerts', tire.length ? '#fab219' : null, String(tire.length),
           'a corner low, or the set uneven') +
       kpi('Device problems', devbad.length ? '#d03b3b' : null, String(devbad.length),
-          'unplugged, low voltage or bad install') +
+          'still down, or losing power repeatedly') +
       kpi('Fault codes', null, String(fault.length),
           'vehicles with an active DTC &middot; <span class="muted">no severity available</span>') +
       kpi('Not measurable', blind.length ? '#898781' : null, String(blind.length),
@@ -685,10 +741,17 @@ geotab.addin.vehicleHealth = function () {
       '<p><b>Fault codes are shown but do not drive the attention list.</b> Geotab reports 3,939 '+
       'active faults across 297 vehicles with <i>severity null on every one</i>, and the warning-lamp '+
       'fields it would normally rank them by are never populated on light-duty OBD. Counting them '+
-      'would flag most of the fleet. <b>Device problems do</b> drive it &mdash; unplugged, low '+
-      'supply voltage, bad install &mdash; because each is a specific job, and because a vehicle '+
-      'that is not talking cannot be managed at all. Routine device chatter (power cycling, modem '+
-      'restarts) is filtered out: "all power removed" alone fires on 208 of 387 vehicles.</p>'+
+      'would flag most of the fleet. <b>Device problems do</b> drive it, because each is a '+
+      'specific job and a vehicle that is not talking cannot be managed at all. Routine device '+
+      'chatter (power cycling, modem restarts) is filtered out: "all power removed" alone fires '+
+      'on 208 of 387 vehicles.</p>'+
+      '<p><b>A device problem is not just that something happened once.</b> Geotab logs an '+
+      'unplug or a low-voltage restart as an event and never logs the recovery, so the record '+
+      'stays flagged for ever. Reading those literally called 61 vehicles unplugged on 10 '+
+      'September when every one of them was reporting normally. A vehicle is listed here only '+
+      'if it has <b>not been heard from since</b> the fault, or if the fault recurs on <b>three '+
+      'or more separate days</b> &mdash; which is what separates a failing harness from an '+
+      'afternoon in the shop.</p>'+
       '<p><b>Open</b> takes you to the asset in MyGeotab, where a work request can be raised '+
       'against it. Nothing on this page writes to Geotab.</p>';
   }
