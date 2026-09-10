@@ -338,7 +338,10 @@ geotab.addin.vehicleHealth = function () {
       ['Get', {typeName:'DeviceStatusInfo'}],
       ['Get', {typeName:'FaultData', resultsLimit:ROW_LIMIT,
                search:{fromDate:new Date(to.getTime()-7*24*3600*1000).toISOString(),
-                       toDate:to.toISOString()}}]
+                       toDate:to.toISOString()}}],
+      // Drivers, so the table can name whoever holds each truck rather than
+      // only saying whether somebody does.
+      ['Get', {typeName:'User', search:{isDriver:true}}]
     ], function(res){
       // Drop archived vehicles. Geotab returns them from a plain Device Get, and
       // counting them inflated the fleet with trucks that no longer exist: 15
@@ -350,7 +353,12 @@ geotab.addin.vehicleHealth = function () {
         var t=d && d.activeTo;
         return !t || new Date(t).getTime() > now_;
       });
-      var cameras=res[1]||[], status=res[2]||[], faults=res[3]||[];
+      var cameras=res[1]||[], status=res[2]||[], faults=res[3]||[], users=res[4]||[];
+
+      var drvName={};
+      users.forEach(function(u){
+        if(u && u.id) drvName[u.id]=((u.firstName||'')+' '+(u.lastName||'')).trim();
+      });
 
       // Camera records key off the GO device SERIAL NUMBER, not the device id.
       var camSerial={};
@@ -358,11 +366,13 @@ geotab.addin.vehicleHealth = function () {
         var s=(c && c.deviceSerialNumber || '').trim();
         if(s) camSerial[s]=true;
       });
-      var assigned={}, lastComm={};
+      // The driver is an object when somebody is assigned and the bare string
+      // 'UnknownDriverId' when nobody is, so it has to be type-checked.
+      var assignedTo={}, lastComm={};
       status.forEach(function(s){
         var id=(s.device||{}).id; if(!id) return;
         var d=s.driver;
-        if(d && typeof d==='object' && d.id && d.id!=='UnknownDriverId') assigned[id]=true;
+        if(d && typeof d==='object' && d.id && d.id!=='UnknownDriverId') assignedTo[id]=d.id;
         if(s.dateTime) lastComm[id]=new Date(s.dateTime);
       });
       var faultCount={}, devIssue={};
@@ -382,7 +392,7 @@ geotab.addin.vehicleHealth = function () {
         veh[d.id]={id:d.id, name:d.name||d.id, office:off,
                    model:makeModel(d.vinInfoMake, d.vinInfoModel),
                    camera:!!camSerial[(d.serialNumber||'').trim()],
-                   assigned:!!assigned[d.id], last:lastComm[d.id]||null,
+                   driver:drvName[assignedTo[d.id]]||'', last:lastComm[d.id]||null,
                    faults:faultCount[d.id]||0,
                    devIssues:Object.keys(devIssue[d.id]||{}),
                    miles:0, odo:null, odoAt:null, oil:null, oilAt:null, tire:{}, tireAt:null};
@@ -547,9 +557,9 @@ geotab.addin.vehicleHealth = function () {
     el('vh-title').textContent = (attnOnly ? 'Needs attention (' : 'Vehicles (')+rows.length+')';
 
     var head='<table class="vh-t"><thead><tr>'+
-      '<th>Vehicle</th><th>Branch</th><th>Model</th><th class="r">Odometer</th><th class="r">Mi/day</th>'+
+      '<th>Vehicle</th><th>Branch</th><th>Model</th><th>Driver</th><th class="r">Odometer</th><th class="r">Mi/day</th>'+
       '<th>Oil life</th><th class="c">Service</th><th>Tires</th><th class="c">Fault codes</th><th>Device</th>'+
-      '<th class="c">Camera</th><th class="c">Driver</th><th class="c">Last heard</th>'+
+      '<th class="c">Camera</th><th class="c">Last heard</th>'+
       '<th class="c">Open</th></tr></thead><tbody>';
     var body=rows.map(function(v){
       var cls = v.a.severity>=3 ? ' class="bad"' : (v.a.severity>0 ? ' class="act"' : '');
@@ -563,6 +573,7 @@ geotab.addin.vehicleHealth = function () {
           })()+'</td>'+
         '<td>'+esc(v.office)+'</td>'+
         '<td>'+(v.model?esc(v.model):'&mdash;')+'</td>'+
+        '<td>'+(v.driver?esc(v.driver):'&mdash;')+'</td>'+
         '<td class="r">'+(v.odo!=null ? f0(v.odo)+' <span class="vh-age">'+ageText(now-v.odoAt)+'</span>' : '&mdash;')+'</td>'+
         '<td class="r">'+(v.miles>0 ? v.mpd.toFixed(0) : '<span class="vh-age">0</span>')+'</td>'+
         '<td>'+oilCell(v)+'</td>'+
@@ -573,7 +584,6 @@ geotab.addin.vehicleHealth = function () {
         '<td>'+(v.devIssues.length ? '<span class="vh-pill bad">'+esc(v.devIssues[0])+'</span>'
                                    : '<span class="vh-age">ok</span>')+'</td>'+
         '<td class="c">'+(v.camera?'yes':'<span class="vh-age">no</span>')+'</td>'+
-        '<td class="c">'+(v.assigned?'yes':'<span class="vh-pill warn">none</span>')+'</td>'+
         '<td class="c">'+(v.quiet ? '<span class="vh-pill bad">'+(v.last?ageText(now-v.last.getTime()):'never')+'</span>'
                                   : '<span class="vh-age">'+(v.last?ageText(now-v.last.getTime()):'never')+'</span>')+'</td>'+
         '<td class="c"><a class="vh-link" target="_blank" rel="noopener" '+
@@ -587,7 +597,7 @@ geotab.addin.vehicleHealth = function () {
     el('vh-blind-title').textContent='Not reporting maintenance data ('+blind.length+')';
     el('vh-blind').innerHTML = blind.length
       ? '<table class="vh-t"><thead><tr><th>Vehicle</th><th>Branch</th><th>Model</th>'+
-        '<th class="r">Odometer</th>'+
+        '<th>Driver</th><th class="r">Odometer</th>'+
         '<th class="r">Mi/day</th><th class="c">Last heard</th></tr></thead><tbody>'+
         blind.sort(function(a,b){ return b.miles-a.miles; }).map(function(v){
           var bu = deviceUrl(v.id, 'health');
@@ -596,6 +606,7 @@ geotab.addin.vehicleHealth = function () {
                 'title="Open this vehicle&rsquo;s Maintenance tab in a new tab">'+esc(v.name)+'</a>'
               : esc(v.name))+'</td><td>'+esc(v.office)+'</td>'+
               '<td>'+(v.model?esc(v.model):'&mdash;')+'</td>'+
+              '<td>'+(v.driver?esc(v.driver):'&mdash;')+'</td>'+
             '<td class="r">'+(v.odo!=null?f0(v.odo):'&mdash;')+'</td>'+
             '<td class="r">'+(v.miles>0?v.mpd.toFixed(0):'0')+'</td>'+
             '<td class="c"><span class="vh-age">'+(v.last?ageText(now-v.last.getTime()):'never')+'</span></td></tr>';
@@ -728,17 +739,18 @@ geotab.addin.vehicleHealth = function () {
 
   function exportCsv(){
     if(!lastRows.length) return;
-    var head=['Vehicle','Branch','Model','Odometer_mi','MilesPerDay','OilLife_pct','ServiceInDays',
-              'TireMin_psi','TireSpread_psi','ActiveFaults','DeviceIssues','Camera','DriverAssigned',
+    var head=['Vehicle','Branch','Model','Driver','Odometer_mi','MilesPerDay','OilLife_pct','ServiceInDays',
+              'TireMin_psi','TireSpread_psi','ActiveFaults','DeviceIssues','Camera',
               'LastHeard_hours','Flags'];
     var now=DATA.to.getTime();
     var lines=[head.join(',')].concat(lastRows.map(function(v){
       return ['"'+String(v.name).replace(/"/g,'""')+'"','"'+v.office+'"',
         '"'+String(v.model||'').replace(/"/g,'""')+'"',
+        '"'+String(v.driver||'').replace(/"/g,'""')+'"',
         v.odo!=null?Math.round(v.odo):'', v.mpd.toFixed(1),
         v.oil!=null?v.oil.toFixed(1):'', v.oilDays!=null?v.oilDays:'',
         v.tireMin!=null?v.tireMin.toFixed(1):'', v.tireSpread!=null?v.tireSpread.toFixed(1):'',
-        v.faults, v.camera?'yes':'no', v.assigned?'yes':'no',
+        v.faults, '"'+v.devIssues.join(' ')+'"', v.camera?'yes':'no',
         v.last?Math.round((now-v.last.getTime())/3600000):'', '"'+v.a.flags.join(' ')+'"'].join(',');
     }));
     var blob=new Blob([lines.join('\n')],{type:'text/csv;charset=utf-8;'});
