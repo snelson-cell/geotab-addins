@@ -724,7 +724,7 @@ geotab.addin.driverScorecard = function () {
         var drv = {}, unattributed = 0;
         function ensure(id, office){
           if(!drv[id]) drv[id] = {id:id, name:uname[id]||id, office:office,
-                                  archived:!!gone[id], miles:0, ev:{}, rate:{}, pct:{}, rawPct:{}};
+                                  archived:!!gone[id], miles:0, ev:{}, corner:[], rate:{}, pct:{}, rawPct:{}};
           return drv[id];
         }
         trips.forEach(function(t){
@@ -739,6 +739,10 @@ geotab.addin.driverScorecard = function () {
           var off = devOffice[(e.device||{}).id]; if(!off) return;
           var id = driverId(e.driver); if(!id) return;
           ensure(id, off).ev[metric] = (ensure(id, off).ev[metric]||0) + 1;
+          // Kept only so the column beside Cornering can look up the speed at
+          // each event. Nothing in scoring reads it.
+          if(metric === 'Cornering' && e.activeFrom)
+            ensure(id, off).corner.push({dev:(e.device||{}).id, t:e.activeFrom});
         });
         return {drv:drv, unattributed:unattributed};
       }
@@ -1094,6 +1098,10 @@ geotab.addin.driverScorecard = function () {
 
     var rows = view;
     el('ds-title').textContent = 'Ranked drivers ('+rows.length+')';
+    var viewOffices = {};
+    rows.forEach(function(d){ viewOffices[d.office] = 1; });
+    var cornerLive = Object.keys(viewOffices).length === 1;
+    if(cornerLive) queueCornerLookups(rows);
 
     var head = '<table class="ds-t"><thead><tr>'+
       '<th class="r">#</th><th>Driver</th><th>Location</th>'+
@@ -1103,7 +1111,13 @@ geotab.addin.driverScorecard = function () {
         // equally important, and a driver reading their row cannot tell why a
         // red cornering cell moved their score less than a pale speeding one.
         return '<th class="c">'+esc(m.id)+
-               '<span class="ds-wt">'+Math.round(m.w*100)+'%</span></th>';
+               '<span class="ds-wt">'+Math.round(m.w*100)+'%</span></th>'+
+          (m.id === 'Cornering'
+            ? '<th class="c" title="Cornering events taken above '+CORNER_FLOOR_MPH+' mph, per 1,000 '+
+              'miles. For comparison only: the score counts every cornering event.">Above '+
+              CORNER_FLOOR_MPH+' mph<span class="ds-wt">'+(cornerLive ? 'not scored' : 'pick an office')+
+              '</span></th>'
+            : '');
       }).join('')+
       '<th class="c">In office</th></tr></thead><tbody>';
     var body = rows.map(function(d){
@@ -1124,7 +1138,8 @@ geotab.addin.driverScorecard = function () {
             esc(d.name)+' — '+esc(m.id)+': '+d.rate[m.id].toFixed(1)+' per 1,000 mi ('+
             (d.ev[m.id]||0)+' events over '+f0(d.miles)+' mi). Color is this raw rate against '+
             'the fleet; the score also allows for how few miles they have driven.">'+
-            d.rate[m.id].toFixed(1)+'</td>';
+            d.rate[m.id].toFixed(1)+'</td>'+
+            (m.id === 'Cornering' ? cornerTd(d, cornerLive) : '');
         }).join('')+
         '<td class="c">'+d.officeRank+' of '+d.officeN+'</td></tr>';
     }).join('');
@@ -1155,6 +1170,90 @@ geotab.addin.driverScorecard = function () {
   // rather than describing it, because "your score is a weighted percentile"
   // means nothing to a manager and "17 speeding events is better than 72% of
   // the company" means everything.
+  // ── Cornering above 20 mph, per driver: live, NOT part of the score ─────
+  // The column beside Cornering. It needs the GPS speed at each cornering event,
+  // which Geotab only has in LogRecord, so it is looked up live -- and only when
+  // the table shows ONE office. All offices over 30 days is ~3,200 lookups, over
+  // three minutes of Geotab's 1,000-a-minute allowance; one office is a few
+  // hundred. Branch managers are scoped to their own office, so for them it is
+  // always on.
+  //
+  // Each lookup is a 60-second window around one event, a few KB, rather than a
+  // truck's whole day: whole days for ATL North over 30 days would pull ~128 MB
+  // of GPS into the browser. Lookups run through ONE queue, 100 per batch, batch
+  // starts at least 7.5 s apart (~800/min), so switching offices quickly can
+  // never outrun the limit. Speeds are cached per event, so they are fetched
+  // once per page load and revisiting an office is instant.
+  var CORNER_FLOOR_MPH = 20, CORNER_BATCH = 100, CORNER_GAP_MS = 7500, CORNER_WIN_MS = 30000;
+  var cornerMph = {};                 // 'device|activeFrom' -> mph, or null when no GPS point was near
+  var cornerQueue = [], cornerQueued = {}, cornerBusy = false, cornerLastStart = 0;
+  function cornerKey(c){ return c.dev+'|'+c.t; }
+  function queueCornerLookups(rows){
+    rows.forEach(function(d){ (d.corner||[]).forEach(function(c){
+      var k = cornerKey(c);
+      if((k in cornerMph) || cornerQueued[k]) return;
+      cornerQueued[k] = c; cornerQueue.push(k);
+    }); });
+    pumpCorner();
+  }
+  function nearestMph(logs, t){
+    var best = null, bd = Infinity;
+    (logs||[]).forEach(function(l){
+      var dd = Math.abs(Date.parse(l.dateTime) - t);
+      if(dd < bd){ bd = dd; best = l; }
+    });
+    return best && bd <= CORNER_WIN_MS ? (best.speed||0)*KM_TO_MI : null;
+  }
+  function pumpCorner(){
+    if(cornerBusy || !cornerQueue.length || !apiRef) return;
+    var wait = cornerLastStart + CORNER_GAP_MS - Date.now();
+    if(wait > 0){
+      cornerBusy = true;
+      setTimeout(function(){ cornerBusy = false; pumpCorner(); }, wait);
+      return;
+    }
+    cornerBusy = true; cornerLastStart = Date.now();
+    var keys = cornerQueue.splice(0, CORNER_BATCH);
+    var calls = keys.map(function(k){
+      var c = cornerQueued[k], t = Date.parse(c.t);
+      return ['Get', {typeName:'LogRecord', search:{deviceSearch:{id:c.dev},
+        fromDate:new Date(t-CORNER_WIN_MS).toISOString(), toDate:new Date(t+CORNER_WIN_MS).toISOString()}}];
+    });
+    function done(res){
+      keys.forEach(function(k, i){
+        cornerMph[k] = res ? nearestMph(res[i], Date.parse(cornerQueued[k].t)) : null;
+        delete cornerQueued[k];
+      });
+      cornerBusy = false;
+      render();                       // pure re-render; fills the cells in as batches land
+      pumpCorner();                   // keep draining even if the view has moved on
+    }
+    apiRef.multiCall(calls, function(res){ done(res); }, function(){ done(null); });
+  }
+  function cornerStats(d){
+    var s = {n:0, above:0, unknown:0, pending:0};
+    (d.corner||[]).forEach(function(c){
+      s.n++;
+      var k = cornerKey(c);
+      if(!(k in cornerMph)){ s.pending++; return; }
+      var v = cornerMph[k];
+      if(v == null) s.unknown++; else if(v > CORNER_FLOOR_MPH) s.above++;
+    });
+    s.rate = d.miles ? s.above/(d.miles/1000) : 0;
+    return s;
+  }
+  function cornerTd(d, live){
+    var muted = ' style="color:var(--ink-3)"';
+    if(!live) return '<td class="c"'+muted+' title="Pick one office to see cornering above '+
+      CORNER_FLOOR_MPH+' mph.">&middot;</td>';
+    var s = cornerStats(d);
+    if(s.pending) return '<td class="c"'+muted+' title="Looking up GPS speeds&hellip;">&hellip;</td>';
+    return '<td class="c"'+muted+' title="'+esc(d.name)+' &mdash; '+s.above+' of '+s.n+
+      ' cornering events above '+CORNER_FLOOR_MPH+' mph'+
+      (s.unknown ? ' ('+s.unknown+' with no GPS speed found)' : '')+
+      '. Not part of the score.">'+s.rate.toFixed(1)+'</td>';
+  }
+
   // ── Cornering above 20 mph: a preview, NOT part of the score ─────────────
   // The GPS cornering rule has no speed floor, so turning into a driveway counts
   // the same as a swerve at speed, and 63% of cornering fires below 20 mph.
@@ -1643,13 +1742,20 @@ geotab.addin.driverScorecard = function () {
     if(!lastRanked.length) return;
     var head = ['Rank','Driver','Location','Miles','Score','Trend','Provisional','OfficeRank','OfficeSize']
       .concat(METRICS.map(function(m){ return m.id+' per 1000mi'; }))
-      .concat(METRICS.map(function(m){ return m.id+' events'; }));
+      .concat(METRICS.map(function(m){ return m.id+' events'; }))
+      .concat(['Cornering above '+CORNER_FLOOR_MPH+'mph per 1000mi',
+               'Cornering above '+CORNER_FLOOR_MPH+'mph events']);
+    var csvOffices = {};
+    lastRanked.forEach(function(d){ csvOffices[d.office] = 1; });
+    var csvLive = Object.keys(csvOffices).length === 1;
     var lines = [head.join(',')].concat(lastRanked.map(function(d){
+      var cs = csvLive ? cornerStats(d) : null, ok = cs && !cs.pending;
       return [d.rank, '"'+String(d.name).replace(/"/g,'""')+'"', '"'+d.office+'"',
               Math.round(d.miles), d.score,
               d.trend.key, d.provisional?'yes':'no', d.officeRank, d.officeN]
         .concat(METRICS.map(function(m){ return d.rate[m.id].toFixed(2); }))
-        .concat(METRICS.map(function(m){ return d.ev[m.id]||0; })).join(',');
+        .concat(METRICS.map(function(m){ return d.ev[m.id]||0; }))
+        .concat(ok ? [cs.rate.toFixed(2), cs.above] : ['', '']).join(',');
     }));
     var blob = new Blob([lines.join('\n')], {type:'text/csv;charset=utf-8;'});
     var a = document.createElement('a');
