@@ -55,16 +55,6 @@ geotab.addin.scorecardV2Preview = function () {
   var CHANGED = ['Braking', 'Cornering', 'Acceleration'];
   var WEIGHT = {Speeding: '55%', Braking: '25%', Cornering: '10%', Acceleration: '10%'};
   var W = {Speeding: 0.55, Braking: 0.25, Cornering: 0.10, Acceleration: 0.10};   // must match scorecard.html METRICS
-  // Office tiers, by the office's event rate as a share of the company's. Fixed
-  // cut-offs so a manager can see why an office sits where it does; on the
-  // Sep 11 snapshot they give the same groups as the offices' overlapping
-  // 80% bootstrap rank ranges.
-  var TIERS = [
-    {name: 'Leading',     cls: 'lead',   upTo: 0.80,     say: '20% or more better than the company'},
-    {name: 'Middle',      cls: 'mid',    upTo: 1.20,     say: 'within 20% of the company'},
-    {name: 'Behind',      cls: 'behind', upTo: 2.00,     say: '20% to 100% worse'},
-    {name: 'Well behind', cls: 'far',    upTo: Infinity, say: 'more than twice the company rate'}
-  ];
   var PROBLEM_SHARE = 0.10;    // "problem driver" = in the company's worst 10% by V2 score
   var REASON = {
     under20: 'turns under 20 mph', jump: 'GPS position jumps', 'double': 'counted twice',
@@ -131,9 +121,6 @@ geotab.addin.scorecardV2Preview = function () {
     'td.chg{cursor:help;background:#f3f1ea;}',
     '.v2-mv{display:inline-block;font-size:12px;font-weight:650;}',
     '.v2-mv.up{color:var(--good-ink);} .v2-mv.down{color:var(--bad-ink);} .v2-mv.same{color:var(--ink-3);font-weight:500;}',
-    '.v2-tier{display:inline-block;font-size:11px;font-weight:700;padding:2px 9px;border-radius:20px;white-space:nowrap;}',
-    '.v2-tier.lead{background:#e3f1e5;color:var(--good-ink);} .v2-tier.mid{background:var(--grid);color:var(--ink-2);}',
-    '.v2-tier.behind{background:#fbf0d9;color:var(--warn-ink);} .v2-tier.far{background:#fbe4e1;color:var(--bad-ink);}',
     '.v2-pct{font-weight:650;} .v2-pct.better{color:var(--good-ink);} .v2-pct.worse{color:var(--bad-ink);} .v2-pct.avg{color:var(--ink-2);}',
     '.v2-explain{padding:12px 16px;font-size:12.5px;color:var(--ink-2);line-height:1.55;border-bottom:1px solid var(--grid);}',
     '.v2-explain b{color:var(--ink-1);font-weight:650;}',
@@ -151,10 +138,12 @@ geotab.addin.scorecardV2Preview = function () {
   function day(iso){ return new Date(iso).toLocaleDateString('en-US',
     {month:'short', day:'numeric', year:'numeric', timeZone:'UTC'}); }
   function note(html){ el('v2-note').innerHTML = html; el('v2-note').className = 'v2-note' + (html ? ' on' : ''); }
+  // MyGeotab can keep an earlier version's <style> in the document across a
+  // redeploy. Skipping when it exists left new rules unapplied, so refresh it.
   function injectStyles(){
-    if(document.getElementById(STYLE_ID)) return;
-    var s = document.createElement('style'); s.id = STYLE_ID; s.textContent = CSS;
-    document.head.appendChild(s);
+    var s = document.getElementById(STYLE_ID);
+    if(!s){ s = document.createElement('style'); s.id = STYLE_ID; document.head.appendChild(s); }
+    s.textContent = CSS;
   }
   function userUrl(id){ return location.origin + location.pathname + '#user,currentTab:user,id:' + id; }
 
@@ -227,10 +216,6 @@ geotab.addin.scorecardV2Preview = function () {
     if(p === 0) return {text: 'Average', cls: 'avg'};
     return p < 0 ? {text: (-p) + '% better', cls: 'better'} : {text: p + '% worse', cls: 'worse'};
   }
-  function tierOf(ratio){
-    for(var i = 0; i < TIERS.length; i++) if(ratio <= TIERS[i].upTo) return TIERS[i];
-    return TIERS[TIERS.length - 1];
-  }
 
   // Office score: every counted event and every mile in the office, per metric
   // as a share of the company's rate, then weighted like the driver score.
@@ -256,7 +241,7 @@ geotab.addin.scorecardV2Preview = function () {
       });
       var problem = list.filter(function(d){ return d.s2 <= cut; });
       return {office: o, drivers: list.length, miles: omi, ratio: ratio, parts: parts,
-              problem: problem, tier: tierOf(ratio), medRank: medRank[o]};
+              problem: problem, medRank: medRank[o]};
     });
     out.sort(function(a, b){ return a.ratio - b.ratio; });
     out.forEach(function(x, i){ x.rank = i + 1; });
@@ -270,10 +255,9 @@ geotab.addin.scorecardV2Preview = function () {
       '(speeding 55%, braking 25%, cornering 10%, acceleration 10%). <b>Better</b> means fewer safety events per mile than ' +
       'the company as a whole. Unlike the median driver, it counts the office&rsquo;s worst drivers, who produce roughly ' +
       'two-fifths of its events. <b>Problem drivers</b> are the office&rsquo;s drivers in the company&rsquo;s worst 10%. ' +
-      'Tiers: ' + TIERS.map(function(t){ return '<b>' + t.name + '</b> ' + t.say; }).join(', ') + '. ' +
-      'Ranks within a tier are mostly down to chance; a move between tiers is real. ' +
+      'Offices a few percent apart are within chance of each other. ' +
       'The scale is lopsided: an office can be at most 100% better, but has no limit on how much worse it can be.</div>';
-    h += '<table class="v2-t"><thead><tr><th class="r">#</th><th>Office</th><th>Tier</th>' +
+    h += '<table class="v2-t"><thead><tr><th class="r">#</th><th>Office</th>' +
       '<th class="r">vs company average<span class="sub">events per mile</span></th>' +
       '<th class="c grp">Problem drivers<span class="sub">in company worst 10%</span></th>' +
       '<th class="r grp">Drivers</th><th class="r">Miles</th>' +
@@ -286,7 +270,6 @@ geotab.addin.scorecardV2Preview = function () {
         (x.problem.length > named.length ? (named.length ? ', and ' : '') + (x.problem.length - named.length) +
          ' outside your login' : '') : 'None';
       h += '<tr><td class="rank">' + x.rank + '</td><td class="name">' + esc(x.office) + '</td>' +
-        '<td><span class="v2-tier ' + x.tier.cls + '" title="' + esc(x.tier.say) + '">' + x.tier.name + '</span></td>' +
         '<td class="r help" title="' + esc(detail) + '"><span class="v2-pct ' + w.cls + '">' + w.text + '</span></td>' +
         '<td class="c grp help" title="' + esc(who) + '">' + x.problem.length + ' of ' + x.drivers + '</td>' +
         '<td class="r grp">' + x.drivers + '</td><td class="r">' + f0(x.miles) + '</td>' +
