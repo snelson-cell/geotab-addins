@@ -1,7 +1,7 @@
 {
   "name": "Mira Fleet Charts",
   "supportEmail": "snelson@thegrit.com",
-  "version": "1.58.0",
+  "version": "1.58.1",
   "items": [
     {
       "url": "https://snelson-cell.github.io/geotab-addins/assignments.html?v=2026-09-10.1",
@@ -18,7 +18,7 @@
       }
     },
     {
-      "url": "https://snelson-cell.github.io/geotab-addins/scorecard-v2.html?v=2026-09-11.1",
+      "url": "https://snelson-cell.github.io/geotab-addins/scorecard-v2.html?v=2026-09-11.2",
       "path": "ActivityLink/",
       "menuName": {
         "en": "Scorecard V2 Preview"

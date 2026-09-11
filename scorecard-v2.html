@@ -31,7 +31,10 @@
   <div class="v2-kpis" id="v2-kpis"></div>
   <div class="v2-card v2-what" id="v2-what"></div>
 
-  <div class="v2-head"><div class="v2-title">Office standings</div></div>
+  <div class="v2-head"><div class="v2-title">Office score</div></div>
+  <div class="v2-card" id="v2-scorewrap"></div>
+
+  <div class="v2-head"><div class="v2-title">Office standings by median driver</div></div>
   <div class="v2-card" id="v2-offwrap"></div>
 
   <div class="v2-head"><div class="v2-title" id="v2-drvtitle">Ranked drivers</div></div>
@@ -51,6 +54,18 @@ geotab.addin.scorecardV2Preview = function () {
   var METRICS = ['Speeding', 'Braking', 'Cornering', 'Acceleration'];
   var CHANGED = ['Braking', 'Cornering', 'Acceleration'];
   var WEIGHT = {Speeding: '55%', Braking: '25%', Cornering: '10%', Acceleration: '10%'};
+  var W = {Speeding: 0.55, Braking: 0.25, Cornering: 0.10, Acceleration: 0.10};   // must match scorecard.html METRICS
+  // Office tiers, by the office's event rate as a share of the company's. Fixed
+  // cut-offs so a manager can see why an office sits where it does; on the
+  // Sep 11 snapshot they give the same groups as the offices' overlapping
+  // 80% bootstrap rank ranges.
+  var TIERS = [
+    {name: 'Leading',     cls: 'lead',   upTo: 0.80,     say: '20% or more better than the company'},
+    {name: 'Middle',      cls: 'mid',    upTo: 1.20,     say: 'within 20% of the company'},
+    {name: 'Behind',      cls: 'behind', upTo: 2.00,     say: '20% to 100% worse'},
+    {name: 'Well behind', cls: 'far',    upTo: Infinity, say: 'more than twice the company rate'}
+  ];
+  var PROBLEM_SHARE = 0.10;    // "problem driver" = in the company's worst 10% by V2 score
   var REASON = {
     under20: 'turns under 20 mph', jump: 'GPS position jumps', 'double': 'counted twice',
     nospeed: 'no GPS speed to check', snap: 'zero-speed snaps nobody felt',
@@ -116,6 +131,13 @@ geotab.addin.scorecardV2Preview = function () {
     'td.chg{cursor:help;background:#f3f1ea;}',
     '.v2-mv{display:inline-block;font-size:12px;font-weight:650;}',
     '.v2-mv.up{color:var(--good-ink);} .v2-mv.down{color:var(--bad-ink);} .v2-mv.same{color:var(--ink-3);font-weight:500;}',
+    '.v2-tier{display:inline-block;font-size:11px;font-weight:700;padding:2px 9px;border-radius:20px;white-space:nowrap;}',
+    '.v2-tier.lead{background:#e3f1e5;color:var(--good-ink);} .v2-tier.mid{background:var(--grid);color:var(--ink-2);}',
+    '.v2-tier.behind{background:#fbf0d9;color:var(--warn-ink);} .v2-tier.far{background:#fbe4e1;color:var(--bad-ink);}',
+    '.v2-pct{font-weight:650;} .v2-pct.better{color:var(--good-ink);} .v2-pct.worse{color:var(--bad-ink);} .v2-pct.avg{color:var(--ink-2);}',
+    '.v2-explain{padding:12px 16px;font-size:12.5px;color:var(--ink-2);line-height:1.55;border-bottom:1px solid var(--grid);}',
+    '.v2-explain b{color:var(--ink-1);font-weight:650;}',
+    'td.help{cursor:help;}',
     '.v2-foot{font-size:12px;color:var(--ink-3);margin:16px 2px 0;line-height:1.55;max-width:100ch;}',
     '.v2-foot p{margin:0 0 8px;} .v2-foot b{color:var(--ink-2);font-weight:600;}'
   ].join('\n');
@@ -199,6 +221,80 @@ geotab.addin.scorecardV2Preview = function () {
       '<span class="v2-was">' + f0(a) + '</span><span class="v2-arrow">&rarr;</span><span class="v2-now">' + f0(b) + '</span></td>';
   }
 
+  // A rate as a share of the company's, said the way people read it.
+  function pctWord(ratio){
+    var p = Math.round((ratio - 1) * 100);
+    if(p === 0) return {text: 'Average', cls: 'avg'};
+    return p < 0 ? {text: (-p) + '% better', cls: 'better'} : {text: p + '% worse', cls: 'worse'};
+  }
+  function tierOf(ratio){
+    for(var i = 0; i < TIERS.length; i++) if(ratio <= TIERS[i].upTo) return TIERS[i];
+    return TIERS[TIERS.length - 1];
+  }
+
+  // Office score: every counted event and every mile in the office, per metric
+  // as a share of the company's rate, then weighted like the driver score.
+  // Normalising each metric first stops speeding's sheer volume (7x braking's)
+  // from swamping the other three.
+  function officeScores(){
+    var ds = snap.drivers, mi = 0, co = {};
+    ds.forEach(function(d){ mi += d.miles; });
+    METRICS.forEach(function(m, i){
+      co[m] = ds.reduce(function(s, d){ return s + d.ev2[i]; }, 0) / mi; });
+    var byScore = ds.map(function(d){ return d.s2; }).sort(function(a, b){ return a - b; });
+    var cut = byScore[Math.floor(PROBLEM_SHARE * byScore.length)];
+    var offs = {};
+    ds.forEach(function(d){ (offs[d.office] = offs[d.office] || []).push(d); });
+    var medRank = {};
+    snap.meta.offices.forEach(function(o){ medRank[o.o] = o.r2; });
+    var out = Object.keys(offs).map(function(o){
+      var list = offs[o], omi = list.reduce(function(s, d){ return s + d.miles; }, 0);
+      var parts = {}, ratio = 0;
+      METRICS.forEach(function(m, i){
+        var r = list.reduce(function(s, d){ return s + d.ev2[i]; }, 0) / omi / co[m];
+        parts[m] = r; ratio += W[m] * r;
+      });
+      var problem = list.filter(function(d){ return d.s2 <= cut; });
+      return {office: o, drivers: list.length, miles: omi, ratio: ratio, parts: parts,
+              problem: problem, tier: tierOf(ratio), medRank: medRank[o]};
+    });
+    out.sort(function(a, b){ return a.ratio - b.ratio; });
+    out.forEach(function(x, i){ x.rank = i + 1; });
+    return out;
+  }
+
+  function renderOfficeScore(){
+    var rows = officeScores();
+    var h = '<div class="v2-explain"><b>How the office score works.</b> It adds up every counted event and every mile ' +
+      'across the office, compares each metric with the company&rsquo;s rate, and weights them like the driver score ' +
+      '(speeding 55%, braking 25%, cornering 10%, acceleration 10%). <b>Better</b> means fewer safety events per mile than ' +
+      'the company as a whole. Unlike the median driver, it counts the office&rsquo;s worst drivers, who produce roughly ' +
+      'two-fifths of its events. <b>Problem drivers</b> are the office&rsquo;s drivers in the company&rsquo;s worst 10%. ' +
+      'Tiers: ' + TIERS.map(function(t){ return '<b>' + t.name + '</b> ' + t.say; }).join(', ') + '. ' +
+      'Ranks within a tier are mostly down to chance; a move between tiers is real. ' +
+      'The scale is lopsided: an office can be at most 100% better, but has no limit on how much worse it can be.</div>';
+    h += '<table class="v2-t"><thead><tr><th class="r">#</th><th>Office</th><th>Tier</th>' +
+      '<th class="r">vs company average<span class="sub">events per mile</span></th>' +
+      '<th class="c grp">Problem drivers<span class="sub">in company worst 10%</span></th>' +
+      '<th class="r grp">Drivers</th><th class="r">Miles</th>' +
+      '<th class="r grp">Median-driver rank<span class="sub">V2, for comparison</span></th></tr></thead><tbody>';
+    rows.forEach(function(x){
+      var w = pctWord(x.ratio);
+      var detail = METRICS.map(function(m){ return m + ' ' + pctWord(x.parts[m]).text.toLowerCase(); }).join(', ');
+      var named = x.problem.map(function(d){ return names[d.id]; }).filter(Boolean);
+      var who = x.problem.length ? (named.length ? named.join(', ') : '') +
+        (x.problem.length > named.length ? (named.length ? ', and ' : '') + (x.problem.length - named.length) +
+         ' outside your login' : '') : 'None';
+      h += '<tr><td class="rank">' + x.rank + '</td><td class="name">' + esc(x.office) + '</td>' +
+        '<td><span class="v2-tier ' + x.tier.cls + '" title="' + esc(x.tier.say) + '">' + x.tier.name + '</span></td>' +
+        '<td class="r help" title="' + esc(detail) + '"><span class="v2-pct ' + w.cls + '">' + w.text + '</span></td>' +
+        '<td class="c grp help" title="' + esc(who) + '">' + x.problem.length + ' of ' + x.drivers + '</td>' +
+        '<td class="r grp">' + x.drivers + '</td><td class="r">' + f0(x.miles) + '</td>' +
+        '<td class="rank grp">' + (x.medRank || '&mdash;') + '</td></tr>';
+    });
+    el('v2-scorewrap').innerHTML = h + '</tbody></table>';
+  }
+
   function renderKpis(){
     var f = snap.meta.fleet, h = '';
     CHANGED.forEach(function(m){
@@ -230,12 +326,12 @@ geotab.addin.scorecardV2Preview = function () {
     var rows = snap.meta.offices.slice().sort(function(a, b){ return a.r2 - b.r2; });
     var h = '<table class="v2-t"><thead><tr><th>Office</th><th class="r">Drivers</th>' +
       '<th class="r grp">V1 rank</th><th class="r">V2 rank</th><th class="c">Move</th>' +
-      '<th class="r grp">V1 median driver<span class="sub">&times; company median</span></th>' +
-      '<th class="r">V2 median driver<span class="sub">&times; company median</span></th></tr></thead><tbody>';
+      '<th class="r grp">V1 median driver<span class="sub">vs company median</span></th>' +
+      '<th class="r">V2 median driver<span class="sub">vs company median</span></th></tr></thead><tbody>';
     rows.forEach(function(o){
       h += '<tr><td class="name">' + esc(o.o) + '</td><td class="r">' + o.n + '</td>' +
         '<td class="rank grp">' + o.r1 + '</td><td class="v2rank">' + o.r2 + '</td><td class="c">' + move(o.r1 - o.r2) + '</td>' +
-        '<td class="r grp">' + o.m1.toFixed(2) + '&times;</td><td class="r">' + o.m2.toFixed(2) + '&times;</td></tr>';
+        '<td class="r grp">' + pctWord(o.m1).text + '</td><td class="r">' + pctWord(o.m2).text + '</td></tr>';
     });
     el('v2-offwrap').innerHTML = h + '</tbody></table>';
   }
@@ -278,11 +374,11 @@ geotab.addin.scorecardV2Preview = function () {
     var sel = el('v2-office'), cur = sel.value, offs = m.offices.map(function(o){ return o.o; }).sort();
     sel.innerHTML = '<option value="">All offices</option>' + offs.map(function(o){
       return '<option value="' + esc(o) + '"' + (o === cur ? ' selected' : '') + '>' + esc(o) + '</option>'; }).join('');
-    renderKpis(); renderWhat(); renderOffices(); renderDrivers();
+    renderKpis(); renderWhat(); renderOfficeScore(); renderOffices(); renderDrivers();
     el('v2-foot').innerHTML =
       '<p>Hover a shaded cell to see which events V2 removed and why.</p>' +
       (hidden ? '<p><b>' + hidden + ' drivers</b> in the snapshot are outside what your login can see, and are not listed. They still count toward every rank.</p>' : '') +
-      '<p>Rank is company-wide, highest score first. Office standings use the same median-driver method as the Driver Scorecard.</p>';
+      '<p>Driver rank is company-wide, highest score first. The office score and problem drivers count every driver in the snapshot, including any your login cannot see. The median-driver standings use the same method as the Driver Scorecard.</p>';
   }
 
   function load(api){
