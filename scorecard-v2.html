@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<!-- Scorecard V2 preview: the current method (V1) and the cleaned-event method
+     (V2) scored on the same 30 days, side by side. The numbers are a snapshot
+     that geotab-scripts/build_v2_preview.py writes to AddInData -- they are not
+     on this public site, and nothing on this page changes the Driver Scorecard. -->
+</head>
+<body>
+<div id="v2-root">
+  <div class="v2-topbar">
+    <div>
+      <h2 class="v2-h1">Scorecard V2 preview</h2>
+      <div class="v2-scope" id="v2-scope">Loading…</div>
+    </div>
+    <div class="v2-controls">
+      <label class="v2-pick"><span>Office</span>
+        <select id="v2-office" aria-label="Filter to one office"><option value="">All offices</option></select></label>
+      <label class="v2-pick"><span>Sort</span>
+        <select id="v2-sort" aria-label="Sort drivers">
+          <option value="r2">V2 rank</option>
+          <option value="r1">V1 rank</option>
+          <option value="up">Biggest rise</option>
+          <option value="down">Biggest fall</option>
+        </select></label>
+    </div>
+  </div>
+
+  <div class="v2-note" id="v2-note"></div>
+  <div class="v2-kpis" id="v2-kpis"></div>
+  <div class="v2-card v2-what" id="v2-what"></div>
+
+  <div class="v2-head"><div class="v2-title">Office standings</div></div>
+  <div class="v2-card" id="v2-offwrap"></div>
+
+  <div class="v2-head"><div class="v2-title" id="v2-drvtitle">Ranked drivers</div></div>
+  <div class="v2-card" id="v2-drvwrap"></div>
+
+  <div class="v2-foot" id="v2-foot"></div>
+</div>
+
+<script>
+// Registration name must stay stable -- the add-in config's menu item loads
+// this file and MyGeotab calls whatever it registers here.
+geotab.addin.scorecardV2Preview = function () {
+  'use strict';
+
+  var ADDIN_ID = 'a2F7io3uq3k2k9sD8N0Hc8w';     // Mira Fleet Charts; the snapshot lives in its AddInData
+  var KIND = 'v2preview';
+  var METRICS = ['Speeding', 'Braking', 'Cornering', 'Acceleration'];
+  var CHANGED = ['Braking', 'Cornering', 'Acceleration'];
+  var WEIGHT = {Speeding: '55%', Braking: '25%', Cornering: '10%', Acceleration: '10%'};
+  var REASON = {
+    under20: 'turns under 20 mph', jump: 'GPS position jumps', 'double': 'counted twice',
+    nospeed: 'no GPS speed to check', snap: 'zero-speed snaps nobody felt',
+    spike: 'one-second spikes nobody felt', parked: 'while parked',
+    unverified: 'not checked by the audit'
+  };
+
+  var STYLE_ID = 'v2-styles';
+  var CSS = [
+    '#v2-root{',
+    '  --surface-1:#fcfcfb; --page:#f9f9f7;',
+    '  --ink-1:#0b0b0b; --ink-2:#52514e; --ink-3:#898781;',
+    '  --grid:#e1e0d9; --axis:#c3c2b7; --hairline:rgba(11,11,11,.10);',
+    '  --accent:#2a78d6; --good-ink:#0a6b18; --warn-ink:#7a5300; --bad-ink:#9b2626;',
+    '  font-family:system-ui,-apple-system,"Segoe UI",sans-serif;',
+    '  color:var(--ink-1); background:var(--page); padding:18px 20px 28px; width:100%;}',
+    '#v2-root, #v2-root *{box-sizing:border-box;}',
+    '.v2-h1{font-size:19px;font-weight:650;margin:0;letter-spacing:-.01em;}',
+    '.v2-scope{font-size:12.5px;color:var(--ink-3);margin:3px 0 0;max-width:90ch;line-height:1.45;}',
+    '.v2-topbar{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:12px;}',
+    '.v2-controls{display:flex;flex-wrap:wrap;align-items:center;gap:10px;}',
+    '.v2-pick{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:var(--ink-3);}',
+    '.v2-pick select{font:inherit;font-size:12.5px;font-weight:600;color:var(--ink-1);',
+    '  background:var(--surface-1);border:1px solid var(--axis);border-radius:7px;padding:6px 9px;cursor:pointer;}',
+    '.v2-pick select:focus-visible{outline:2px solid var(--accent);outline-offset:1px;}',
+    '#v2-root.busy .v2-kpis, #v2-root.busy .v2-card{opacity:.3;pointer-events:none;}',
+    '.v2-note{font-size:12.5px;border-radius:7px;padding:9px 12px;margin:12px 0 0;display:none;',
+    '  border:1px solid #efdca8;background:#fdf6e3;color:var(--warn-ink);}',
+    '.v2-note.on{display:block;}',
+    '.v2-kpis{display:flex;flex-wrap:wrap;gap:12px;margin:14px 0 0;}',
+    '.v2-kpi{flex:1 1 200px;min-width:0;background:var(--surface-1);border:1px solid var(--hairline);',
+    '  border-radius:9px;padding:13px 15px 14px;}',
+    '.v2-kpi-label{font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3);}',
+    '.v2-kpi-value{font-size:25px;font-weight:640;line-height:1.15;margin:7px 0 0;letter-spacing:-.02em;',
+    '  font-variant-numeric:tabular-nums;}',
+    '.v2-kpi-value .of{font-size:14px;font-weight:500;color:var(--ink-3);letter-spacing:0;}',
+    '.v2-kpi-sub{font-size:12px;color:var(--ink-2);margin:5px 0 0;line-height:1.45;}',
+    '.v2-card{background:var(--surface-1);border:1px solid var(--hairline);border-radius:9px;',
+    '  margin:9px 0 0;overflow-x:auto;}',
+    '.v2-what{margin-top:14px;padding:13px 16px;font-size:12.5px;color:var(--ink-2);line-height:1.55;}',
+    '.v2-what b{color:var(--ink-1);font-weight:650;}',
+    '.v2-what ul{margin:6px 0 0;padding-left:18px;} .v2-what li{margin:3px 0;max-width:100ch;}',
+    '.v2-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:20px 0 0;}',
+    '.v2-title{font-size:14px;font-weight:650;}',
+    'table.v2-t{border-collapse:collapse;width:100%;font-size:12.5px;font-variant-numeric:tabular-nums;}',
+    'table.v2-t th{position:sticky;top:0;background:var(--surface-1);text-align:left;font-size:10.5px;',
+    '  letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);padding:9px 10px;',
+    '  border-bottom:1px solid var(--grid);white-space:nowrap;z-index:1;}',
+    'table.v2-t th.c{text-align:center;} table.v2-t th.r{text-align:right;}',
+    'table.v2-t th .sub{display:block;font-size:9.5px;font-weight:600;letter-spacing:.04em;margin-top:1px;}',
+    'table.v2-t th.grp{border-left:1px solid var(--grid);}',
+    'table.v2-t td{padding:7px 10px;border-bottom:1px solid var(--grid);color:var(--ink-2);white-space:nowrap;}',
+    'table.v2-t tr:last-child td{border-bottom:0;}',
+    'table.v2-t td.name{color:var(--ink-1);font-weight:600;}',
+    'table.v2-t td.r{text-align:right;} table.v2-t td.c{text-align:center;}',
+    'table.v2-t td.grp{border-left:1px solid var(--grid);}',
+    'table.v2-t td.rank{color:var(--ink-3);font-weight:600;text-align:right;}',
+    'table.v2-t td.v2rank{color:var(--ink-1);font-weight:700;text-align:right;}',
+    '.v2-score{font-size:14px;font-weight:680;color:var(--ink-1);}',
+    '.v2-was{color:var(--ink-3);}',
+    '.v2-arrow{color:var(--ink-3);padding:0 3px;}',
+    '.v2-now{color:var(--ink-1);font-weight:650;}',
+    'td.chg{cursor:help;background:#f3f1ea;}',
+    '.v2-mv{display:inline-block;font-size:12px;font-weight:650;}',
+    '.v2-mv.up{color:var(--good-ink);} .v2-mv.down{color:var(--bad-ink);} .v2-mv.same{color:var(--ink-3);font-weight:500;}',
+    '.v2-foot{font-size:12px;color:var(--ink-3);margin:16px 2px 0;line-height:1.55;max-width:100ch;}',
+    '.v2-foot p{margin:0 0 8px;} .v2-foot b{color:var(--ink-2);font-weight:600;}'
+  ].join('\n');
+
+  var snap = null, names = {}, hidden = 0;
+
+  function el(id){ return document.getElementById(id); }
+  function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function f0(n){ return Math.round(n).toLocaleString('en-US'); }
+  function day(iso){ return new Date(iso).toLocaleDateString('en-US',
+    {month:'short', day:'numeric', year:'numeric', timeZone:'UTC'}); }
+  function note(html){ el('v2-note').innerHTML = html; el('v2-note').className = 'v2-note' + (html ? ' on' : ''); }
+  function injectStyles(){
+    if(document.getElementById(STYLE_ID)) return;
+    var s = document.createElement('style'); s.id = STYLE_ID; s.textContent = CSS;
+    document.head.appendChild(s);
+  }
+  function userUrl(id){ return location.origin + location.pathname + '#user,currentTab:user,id:' + id; }
+
+  // ── snapshot ──────────────────────────────────────────────────────────────
+  // Records carry a generation stamp; only the newest complete generation is
+  // used, so a shard left over from an earlier, larger run is never mixed in.
+  function assemble(records){
+    var byGen = {};
+    records.forEach(function(x){
+      // Written as a JSON string in `data`, but Geotab returns it parsed, in
+      // `details`. Accept either so a change on their side cannot blank the page.
+      var d = x.details || x.data;
+      try { d = typeof d === 'string' ? JSON.parse(d) : d; } catch(e){ return; }
+      if(!d || d.kind !== KIND || !d.gen) return;
+      (byGen[d.gen] = byGen[d.gen] || []).push(d);
+    });
+    var gens = Object.keys(byGen).sort().reverse();
+    for(var i = 0; i < gens.length; i++){
+      var parts = byGen[gens[i]], meta = parts.filter(function(p){ return p.part === 0; })[0];
+      if(!meta || parts.length !== meta.of) continue;
+      var rows = [];
+      parts.sort(function(a, b){ return a.part - b.part; }).forEach(function(p){
+        if(p.part > 0) rows = rows.concat(p.rows || []); });
+      return {meta: meta, rows: rows, incompleteNewer: i > 0};
+    }
+    return null;
+  }
+
+  function prepare(s){
+    var drivers = s.rows.map(function(r){
+      return {id:r[0], office:r[1], miles:r[2], s1:r[3], s2:r[4], ev1:r[5], ev2:r[6], drop:r[7] || {}};
+    });
+    // Rank = 1 + how many drivers scored higher, company-wide and in office,
+    // computed over the whole snapshot so a branch login sees true positions.
+    function ranks(key, out, group){
+      drivers.forEach(function(d){
+        d[out] = 1 + drivers.filter(function(o){
+          return (!group || o.office === d.office) && o[key] > d[key]; }).length;
+      });
+    }
+    ranks('s1', 'r1'); ranks('s2', 'r2'); ranks('s2', 'or2', true);
+    var size = {};
+    drivers.forEach(function(d){ size[d.office] = (size[d.office] || 0) + 1; });
+    drivers.forEach(function(d){ d.on = size[d.office]; });
+    return drivers;
+  }
+
+  // ── rendering ─────────────────────────────────────────────────────────────
+  function move(n){
+    if(!n) return '<span class="v2-mv same">&mdash;</span>';
+    return n > 0 ? '<span class="v2-mv up">&#9650; ' + n + '</span>'
+                 : '<span class="v2-mv down">&#9660; ' + (-n) + '</span>';
+  }
+  function removedText(drop){
+    var parts = Object.keys(drop || {}).sort(function(a, b){ return drop[b] - drop[a]; })
+      .map(function(k){ return f0(drop[k]) + ' ' + (REASON[k] || k); });
+    return parts.join(', ');
+  }
+  function metricCell(d, m){
+    var i = METRICS.indexOf(m), a = d.ev1[i], b = d.ev2[i];
+    if(CHANGED.indexOf(m) < 0 || a === b) return '<td class="c grp">' + f0(b) + '</td>';
+    var why = removedText(d.drop[m]);
+    return '<td class="c grp chg" title="' + esc(m + ': ' + f0(a) + ' events, ' + f0(b) + ' counted in V2. Removed: ' + why) + '">' +
+      '<span class="v2-was">' + f0(a) + '</span><span class="v2-arrow">&rarr;</span><span class="v2-now">' + f0(b) + '</span></td>';
+  }
+
+  function renderKpis(){
+    var f = snap.meta.fleet, h = '';
+    CHANGED.forEach(function(m){
+      var x = f[m], pct = x.v1 ? Math.round(100 * x.v2 / x.v1) : 0;
+      h += '<div class="v2-kpi"><div class="v2-kpi-label">' + m + ' &middot; ' + WEIGHT[m] + ' of score</div>' +
+        '<div class="v2-kpi-value">' + f0(x.v2) + ' <span class="of">of ' + f0(x.v1) + ' events count</span></div>' +
+        '<div class="v2-kpi-sub">' + pct + '% kept. Removed: ' + esc(removedText(x.drop)) + '.</div></div>';
+    });
+    var ds = snap.drivers, big = ds.filter(function(d){ return Math.abs(d.r1 - d.r2) >= 25; }).length;
+    var mv = ds.map(function(d){ return Math.abs(d.r1 - d.r2); }).sort(function(a, b){ return a - b; });
+    h += '<div class="v2-kpi"><div class="v2-kpi-label">Drivers who move</div>' +
+      '<div class="v2-kpi-value">' + big + ' <span class="of">of ' + ds.length + ' move 25+ places</span></div>' +
+      '<div class="v2-kpi-sub">Typical move ' + (mv.length ? mv[mv.length >> 1] : 0) + ' places. Speeding is unchanged and still 55% of the score.</div></div>';
+    el('v2-kpis').innerHTML = h;
+  }
+
+  function renderWhat(){
+    el('v2-what').innerHTML =
+      '<b>What V2 changes.</b> Both columns score the same 30 days with the same weights. The only difference is which events count:' +
+      '<ul>' +
+      '<li><b>Cornering</b> counts only turns taken above 20 mph. It drops GPS position jumps, where the map shows the truck somewhere it could not have driven, and a turn counted twice within 15 seconds.</li>' +
+      '<li><b>Braking and acceleration</b> count an event when the truck&rsquo;s accelerometer felt it, or GPS shows the speed changing hard over 2&ndash;4 seconds. They drop GPS jumps, repeats, and the one-reading snaps and spikes nothing on the truck felt.</li>' +
+      '<li><b>Speeding</b> is unchanged.</li>' +
+      '<li>Company cut-offs are recalculated from the cleaned events, so a V2 score compares a driver with everyone else&rsquo;s cleaned events.</li>' +
+      '</ul>';
+  }
+
+  function renderOffices(){
+    var rows = snap.meta.offices.slice().sort(function(a, b){ return a.r2 - b.r2; });
+    var h = '<table class="v2-t"><thead><tr><th>Office</th><th class="r">Drivers</th>' +
+      '<th class="r grp">V1 rank</th><th class="r">V2 rank</th><th class="c">Move</th>' +
+      '<th class="r grp">V1 median driver<span class="sub">&times; company median</span></th>' +
+      '<th class="r">V2 median driver<span class="sub">&times; company median</span></th></tr></thead><tbody>';
+    rows.forEach(function(o){
+      h += '<tr><td class="name">' + esc(o.o) + '</td><td class="r">' + o.n + '</td>' +
+        '<td class="rank grp">' + o.r1 + '</td><td class="v2rank">' + o.r2 + '</td><td class="c">' + move(o.r1 - o.r2) + '</td>' +
+        '<td class="r grp">' + o.m1.toFixed(2) + '&times;</td><td class="r">' + o.m2.toFixed(2) + '&times;</td></tr>';
+    });
+    el('v2-offwrap').innerHTML = h + '</tbody></table>';
+  }
+
+  function renderDrivers(){
+    var off = el('v2-office').value, sort = el('v2-sort').value;
+    var view = snap.drivers.filter(function(d){ return names[d.id] && (!off || d.office === off); });
+    var key = {
+      r2: function(a, b){ return a.r2 - b.r2 || a.r1 - b.r1; },
+      r1: function(a, b){ return a.r1 - b.r1 || a.r2 - b.r2; },
+      up: function(a, b){ return (b.r1 - b.r2) - (a.r1 - a.r2) || a.r2 - b.r2; },
+      down: function(a, b){ return (a.r1 - a.r2) - (b.r1 - b.r2) || a.r2 - b.r2; }
+    }[sort] || function(a, b){ return a.r2 - b.r2; };
+    view.sort(key);
+    el('v2-drvtitle').textContent = 'Ranked drivers (' + view.length + ')';
+    var h = '<table class="v2-t"><thead><tr><th class="r">V2 #</th><th class="r">V1 #</th><th class="c">Move</th>' +
+      '<th>Driver</th><th>Office</th><th class="r">Miles</th>' +
+      '<th class="c grp">V1 score</th><th class="c">V2 score</th>';
+    METRICS.forEach(function(m){
+      h += '<th class="c grp">' + m + '<span class="sub">' + WEIGHT[m] + (CHANGED.indexOf(m) < 0 ? ' &middot; unchanged' : ' &middot; V1 &rarr; V2') + '</span></th>';
+    });
+    h += '<th class="c grp">In office<span class="sub">V2</span></th></tr></thead><tbody>';
+    view.forEach(function(d){
+      h += '<tr><td class="v2rank">' + d.r2 + '</td><td class="rank">' + d.r1 + '</td><td class="c">' + move(d.r1 - d.r2) + '</td>' +
+        '<td class="name"><a href="' + esc(userUrl(d.id)) + '" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">' + esc(names[d.id]) + '</a></td>' +
+        '<td>' + esc(d.office) + '</td><td class="r">' + f0(d.miles) + '</td>' +
+        '<td class="c grp"><span class="v2-was v2-score">' + d.s1 + '</span></td><td class="c"><span class="v2-score">' + d.s2 + '</span></td>';
+      METRICS.forEach(function(m){ h += metricCell(d, m); });
+      h += '<td class="c grp">' + d.or2 + ' of ' + d.on + '</td></tr>';
+    });
+    if(!view.length) h += '<tr><td colspan="13" style="padding:18px;text-align:center">No drivers to show for this office.</td></tr>';
+    el('v2-drvwrap').innerHTML = h + '</tbody></table>';
+  }
+
+  function renderAll(){
+    var m = snap.meta;
+    el('v2-scope').innerHTML = 'Snapshot of the 30 days to ' + esc(day(m.to)) + ', scored ' + esc(day(m.gen)) +
+      '. V1 is today&rsquo;s method on the same 30 days, so it will not match the live Driver Scorecard exactly. ' +
+      'Nothing here changes the Driver Scorecard.';
+    var sel = el('v2-office'), cur = sel.value, offs = m.offices.map(function(o){ return o.o; }).sort();
+    sel.innerHTML = '<option value="">All offices</option>' + offs.map(function(o){
+      return '<option value="' + esc(o) + '"' + (o === cur ? ' selected' : '') + '>' + esc(o) + '</option>'; }).join('');
+    renderKpis(); renderWhat(); renderOffices(); renderDrivers();
+    el('v2-foot').innerHTML =
+      '<p>Hover a shaded cell to see which events V2 removed and why.</p>' +
+      (hidden ? '<p><b>' + hidden + ' drivers</b> in the snapshot are outside what your login can see, and are not listed. They still count toward every rank.</p>' : '') +
+      '<p>Rank is company-wide, highest score first. Office standings use the same median-driver method as the Driver Scorecard.</p>';
+  }
+
+  function load(api){
+    el('v2-root').className = 'busy'; note('');
+    api.multiCall([
+      ['Get', {typeName: 'AddInData', search: {addInId: ADDIN_ID}}],
+      ['Get', {typeName: 'User', search: {isDriver: true}, resultsLimit: 50000}]
+    ], function(res){
+      el('v2-root').className = '';
+      var s = assemble(res[0] || []);
+      if(!s){
+        el('v2-scope').textContent = 'No V2 snapshot has been published yet.';
+        note('Run <b>build_v2_preview.py --upload</b> to publish one.');
+        return;
+      }
+      if(s.incompleteNewer) note('A newer snapshot is only partly published, so this page shows the last complete one.');
+      names = {};
+      (res[1] || []).forEach(function(u){
+        names[u.id] = ((u.firstName || '') + ' ' + (u.lastName || '')).trim() || u.name; });
+      snap = {meta: s.meta, drivers: prepare(s)};
+      hidden = snap.drivers.filter(function(d){ return !names[d.id]; }).length;
+      renderAll();
+    }, function(err){
+      el('v2-root').className = '';
+      el('v2-scope').textContent = 'Could not load the snapshot.';
+      note(esc(err && err.message ? err.message : String(err)));
+    });
+  }
+
+  return {
+    initialize: function(api, state, cb){
+      injectStyles();
+      el('v2-office').addEventListener('change', function(){ if(snap) renderDrivers(); });
+      el('v2-sort').addEventListener('change', function(){ if(snap) renderDrivers(); });
+      cb();
+    },
+    focus: function(api){ load(api); },
+    blur: function(){}
+  };
+};
+</script>
+</body>
+</html>
