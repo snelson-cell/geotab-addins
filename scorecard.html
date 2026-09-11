@@ -1134,7 +1134,9 @@ geotab.addin.driverScorecard = function () {
         '<td>'+esc(d.office)+'</td>'+
         '<td class="r">'+f0(d.miles)+'</td>'+
         '<td class="c"><span class="ds-score">'+d.score+'</span></td>'+
-        '<td class="c"><span class="ds-trend '+d.trend.key+'" title="'+esc(d.trend.title)+'">'+
+        // cls, not key: a driver who got worse but is still below the median is
+        // styled 'worse-lo' (grey), as the help text promises.
+        '<td class="c"><span class="ds-trend '+(d.trend.cls||d.trend.key)+'" title="'+esc(d.trend.title)+'">'+
           d.trend.label+'</span></td>'+
         METRICS.map(function(m){
           var f = fillFor(d.rawPct[m.id]);
