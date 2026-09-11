@@ -649,9 +649,11 @@ geotab.addin.driverScorecard = function () {
     var cls = (t === 'worse' && r1 < 1) ? 'worse-lo' : t;
     return {
       key: t, cls: cls,
-      label: t==='steady' ? 'steady'
-                          : (z>0 ? '▲ +' : '▼ −')+Math.abs(r1-r2).toFixed(2)+'×',
-      title: 'Position vs the fleet moved '+r2.toFixed(2)+'× → '+r1.toFixed(2)+'× ('+
+      // The arrow follows quality, not the number: ▲ is improving, as in the
+      // office standings, even though the underlying rate went DOWN.
+      label: t==='steady' ? 'steady' : (z>0 ? '▼ worse' : '▲ improving'),
+      from: r2, to: r1,
+      title: 'Was '+r2.toFixed(2)+'× the company median, now '+r1.toFixed(2)+'× ('+
              Math.abs(z).toFixed(1)+' sigma over '+f0(d.miles)+' miles). '+
              (t==='steady' ? 'Inside normal variation.'
               : cls==='worse-lo' ? 'Still below the fleet median, so not a concern by itself.'
@@ -981,10 +983,12 @@ geotab.addin.driverScorecard = function () {
       var curR = totEv/(totMi/1000), prevR = prevEv/(prevMi/1000);
       if(prevR > 0){
         var pd = (curR-prevR)/prevR*100;
-        // Fewer events is better, so a fall is the good direction.
+        // Fewer events is better, so a fall is the good direction -- and the
+        // arrow follows quality, so a fall is drawn as ▲ better.
         var cls  = Math.abs(pd) < 1 ? 'steady' : (pd < 0 ? 'better' : 'worse');
         var mark = Math.abs(pd) < 1 ? 'flat'
-                 : (pd < 0 ? '&#9660;' : '&#9650;')+Math.abs(pd).toFixed(0)+'%';
+                 : (pd < 0 ? '&#9650; ' + Math.abs(pd).toFixed(0)+'% better'
+                           : '&#9660; ' + Math.abs(pd).toFixed(0)+'% worse');
         evTrend = ' &middot; <span class="ds-trend '+cls+'">'+mark+'</span>'+
                   '<span class="muted"> vs prior '+effDays+' days ('+prevR.toFixed(1)+')</span>';
       }
@@ -1353,8 +1357,8 @@ geotab.addin.driverScorecard = function () {
         'not moved by more than normal week-to-week variation would produce at this mileage.';
     } else {
       trendSay = '<b>Trend &mdash; '+(d.trend.key==='worse'?'moving the wrong way':'improving')+
-        '.</b> Their position against the company shifted by '+esc(d.trend.label.replace(/[▲▼]/,'').trim())+
-        ', which is larger than chance would produce at '+f0(d.miles)+' miles. This compares their '+
+        '.</b> They went from '+d.trend.from.toFixed(2)+'&times; the company median to '+
+        d.trend.to.toFixed(2)+'&times;, which is larger than chance would produce at '+f0(d.miles)+' miles. This compares their '+
         'position, not their raw count, so a fleet-wide change does not show up here as a personal one.';
     }
     el('ds-example').innerHTML =
@@ -1549,12 +1553,14 @@ geotab.addin.driverScorecard = function () {
       'near even. An arrow only appears when the move is larger than Poisson noise at that '+
       'driver\'s mileage; below that it says steady, and with no comparable previous period it '+
       'says nothing at all.</p>'+
-      '<p><b>The movement is shown in multiples, not per cent.</b> A driver who was at 0.15&times; '+
+      '<p><b>The column says improving or worse; hover it for the movement in multiples, not '+
+      'per cent.</b> The arrow follows quality &mdash; &#9650; is improving, as in the office '+
+      'standings. A driver who was at 0.15&times; '+
       'and is now at 0.36&times; has more than doubled in percentage terms while remaining one of '+
       'the safest people in the company &mdash; per cent off a small base is arithmetically large '+
       'and practically meaningless. A trend needs <b>'+TREND_MIN_MILES+'+ miles in the previous '+
       'period</b>, twice the ranking floor, because a comparison needs more evidence than a single '+
-      'measurement. And an upward move on someone still below the fleet median is shown in grey, '+
+      'measurement. And a worsening on someone still below the fleet median is shown in grey, '+
       'not red &mdash; they are not a concern whichever way they drifted.</p>'+
       '<p><b>Offices are ranked on their MEDIAN driver</b>, not their total, so one bad week '+
       'from one person cannot drag a branch down the table and a large branch is not penalised '+
