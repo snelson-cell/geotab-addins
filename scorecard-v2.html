@@ -123,7 +123,12 @@ geotab.addin.scorecardV2Preview = function () {
     '.v2-mv.up{color:var(--good-ink);} .v2-mv.down{color:var(--bad-ink);} .v2-mv.same{color:var(--ink-3);font-weight:500;}',
     '.v2-pct{font-weight:650;} .v2-pct.better{color:var(--good-ink);} .v2-pct.worse{color:var(--bad-ink);} .v2-pct.avg{color:var(--ink-2);}',
     '.v2-explain{padding:12px 16px;font-size:12.5px;color:var(--ink-2);line-height:1.55;border-bottom:1px solid var(--grid);}',
-    '.v2-explain b{color:var(--ink-1);font-weight:650;}',
+    '.v2-lede{margin:0;color:var(--ink-1);}',
+    '.v2-defs{display:flex;flex-wrap:wrap;gap:8px 28px;margin:8px 0 0;}',
+    '.v2-defs div{flex:1 1 220px;max-width:56ch;}',
+    '.v2-defs dt{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-3);}',
+    '.v2-defs dd{margin:2px 0 0;}',
+    'th.help{cursor:help;}',
     'td.help{cursor:help;}',
     '.v2-foot{font-size:12px;color:var(--ink-3);margin:16px 2px 0;line-height:1.55;max-width:100ch;}',
     '.v2-foot p{margin:0 0 8px;} .v2-foot b{color:var(--ink-2);font-weight:600;}'
@@ -250,15 +255,16 @@ geotab.addin.scorecardV2Preview = function () {
 
   function renderOfficeScore(){
     var rows = officeScores();
-    var h = '<div class="v2-explain"><b>How the office score works.</b> It adds up every counted event and every mile ' +
-      'across the office, compares each metric with the company&rsquo;s rate, and weights them like the driver score ' +
-      '(speeding 55%, braking 25%, cornering 10%, acceleration 10%). <b>Better</b> means fewer safety events per mile than ' +
-      'the company as a whole. Unlike the median driver, it counts the office&rsquo;s worst drivers, who produce roughly ' +
-      'two-fifths of its events. <b>Problem drivers</b> are the office&rsquo;s drivers in the company&rsquo;s worst 10%. ' +
-      'Offices a few percent apart are within chance of each other. ' +
-      'The scale is lopsided: an office can be at most 100% better, but has no limit on how much worse it can be.</div>';
+    var h = '<div class="v2-explain"><p class="v2-lede">Each office&rsquo;s safety events per mile against the company as a whole. ' +
+      'Every driver and every mile counts.</p><dl class="v2-defs">' +
+      '<div><dt>% better / worse</dt><dd>Fewer or more events per mile than the company. Weighted like the driver score: ' +
+      'speeding 55%, braking 25%, cornering 10%, acceleration 10%.</dd></div>' +
+      '<div><dt>Problem drivers</dt><dd>The office&rsquo;s drivers in the company&rsquo;s worst 10%.</dd></div>' +
+      '<div><dt>Close results</dt><dd>Offices a few percent apart are within chance of each other.</dd></div>' +
+      '</dl></div>';
     h += '<table class="v2-t"><thead><tr><th class="r">#</th><th>Office</th>' +
-      '<th class="r">vs company average<span class="sub">events per mile</span></th>' +
+      '<th class="r help" title="An office can be at most 100% better (no events at all), but there is no limit on how much worse it can be.">' +
+      'vs company average<span class="sub">events per mile</span></th>' +
       '<th class="c grp">Problem drivers<span class="sub">in company worst 10%</span></th>' +
       '<th class="r grp">Drivers</th><th class="r">Miles</th>' +
       '<th class="r grp">Median-driver rank<span class="sub">V2, for comparison</span></th></tr></thead><tbody>';
