@@ -991,7 +991,7 @@ geotab.addin.driverScorecard = function () {
         ? kpi('Office rank',
               rankOfOffice[myOffice].rank+'<span style="font-size:17px;color:var(--ink-3)"> of '+
                 standings.length+'</span>',
-              'typical '+esc(myOffice)+' driver is '+rankOfOffice[myOffice].med.toFixed(2)+
+              'median '+esc(myOffice)+' driver is '+rankOfOffice[myOffice].med.toFixed(2)+
               '&times; the company median')
         : kpi('Offices ranked', String(standings.length),
               standings.length ? esc(standings[0].office)+' best &middot; <span class="muted">'+
@@ -1023,7 +1023,7 @@ geotab.addin.driverScorecard = function () {
       '<th class="r" title="How many drivers this office had when the benchmark was built on '+
       esc(prettyDate(BENCHMARK.generated))+'. The live number moves as people cross the '+
       MIN_MILES+'-mile floor, so it can differ from a count taken today.">Drivers</th>'+
-      '<th class="c">Typical driver</th>'+
+      '<th class="c">Median driver</th>'+
       (prevGen ? '<th class="c" title="Where this office stood on '+
         esc(prettyDate(prevGen))+', and how far it has moved since. '+
         'Rank 1 is safest, so an up arrow is an improvement.">Last week</th>' : '')+
@@ -1376,7 +1376,7 @@ geotab.addin.driverScorecard = function () {
       'could change to do better, so there is nothing to deduct. Those cells read as the best band '+
       'and take 0.0 points.</p>'+
       '<p><b>New drivers are nudged toward the fleet average, and it fades fast.</b> Before '+
-      'ranking, a rate is blended with the typical driver&rsquo;s by about '+f0(SHRINK_K*1000)+
+      'ranking, a rate is blended with the median driver&rsquo;s by about '+f0(SHRINK_K*1000)+
       ' miles worth, so a few hundred miles is not read as proof. A driver at 500 miles is about '+
       'a third fleet average; by 1,500 miles they are '+
       f0(100*1500/(1500+SHRINK_K*1000))+'% their own numbers, and past 2,500 it is negligible. '+
@@ -1407,7 +1407,7 @@ geotab.addin.driverScorecard = function () {
       '<p><b>Offices are ranked on their MEDIAN driver</b>, not their total, so one bad week '+
       'from one person cannot drag a branch down the table and a large branch is not penalised '+
       'for having more people. It is the same unit as the driver column &mdash; 1.30&times; means '+
-      'the typical driver there sets things off 30% more often than the typical driver company-wide. '+
+      'the median driver there sets things off 30% more often than the median driver company-wide. '+
       'Offices with nobody over '+MIN_MILES+' miles are listed without a rank rather than left out: '+
       'an empty branch is unmeasured, not clean, and the fix is assigning drivers to vehicles.</p>'+
       '<p><b>Rank is coarser than it looks.</b> Measured on this fleet, a driver\'s rank moves '+
