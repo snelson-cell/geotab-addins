@@ -25,14 +25,14 @@
   <div class="dd-note" id="dd-note"></div>
   <div class="dd-kpis" id="dd-kpis"></div>
 
+  <div class="dd-head"><div class="dd-title">Truck and camera</div></div>
+  <div class="dd-card" id="dd-truck"></div>
+
   <div class="dd-head"><div class="dd-title">The day</div><div class="dd-tools" id="dd-daytools"></div></div>
   <div class="dd-card" id="dd-day"></div>
 
   <div class="dd-head"><div class="dd-title" id="dd-evtitle">Events</div></div>
   <div class="dd-card" id="dd-events"></div>
-
-  <div class="dd-head"><div class="dd-title">Truck and camera</div></div>
-  <div class="dd-card" id="dd-truck"></div>
 
   <div class="dd-foot" id="dd-foot"></div>
 </div>
@@ -113,6 +113,8 @@ geotab.addin.driverDay = function () {
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
     return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
   function f0(n){ return Math.round(n).toLocaleString('en-US'); }
+  // A value, escaped -- or an em dash. Escaping the dash itself printed "&mdash;".
+  function or0(v){ return v ? esc(v) : '&mdash;'; }
   function f1(n){ return (Math.round(n * 10) / 10).toLocaleString('en-US', {minimumFractionDigits: 1}); }
   function note(h){ el('dd-note').innerHTML = h; el('dd-note').className = 'dd-note' + (h ? ' on' : ''); }
   function injectStyles(){
@@ -268,10 +270,10 @@ geotab.addin.driverDay = function () {
       var last = trips.filter(function(t){ return t.device.id === id; }).pop();
       cards += '<div class="dd-grid">' +
         '<div><dt>Truck</dt><dd>' + esc(d.name || id) + '</dd></div>' +
-        '<div><dt>Vehicle</dt><dd>' + esc([d.vinInfoYear, d.vinInfoMake, d.vinInfoModel].filter(Boolean).join(' ') || '&mdash;') + '</dd></div>' +
-        '<div><dt>VIN</dt><dd>' + esc(d.vehicleIdentificationNumber || '&mdash;') + '</dd></div>' +
-        '<div><dt>Plate</dt><dd>' + esc(d.licensePlate || '&mdash;') + '</dd></div>' +
-        '<div><dt>Device</dt><dd>' + esc(d.deviceType || '&mdash;') + ' &middot; ' + esc(d.serialNumber || '') + '</dd></div>' +
+        '<div><dt>Vehicle</dt><dd>' + or0([d.vinInfoYear, d.vinInfoMake, d.vinInfoModel].filter(Boolean).join(' ')) + '</dd></div>' +
+        '<div><dt>VIN</dt><dd>' + or0(d.vehicleIdentificationNumber) + '</dd></div>' +
+        '<div><dt>Plate</dt><dd>' + or0(d.licensePlate) + '</dd></div>' +
+        '<div><dt>Device</dt><dd>' + or0(d.deviceType) + (d.serialNumber ? ' &middot; ' + esc(d.serialNumber) : '') + '</dd></div>' +
         '<div><dt>Camera</dt><dd>' + (cam ? '<span class="dd-yes">fitted</span>' : '<span class="dd-no">none</span>') + '</dd></div>' +
         '<div><dt>Odometer</dt><dd>' + (last && last.odometer ? f0(last.odometer * M_TO_MI) + ' mi' : '&mdash;') + '</dd></div>' +
         '<div><dt>Engine hours</dt><dd>' + (last && last.engineHours ? f0(last.engineHours / 3600) + ' h' : '&mdash;') + '</dd></div>' +
