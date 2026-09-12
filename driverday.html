@@ -32,6 +32,10 @@
   <div class="dd-head"><div class="dd-title">Truck and camera</div></div>
   <div class="dd-card" id="dd-truck"></div>
 
+  <div class="dd-head" id="dd-routehead" style="display:none"><div class="dd-title">Route</div>
+    <div class="dd-tools" id="dd-routetools"></div></div>
+  <div class="dd-card" id="dd-route" style="display:none"></div>
+
   <div class="dd-head"><div class="dd-title">The day</div><div class="dd-tools" id="dd-daytools"></div></div>
   <div class="dd-card" id="dd-day"></div>
 
@@ -122,7 +126,9 @@ geotab.addin.driverDay = function () {
     '.dd-foot{font-size:12px;color:var(--ink-3);margin:16px 2px 0;line-height:1.55;max-width:100ch;}'
   ].join('\n');
 
-  var api = null, devs = {}, cams = {}, rules = {}, zones = [], users = [], state = {driver: null, date: null};
+  var api = null, devs = {}, cams = {}, rules = {}, zones = [], users = [], routes = {};
+  var state = {driver: null, date: null};
+  var ADDIN_ID = 'a2F7io3uq3k2k9sD8N0Hc8w';   // routes are joined server-side and left here for us
 
   function el(id){ return document.getElementById(id); }
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
@@ -226,6 +232,54 @@ geotab.addin.driverDay = function () {
     el('dd-nowtools').textContent = live ? '' : 'the box has not reported recently';
   }
 
+  // The technician's route for the day, joined to the truck by FieldRoutes
+  // (route_day.js in geotab-scripts). Times the app recorded are shown beside
+  // what the truck did, never instead of it.
+  function renderRoute(tz){
+    var r = routes[state.driver + '|' + state.date];
+    var show = !!(r && r.stops && r.stops.length);
+    el('dd-route').style.display = show ? '' : 'none';
+    el('dd-routehead').style.display = show ? '' : 'none';
+    if(!show) return;
+    var stops = r.stops.slice().sort(function(a, b){
+      return (a.arrived || a.techIn || '') < (b.arrived || b.techIn || '') ? -1 : 1; });
+    var onSite = 0, sched = 0, claimed = 0, matched = 0;
+    stops.forEach(function(s){
+      onSite += s.onSite || 0; sched += s.sched || 0;
+      if(s.arrived) matched += 1;
+      if(s.techIn && s.techOut){
+        var a = +s.techIn.slice(0, 2) * 60 + +s.techIn.slice(3, 5), b = +s.techOut.slice(0, 2) * 60 + +s.techOut.slice(3, 5);
+        if(b > a) claimed += b - a;
+      }
+    });
+    var h = '<table class="dd-t"><thead><tr><th class="r">#</th><th>Customer</th>' +
+      '<th class="r">Scheduled</th><th>Truck arrived</th><th>Left</th><th class="r">On site</th>' +
+      '<th class="c">App in</th><th class="c">App out</th><th class="r">App says</th><th class="r">Metres off</th></tr></thead><tbody>';
+    stops.forEach(function(s, i){
+      var arr = s.arrived ? new Date(s.arrived) : null;
+      var left = arr && s.onSite != null ? new Date(arr.getTime() + s.onSite * 60000) : null;
+      var appMin = null;
+      if(s.techIn && s.techOut){
+        var a = +s.techIn.slice(0, 2) * 60 + +s.techIn.slice(3, 5), b = +s.techOut.slice(0, 2) * 60 + +s.techOut.slice(3, 5);
+        if(b > a) appMin = b - a;
+      }
+      var over = appMin != null && s.onSite ? appMin / Math.max(s.onSite, 1) : null;
+      h += '<tr><td class="rank">' + (i + 1) + '</td><td class="k">' + esc(s.cust || '') + '</td>' +
+        '<td class="r">' + (s.sched ? s.sched + 'm' : '&mdash;') + '</td>' +
+        '<td>' + (arr ? clock(s.arrived, tz) : '<span class="dd-no">no truck stop</span>') + '</td>' +
+        '<td>' + (left ? clock(left.toISOString(), tz) : '&mdash;') + '</td>' +
+        '<td class="r">' + (s.onSite != null ? s.onSite + 'm' : '&mdash;') + '</td>' +
+        '<td class="c">' + (s.techIn || '&mdash;') + '</td><td class="c">' + (s.techOut || '&mdash;') + '</td>' +
+        '<td class="r"' + (over && over >= 1.5 ? ' style="color:var(--bad-ink);font-weight:650"' : '') + '>' +
+          (appMin != null ? appMin + 'm' : '&mdash;') + '</td>' +
+        '<td class="r">' + (s.off != null ? s.off : '&mdash;') + '</td></tr>';
+    });
+    el('dd-route').innerHTML = h + '</tbody></table>';
+    el('dd-routetools').innerHTML = matched + ' of ' + stops.length + ' stops matched to a truck stop &middot; ' +
+      hm(onSite * 60) + ' on site against ' + hm(sched * 60) + ' scheduled' +
+      (claimed ? ' &middot; the app records ' + hm(claimed * 60) : '');
+  }
+
   function render(trips, events){
     var tz = trips.length ? tzOf(trips[0].device.id) : 'America/New_York';
     var day = state.date;
@@ -323,11 +377,15 @@ geotab.addin.driverDay = function () {
     });
     el('dd-truck').innerHTML = cards || '<div class="dd-grid"><div><dd>No truck used on this day.</dd></div></div>';
 
+    renderRoute(tz);
     var who = (users.filter(function(u){ return u.id === state.driver; })[0] || {});
     el('dd-scope').innerHTML = esc(((who.firstName || '') + ' ' + (who.lastName || '')).trim() || 'Driver') +
       ' &middot; ' + esc(dayName(day)) + ' &middot; times in the truck&rsquo;s local zone (' + esc(tz.split('/')[1] || tz) + ')';
     el('dd-foot').innerHTML =
       '<p>Everything here is what Geotab recorded for this driver on this day. <b>Events</b> are every rule that fired, not just the four the scorecard uses &mdash; hover nothing, click <b>open</b> to see the event and its video in Trips History.</p>' +
+      '<p><b>Route</b> is the technician&rsquo;s FieldRoutes day joined to this truck by location. <b>On site</b> is how long the ' +
+      'truck was parked there; <b>app says</b> is the duration the technician&rsquo;s own check-in and check-out imply, ' +
+      'shown in red where it is 1.5&times; the truck&rsquo;s time or more.</p>' +
       '<p>Odometer and engine hours come from the last trip of the day. A trip is flagged <b>belt off</b> when the device saw the seat belt unbuckled while moving.</p>';
   }
 
@@ -373,7 +431,8 @@ geotab.addin.driverDay = function () {
       // nameless and land in the catch-all family.
       ['Get', {typeName: 'Rule', search: {includeZoneStopRules: true}}],
       ['Get', {typeName: 'Zone'}],
-      ['Get', {typeName: 'Camera'}]
+      ['Get', {typeName: 'Camera'}],
+      ['Get', {typeName: 'AddInData', search: {addInId: ADDIN_ID}}]
     ], function(res){
       (res[0] || []).forEach(function(d){ devs[d.id] = d; });
       users = (res[1] || []).filter(function(u){ return !u.activeTo || new Date(u.activeTo) > new Date(); });
@@ -381,6 +440,12 @@ geotab.addin.driverDay = function () {
       zones = res[3] || [];
       (res[4] || []).forEach(function(c){
         if(c.deviceSerialNumber && (!c.activeTo || new Date(c.activeTo) > new Date())) cams[c.deviceSerialNumber] = c; });
+      routes = {};
+      (res[5] || []).forEach(function(x){
+        var d = x.details || x.data;
+        try { d = typeof d === 'string' ? JSON.parse(d) : d; } catch(e){ return; }
+        if(d && d.kind === 'routeday' && d.driver && d.date) routes[d.driver + '|' + d.date] = d;
+      });
       users.sort(function(a, b){
         return (((a.lastName || '') + a.firstName) > ((b.lastName || '') + b.firstName)) ? 1 : -1; });
       el('dd-driver').innerHTML = users.map(function(u){
