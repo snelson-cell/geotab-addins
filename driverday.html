@@ -48,11 +48,19 @@ geotab.addin.driverDay = function () {
   var KM = 0.621371, M_TO_MI = 0.000621371;
   // Event families, so 133 events read as something rather than a wall of rows.
   var FAMILY = [
+    {name: 'Zone stop', base: 'ZoneStop'},
     {name: 'Driving', match: /speed|harsh|defensive|over /i},
     {name: 'Camera — driver', match: /distract|phone|seatbelt|seat belt|yawn|smok|drink|eat|fatigue|eye rub/i},
     {name: 'Camera — road', match: /tailgat|follow|rolling stop|red light|solid line|collision|lane/i},
     {name: 'Device and compliance', match: /.*/}
   ];
+  function ruleOf(id){ return rules[id] || {name: id, base: ''}; }
+  function familyOf(r){
+    for(var i = 0; i < FAMILY.length; i++){
+      if(FAMILY[i].base ? FAMILY[i].base === r.base : FAMILY[i].match.test(r.name || '')) return FAMILY[i];
+    }
+    return FAMILY[FAMILY.length - 1];
+  }
   var STYLE_ID = 'dd-styles';
   var CSS = [
     '#dd-root{--surface-1:#fcfcfb; --page:#f9f9f7; --ink-1:#0b0b0b; --ink-2:#52514e; --ink-3:#898781;',
@@ -275,13 +283,14 @@ geotab.addin.driverDay = function () {
     // ── events ───────────────────────────────────────────────────────────────
     var byRule = {};
     events.forEach(function(e){
-      var n = rules[e.rule.id] || e.rule.id;
+      var r = ruleOf(e.rule.id), n = (r.base === 'ZoneStop' ? 'Stopped at ' + r.name : r.name);
       byRule[n] = (byRule[n] || 0) + 1;
     });
     var chips = Object.keys(byRule).sort(function(a, b){ return byRule[b] - byRule[a]; }).map(function(n){
       return '<span class="dd-chip">' + esc(n) + ' <b>' + byRule[n] + '</b></span>'; }).join('');
     var rows = events.slice().sort(function(a, b){ return a.activeFrom < b.activeFrom ? -1 : 1; }).map(function(e){
-      var n = rules[e.rule.id] || e.rule.id, fam = FAMILY.filter(function(f){ return f.match.test(n); })[0];
+      var r = ruleOf(e.rule.id), fam = familyOf(r);
+      var n = r.base === 'ZoneStop' ? 'Stopped at ' + r.name : r.name;
       var d = secs(e.duration);
       return '<tr><td class="k">' + clock(e.activeFrom, tz) + '</td><td>' + esc(n) + '</td>' +
         '<td class="c"><span class="dd-fam">' + fam.name + '</span></td>' +
@@ -360,13 +369,15 @@ geotab.addin.driverDay = function () {
     api.multiCall([
       ['Get', {typeName: 'Device', resultsLimit: 50000}],
       ['Get', {typeName: 'User', search: {isDriver: true}, resultsLimit: 50000}],
-      ['Get', {typeName: 'Rule'}],
+      // includeZoneStopRules, or the 11 "stopped at <office>" rules come back
+      // nameless and land in the catch-all family.
+      ['Get', {typeName: 'Rule', search: {includeZoneStopRules: true}}],
       ['Get', {typeName: 'Zone'}],
       ['Get', {typeName: 'Camera'}]
     ], function(res){
       (res[0] || []).forEach(function(d){ devs[d.id] = d; });
       users = (res[1] || []).filter(function(u){ return !u.activeTo || new Date(u.activeTo) > new Date(); });
-      (res[2] || []).forEach(function(r){ rules[r.id] = r.name; });
+      (res[2] || []).forEach(function(r){ rules[r.id] = {name: r.name, base: r.baseType}; });
       zones = res[3] || [];
       (res[4] || []).forEach(function(c){
         if(c.deviceSerialNumber && (!c.activeTo || new Date(c.activeTo) > new Date())) cams[c.deviceSerialNumber] = c; });
