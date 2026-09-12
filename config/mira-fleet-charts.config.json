@@ -1,7 +1,7 @@
 {
   "name": "Mira Fleet Charts",
   "supportEmail": "snelson@thegrit.com",
-  "version": "1.58.4",
+  "version": "1.58.5",
   "items": [
     {
       "url": "https://snelson-cell.github.io/geotab-addins/assignments.html?v=2026-09-10.1",
@@ -22,6 +22,13 @@
       "path": "ActivityLink/",
       "menuName": {
         "en": "Scorecard V2 Preview"
+      }
+    },
+    {
+      "url": "https://snelson-cell.github.io/geotab-addins/driverday.html?v=2026-09-11.1",
+      "path": "ActivityLink/",
+      "menuName": {
+        "en": "Driver Day"
       }
     },
     {

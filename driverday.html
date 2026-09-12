@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<!-- Driver Day: one driver, one day, everything Geotab recorded. Loads live --
+     a single driver-day is about eight queries, so nothing is precomputed. -->
+</head>
+<body>
+<div id="dd-root">
+  <div class="dd-topbar">
+    <div>
+      <h2 class="dd-h1">Driver day</h2>
+      <div class="dd-scope" id="dd-scope">Loading…</div>
+    </div>
+    <div class="dd-controls">
+      <label class="dd-pick"><span>Driver</span><select id="dd-driver" aria-label="Driver"></select></label>
+      <div class="dd-dates">
+        <button type="button" id="dd-prev" aria-label="Previous day">&#9664;</button>
+        <input type="date" id="dd-date" aria-label="Date"/>
+        <button type="button" id="dd-next" aria-label="Next day">&#9654;</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="dd-note" id="dd-note"></div>
+  <div class="dd-kpis" id="dd-kpis"></div>
+
+  <div class="dd-head"><div class="dd-title">The day</div><div class="dd-tools" id="dd-daytools"></div></div>
+  <div class="dd-card" id="dd-day"></div>
+
+  <div class="dd-head"><div class="dd-title" id="dd-evtitle">Events</div></div>
+  <div class="dd-card" id="dd-events"></div>
+
+  <div class="dd-head"><div class="dd-title">Truck and camera</div></div>
+  <div class="dd-card" id="dd-truck"></div>
+
+  <div class="dd-foot" id="dd-foot"></div>
+</div>
+
+<script>
+geotab.addin.driverDay = function () {
+  'use strict';
+
+  var KM = 0.621371, M_TO_MI = 0.000621371;
+  // Event families, so 133 events read as something rather than a wall of rows.
+  var FAMILY = [
+    {name: 'Driving', match: /speed|harsh|defensive|over /i},
+    {name: 'Camera — driver', match: /distract|phone|seatbelt|seat belt|yawn|smok|drink|eat|fatigue|eye rub/i},
+    {name: 'Camera — road', match: /tailgat|follow|rolling stop|red light|solid line|collision|lane/i},
+    {name: 'Device and compliance', match: /.*/}
+  ];
+  var STYLE_ID = 'dd-styles';
+  var CSS = [
+    '#dd-root{--surface-1:#fcfcfb; --page:#f9f9f7; --ink-1:#0b0b0b; --ink-2:#52514e; --ink-3:#898781;',
+    '  --grid:#e1e0d9; --axis:#c3c2b7; --hairline:rgba(11,11,11,.10);',
+    '  --accent:#2a78d6; --good-ink:#0a6b18; --warn-ink:#7a5300; --bad-ink:#9b2626;',
+    '  font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--ink-1);background:var(--page);',
+    '  padding:18px 20px 28px;width:100%;}',
+    '#dd-root, #dd-root *{box-sizing:border-box;}',
+    '.dd-h1{font-size:19px;font-weight:650;margin:0;letter-spacing:-.01em;}',
+    '.dd-scope{font-size:12.5px;color:var(--ink-3);margin:3px 0 0;}',
+    '.dd-topbar{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:12px;}',
+    '.dd-controls{display:flex;flex-wrap:wrap;align-items:center;gap:10px;}',
+    '.dd-pick{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:var(--ink-3);}',
+    '.dd-pick select, .dd-dates input{font:inherit;font-size:12.5px;font-weight:600;color:var(--ink-1);',
+    '  background:var(--surface-1);border:1px solid var(--axis);border-radius:7px;padding:6px 9px;cursor:pointer;}',
+    '.dd-dates{display:inline-flex;align-items:center;gap:6px;}',
+    '.dd-dates button{font:inherit;font-size:12px;color:var(--ink-2);background:var(--surface-1);',
+    '  border:1px solid var(--axis);border-radius:7px;padding:6px 10px;cursor:pointer;}',
+    '#dd-root.busy .dd-kpis, #dd-root.busy .dd-card{opacity:.3;pointer-events:none;}',
+    '.dd-note{font-size:12.5px;border-radius:7px;padding:9px 12px;margin:12px 0 0;display:none;',
+    '  border:1px solid #efdca8;background:#fdf6e3;color:var(--warn-ink);}',
+    '.dd-note.on{display:block;}',
+    '.dd-kpis{display:flex;flex-wrap:wrap;gap:10px;margin:14px 0 0;}',
+    '.dd-kpi{flex:1 1 150px;min-width:0;background:var(--surface-1);border:1px solid var(--hairline);',
+    '  border-radius:9px;padding:11px 13px 12px;}',
+    '.dd-kpi-label{font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3);}',
+    '.dd-kpi-value{font-size:22px;font-weight:640;line-height:1.15;margin:5px 0 0;letter-spacing:-.02em;',
+    '  font-variant-numeric:tabular-nums;}',
+    '.dd-kpi-value small{font-size:12px;font-weight:500;color:var(--ink-3);letter-spacing:0;}',
+    '.dd-kpi-sub{font-size:11.5px;color:var(--ink-2);margin:3px 0 0;}',
+    '.dd-card{background:var(--surface-1);border:1px solid var(--hairline);border-radius:9px;margin:9px 0 0;overflow-x:auto;}',
+    '.dd-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:20px 0 0;}',
+    '.dd-title{font-size:14px;font-weight:650;}',
+    '.dd-tools{font-size:12px;color:var(--ink-3);}',
+    'table.dd-t{border-collapse:collapse;width:100%;font-size:12.5px;font-variant-numeric:tabular-nums;}',
+    'table.dd-t th{position:sticky;top:0;background:var(--surface-1);text-align:left;font-size:10.5px;',
+    '  letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);padding:9px 10px;',
+    '  border-bottom:1px solid var(--grid);white-space:nowrap;}',
+    'table.dd-t th.c{text-align:center;} table.dd-t th.r{text-align:right;}',
+    'table.dd-t td{padding:7px 10px;border-bottom:1px solid var(--grid);color:var(--ink-2);white-space:nowrap;}',
+    'table.dd-t tr:last-child td{border-bottom:0;}',
+    'table.dd-t td.r{text-align:right;} table.dd-t td.c{text-align:center;}',
+    'table.dd-t td.k{color:var(--ink-1);font-weight:600;}',
+    'tr.gap td{background:#faf8f2;color:var(--ink-3);font-style:italic;}',
+    '.dd-chips{display:flex;flex-wrap:wrap;gap:7px;padding:12px 14px;border-bottom:1px solid var(--grid);}',
+    '.dd-chip{font-size:11.5px;font-weight:600;padding:3px 10px;border-radius:20px;background:var(--grid);color:var(--ink-2);}',
+    '.dd-chip b{color:var(--ink-1);}',
+    '.dd-fam{font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);}',
+    '.dd-grid{display:flex;flex-wrap:wrap;gap:10px 30px;padding:13px 15px;}',
+    '.dd-grid div{flex:1 1 170px;}',
+    '.dd-grid dt{font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);}',
+    '.dd-grid dd{margin:2px 0 0;font-size:13px;color:var(--ink-1);}',
+    'a.dd-link{color:var(--accent);text-decoration:none;font-weight:600;}',
+    'a.dd-link:hover{text-decoration:underline;}',
+    '.dd-yes{color:var(--good-ink);font-weight:650;} .dd-no{color:var(--bad-ink);font-weight:650;}',
+    '.dd-foot{font-size:12px;color:var(--ink-3);margin:16px 2px 0;line-height:1.55;max-width:100ch;}'
+  ].join('\n');
+
+  var api = null, devs = {}, cams = {}, rules = {}, zones = [], users = [], state = {driver: null, date: null};
+
+  function el(id){ return document.getElementById(id); }
+  function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function f0(n){ return Math.round(n).toLocaleString('en-US'); }
+  function f1(n){ return (Math.round(n * 10) / 10).toLocaleString('en-US', {minimumFractionDigits: 1}); }
+  function note(h){ el('dd-note').innerHTML = h; el('dd-note').className = 'dd-note' + (h ? ' on' : ''); }
+  function injectStyles(){
+    var s = el(STYLE_ID);
+    if(!s){ s = document.createElement('style'); s.id = STYLE_ID; document.head.appendChild(s); }
+    s.textContent = CSS;
+  }
+  // "HH:MM:SS.fff" -> seconds. Geotab returns durations as strings everywhere.
+  function secs(d){
+    if(!d) return 0;
+    var p = String(d).split(':');
+    return (+p[0] || 0) * 3600 + (+p[1] || 0) * 60 + (parseFloat(p[2]) || 0);
+  }
+  function hm(s){
+    var h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60);
+    if(m === 60){ h += 1; m = 0; }
+    return h ? h + 'h ' + m + 'm' : m + 'm';
+  }
+  function tzOf(devId){ return (devs[devId] && devs[devId].timeZoneId) || 'America/New_York'; }
+  function clock(iso, tz){
+    return new Date(iso).toLocaleTimeString('en-US', {hour: 'numeric', minute: '2-digit', timeZone: tz});
+  }
+  function dayName(ymd){
+    var p = ymd.split('-');
+    return new Date(Date.UTC(+p[0], +p[1] - 1, +p[2])).toLocaleDateString('en-US',
+      {weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC'});
+  }
+  // Which local day an instant falls on, in the truck's own time zone.
+  function localDay(iso, tz){
+    return new Date(iso).toLocaleDateString('en-CA', {timeZone: tz});   // en-CA gives YYYY-MM-DD
+  }
+  function shift(ymd, days){
+    var p = ymd.split('-'), d = new Date(Date.UTC(+p[0], +p[1] - 1, +p[2]));
+    d.setUTCDate(d.getUTCDate() + days);
+    return d.toISOString().slice(0, 10);
+  }
+  // The truck's UTC offset at that moment, from Intl rather than a string round-trip.
+  function offsetMin(tz, d){
+    var s = new Intl.DateTimeFormat('en-US', {timeZone: tz, timeZoneName: 'longOffset'}).format(d);
+    var m = /GMT([+-]\d{2}):?(\d{2})?/.exec(s);
+    if(!m) return 0;
+    return (m[1][0] === '-' ? -1 : 1) * (Math.abs(+m[1]) * 60 + (+m[2] || 0));
+  }
+  // MyGeotab's own links open the truck's local day with the event selected.
+  function eventUrl(devId, iso, id, tz){
+    var day = localDay(iso, tz).split('-');
+    var noon = new Date(Date.UTC(+day[0], +day[1] - 1, +day[2], 12));
+    var a = new Date(Date.UTC(+day[0], +day[1] - 1, +day[2]) - offsetMin(tz, noon) * 60000);
+    var b = new Date(a.getTime() + 86399000);
+    var z = function(d){ return d.toISOString().replace(/\.\d+Z$/, '.000Z'); };
+    return location.origin + location.pathname + '#tripsHistory,dateRange:(endDate:\'' + z(b) +
+      '\',startDate:\'' + z(a) + '\'),devices:!(' + devId + ')' + (id ? ',exceptionId:' + id : '');
+  }
+  function inZone(pt, z){
+    if(!pt || !z.points || z.points.length < 3) return false;
+    var x = pt.x, y = pt.y, inside = false;
+    for(var i = 0, j = z.points.length - 1; i < z.points.length; j = i++){
+      var xi = z.points[i].x, yi = z.points[i].y, xj = z.points[j].x, yj = z.points[j].y;
+      if(((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) inside = !inside;
+    }
+    return inside;
+  }
+  function officeFor(pt){
+    for(var i = 0; i < zones.length; i++){
+      var t = (zones[i].zoneTypes || []).map(function(z){ return typeof z === 'string' ? z : (z && z.id); });
+      if(t.indexOf('ZoneTypeOfficeId') >= 0 && inZone(pt, zones[i])) return zones[i].name;
+    }
+    return null;
+  }
+
+  function render(trips, events){
+    var tz = trips.length ? tzOf(trips[0].device.id) : 'America/New_York';
+    var day = state.date;
+    var miles = 0, drive = 0, idle = 0, after = 0, stops = 0, top = 0, belt = 0;
+    trips.forEach(function(t){
+      miles += (t.distance || 0) * KM;
+      drive += secs(t.drivingDuration);
+      idle += secs(t.idlingDuration);
+      after += (t.afterHoursDistance || 0) * KM;
+      stops += 1;
+      top = Math.max(top, (t.maximumSpeed || 0) * KM);
+      if(t.isSeatBeltOff) belt += 1;
+    });
+    var first = trips.length ? trips[0].start : null, last = trips.length ? trips[trips.length - 1].stop : null;
+    var officeStops = trips.filter(function(t){ return officeFor(t.stopPoint); });
+    var officeTime = officeStops.reduce(function(s, t, i){
+      return s + (t === trips[trips.length - 1] ? 0 : secs(t.stopDuration)); }, 0);
+    // The last trip's stop runs until the next morning, so it is the overnight
+    // park, not a stop during the day. Excluded here and labelled in the table.
+    var longest = trips.slice(0, -1).reduce(function(m, t){ return Math.max(m, secs(t.stopDuration)); }, 0);
+
+    var kpi = function(label, value, sub){
+      return '<div class="dd-kpi"><div class="dd-kpi-label">' + label + '</div><div class="dd-kpi-value">' + value +
+        '</div>' + (sub ? '<div class="dd-kpi-sub">' + sub + '</div>' : '') + '</div>';
+    };
+    el('dd-kpis').innerHTML =
+      kpi('First move', first ? clock(first, tz) : '&mdash;', last ? 'last stop ' + clock(last, tz) : 'no driving') +
+      kpi('Miles', f0(miles), trips.length + (trips.length === 1 ? ' trip' : ' trips')) +
+      kpi('Driving', hm(drive), 'idling ' + hm(idle)) +
+      kpi('Stops', f0(stops), longest ? 'longest ' + hm(longest) + ' (excl. overnight)' : 'no mid-day stop') +
+      kpi('Top speed', f0(top) + ' <small>mph</small>', 'after hours ' + f1(after) + ' mi') +
+      kpi('Events', f0(events.length), belt ? belt + ' trips with the belt off' : 'seat belt on all day') +
+      kpi('At an office', officeStops.length ? officeStops.length + '&times;' : '&mdash;',
+          officeStops.length ? hm(officeTime) + ' there' : 'no office stop');
+
+    // ── the day, trip by trip, with the gaps between them ────────────────────
+    var h = '<table class="dd-t"><thead><tr><th>Start</th><th>Stop</th><th class="r">Miles</th>' +
+      '<th class="r">Driving</th><th class="r">Idling</th><th class="r">Top</th><th>Truck</th><th>Then parked</th><th>Where</th></tr></thead><tbody>';
+    trips.forEach(function(t, i){
+      var where = officeFor(t.stopPoint), pt = t.stopPoint;
+      h += '<tr><td class="k">' + clock(t.start, tz) + '</td><td>' + clock(t.stop, tz) + '</td>' +
+        '<td class="r">' + f1((t.distance || 0) * KM) + '</td><td class="r">' + hm(secs(t.drivingDuration)) + '</td>' +
+        '<td class="r">' + (secs(t.idlingDuration) ? hm(secs(t.idlingDuration)) : '&mdash;') + '</td>' +
+        '<td class="r">' + f0((t.maximumSpeed || 0) * KM) + '</td>' +
+        '<td>' + esc((devs[t.device.id] || {}).name || t.device.id) + (t.isSeatBeltOff ? ' <span class="dd-no" title="Seat belt off during this trip">belt off</span>' : '') + '</td>' +
+        '<td>' + (i === trips.length - 1 ? '<span style="color:var(--ink-3)">overnight</span>'
+                  : (secs(t.stopDuration) ? hm(secs(t.stopDuration)) : '&mdash;')) + '</td>' +
+        '<td>' + (where ? '<b>' + esc(where) + '</b>' : (pt ? '<a class="dd-link" target="_blank" rel="noopener" href="https://www.google.com/maps?q=' +
+          pt.y + ',' + pt.x + '">map</a>' : '&mdash;')) + '</td></tr>';
+    });
+    if(!trips.length) h += '<tr><td colspan="9" style="padding:18px;text-align:center">No trips on this day.</td></tr>';
+    el('dd-day').innerHTML = h + '</tbody></table>';
+    el('dd-daytools').innerHTML = trips.length ? 'odometer ' + f0((trips[trips.length - 1].odometer || 0) * M_TO_MI) + ' mi' : '';
+
+    // ── events ───────────────────────────────────────────────────────────────
+    var byRule = {};
+    events.forEach(function(e){
+      var n = rules[e.rule.id] || e.rule.id;
+      byRule[n] = (byRule[n] || 0) + 1;
+    });
+    var chips = Object.keys(byRule).sort(function(a, b){ return byRule[b] - byRule[a]; }).map(function(n){
+      return '<span class="dd-chip">' + esc(n) + ' <b>' + byRule[n] + '</b></span>'; }).join('');
+    var rows = events.slice().sort(function(a, b){ return a.activeFrom < b.activeFrom ? -1 : 1; }).map(function(e){
+      var n = rules[e.rule.id] || e.rule.id, fam = FAMILY.filter(function(f){ return f.match.test(n); })[0];
+      var d = secs(e.duration);
+      return '<tr><td class="k">' + clock(e.activeFrom, tz) + '</td><td>' + esc(n) + '</td>' +
+        '<td class="c"><span class="dd-fam">' + fam.name + '</span></td>' +
+        '<td class="r">' + (d >= 1 ? Math.round(d) + 's' : '&mdash;') + '</td>' +
+        '<td>' + esc((devs[e.device.id] || {}).name || e.device.id) + '</td>' +
+        '<td><a class="dd-link" target="_blank" rel="noopener" href="' + esc(eventUrl(e.device.id, e.activeFrom, e.id, tz)) + '">open</a></td></tr>';
+    }).join('');
+    el('dd-evtitle').textContent = 'Events (' + events.length + ')';
+    el('dd-events').innerHTML = (chips ? '<div class="dd-chips">' + chips + '</div>' : '') +
+      '<table class="dd-t"><thead><tr><th>Time</th><th>Rule</th><th class="c">Kind</th><th class="r">For</th><th>Truck</th><th>Video</th></tr></thead><tbody>' +
+      (rows || '<tr><td colspan="6" style="padding:18px;text-align:center">No events on this day.</td></tr>') + '</tbody></table>';
+
+    // ── truck and camera ─────────────────────────────────────────────────────
+    var seen = {}, cards = '';
+    trips.forEach(function(t){ seen[t.device.id] = 1; });
+    events.forEach(function(e){ seen[e.device.id] = 1; });
+    Object.keys(seen).forEach(function(id){
+      var d = devs[id] || {}, cam = cams[d.serialNumber];
+      var last = trips.filter(function(t){ return t.device.id === id; }).pop();
+      cards += '<div class="dd-grid">' +
+        '<div><dt>Truck</dt><dd>' + esc(d.name || id) + '</dd></div>' +
+        '<div><dt>Vehicle</dt><dd>' + esc([d.vinInfoYear, d.vinInfoMake, d.vinInfoModel].filter(Boolean).join(' ') || '&mdash;') + '</dd></div>' +
+        '<div><dt>VIN</dt><dd>' + esc(d.vehicleIdentificationNumber || '&mdash;') + '</dd></div>' +
+        '<div><dt>Plate</dt><dd>' + esc(d.licensePlate || '&mdash;') + '</dd></div>' +
+        '<div><dt>Device</dt><dd>' + esc(d.deviceType || '&mdash;') + ' &middot; ' + esc(d.serialNumber || '') + '</dd></div>' +
+        '<div><dt>Camera</dt><dd>' + (cam ? '<span class="dd-yes">fitted</span>' : '<span class="dd-no">none</span>') + '</dd></div>' +
+        '<div><dt>Odometer</dt><dd>' + (last && last.odometer ? f0(last.odometer * M_TO_MI) + ' mi' : '&mdash;') + '</dd></div>' +
+        '<div><dt>Engine hours</dt><dd>' + (last && last.engineHours ? f0(last.engineHours / 3600) + ' h' : '&mdash;') + '</dd></div>' +
+        '</div>';
+    });
+    el('dd-truck').innerHTML = cards || '<div class="dd-grid"><div><dd>No truck used on this day.</dd></div></div>';
+
+    var who = (users.filter(function(u){ return u.id === state.driver; })[0] || {});
+    el('dd-scope').innerHTML = esc(((who.firstName || '') + ' ' + (who.lastName || '')).trim() || 'Driver') +
+      ' &middot; ' + esc(dayName(day)) + ' &middot; times in the truck&rsquo;s local zone (' + esc(tz.split('/')[1] || tz) + ')';
+    el('dd-foot').innerHTML =
+      '<p>Everything here is what Geotab recorded for this driver on this day. <b>Events</b> are every rule that fired, not just the four the scorecard uses &mdash; hover nothing, click <b>open</b> to see the event and its video in Trips History.</p>' +
+      '<p>Odometer and engine hours come from the last trip of the day. A trip is flagged <b>belt off</b> when the device saw the seat belt unbuckled while moving.</p>';
+  }
+
+  function loadDay(){
+    if(!state.driver || !state.date) return;
+    el('dd-root').className = 'busy'; note('');
+    var from = shift(state.date, -1) + 'T00:00:00.000Z', to = shift(state.date, 2) + 'T00:00:00.000Z';
+    api.multiCall([
+      ['Get', {typeName: 'Trip', search: {userSearch: {id: state.driver}, fromDate: from, toDate: to}, resultsLimit: 5000}],
+      ['Get', {typeName: 'ExceptionEvent', search: {userSearch: {id: state.driver}, fromDate: from, toDate: to}, resultsLimit: 50000}]
+    ], function(res){
+      el('dd-root').className = '';
+      var trips = (res[0] || []).filter(function(t){ return localDay(t.start, tzOf(t.device.id)) === state.date; })
+        .sort(function(a, b){ return a.start < b.start ? -1 : 1; });
+      var events = (res[1] || []).filter(function(e){ return localDay(e.activeFrom, tzOf(e.device.id)) === state.date; });
+      render(trips, events);
+    }, function(err){
+      el('dd-root').className = '';
+      note(esc((err && err.message) || String(err)));
+    });
+  }
+
+  function loadRefs(cb){
+    api.multiCall([
+      ['Get', {typeName: 'Device', resultsLimit: 50000}],
+      ['Get', {typeName: 'User', search: {isDriver: true}, resultsLimit: 50000}],
+      ['Get', {typeName: 'Rule'}],
+      ['Get', {typeName: 'Zone'}],
+      ['Get', {typeName: 'Camera'}]
+    ], function(res){
+      (res[0] || []).forEach(function(d){ devs[d.id] = d; });
+      users = (res[1] || []).filter(function(u){ return !u.activeTo || new Date(u.activeTo) > new Date(); });
+      (res[2] || []).forEach(function(r){ rules[r.id] = r.name; });
+      zones = res[3] || [];
+      (res[4] || []).forEach(function(c){
+        if(c.deviceSerialNumber && (!c.activeTo || new Date(c.activeTo) > new Date())) cams[c.deviceSerialNumber] = c; });
+      users.sort(function(a, b){
+        return (((a.lastName || '') + a.firstName) > ((b.lastName || '') + b.firstName)) ? 1 : -1; });
+      el('dd-driver').innerHTML = users.map(function(u){
+        return '<option value="' + esc(u.id) + '">' + esc(((u.firstName || '') + ' ' + (u.lastName || '')).trim() || u.name) + '</option>';
+      }).join('');
+      if(!state.driver && users.length) state.driver = users[0].id;
+      el('dd-driver').value = state.driver;
+      cb();
+    }, function(err){ note(esc((err && err.message) || String(err))); });
+  }
+
+  return {
+    initialize: function(a, state_, cb){
+      api = a; injectStyles();
+      state.date = new Date(Date.now() - 864e5).toISOString().slice(0, 10);   // yesterday: a complete day
+      el('dd-date').value = state.date;
+      el('dd-driver').addEventListener('change', function(){ state.driver = el('dd-driver').value; loadDay(); });
+      el('dd-date').addEventListener('change', function(){ state.date = el('dd-date').value; loadDay(); });
+      el('dd-prev').addEventListener('click', function(){ state.date = shift(state.date, -1); el('dd-date').value = state.date; loadDay(); });
+      el('dd-next').addEventListener('click', function(){ state.date = shift(state.date, 1); el('dd-date').value = state.date; loadDay(); });
+      cb();
+    },
+    focus: function(a){ api = a; loadRefs(function(){ loadDay(); }); },
+    blur: function(){}
+  };
+};
+</script>
+</body>
+</html>
