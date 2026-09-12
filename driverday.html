@@ -25,6 +25,10 @@
   <div class="dd-note" id="dd-note"></div>
   <div class="dd-kpis" id="dd-kpis"></div>
 
+  <div class="dd-head" id="dd-nowhead" style="display:none"><div class="dd-title">Right now</div>
+    <div class="dd-tools" id="dd-nowtools"></div></div>
+  <div class="dd-card" id="dd-now" style="display:none"></div>
+
   <div class="dd-head"><div class="dd-title">Truck and camera</div></div>
   <div class="dd-card" id="dd-truck"></div>
 
@@ -104,6 +108,9 @@ geotab.addin.driverDay = function () {
     'a.dd-link{color:var(--accent);text-decoration:none;font-weight:600;}',
     'a.dd-link:hover{text-decoration:underline;}',
     '.dd-yes{color:var(--good-ink);font-weight:650;} .dd-no{color:var(--bad-ink);font-weight:650;}',
+    '.dd-live{display:inline-flex;align-items:center;gap:7px;font-size:15px;font-weight:650;color:var(--ink-1);}',
+    '.dd-dot{width:9px;height:9px;border-radius:50%;background:var(--axis);display:inline-block;}',
+    '.dd-dot.moving{background:var(--good-ink);} .dd-dot.stopped{background:var(--accent);} .dd-dot.dark{background:var(--bad-ink);}',
     '.dd-foot{font-size:12px;color:var(--ink-3);margin:16px 2px 0;line-height:1.55;max-width:100ch;}'
   ].join('\n');
 
@@ -183,6 +190,32 @@ geotab.addin.driverDay = function () {
       if(t.indexOf('ZoneTypeOfficeId') >= 0 && inZone(pt, zones[i])) return zones[i].name;
     }
     return null;
+  }
+
+  // Only for today: what the truck is doing at this moment. DeviceStatusInfo is
+  // frozen at the device's last contact, so the age of that reading is shown
+  // rather than implied.
+  function renderNow(devId, dsi, address){
+    var d = devs[devId] || {}, tz = tzOf(devId);
+    var live = dsi && dsi.isDeviceCommunicating !== false;
+    var mph = Math.round((dsi && dsi.speed || 0) * KM);
+    var moving = !!(dsi && dsi.isDriving);
+    var ageMin = dsi && dsi.dateTime ? Math.round((Date.now() - new Date(dsi.dateTime)) / 60000) : null;
+    var cls = !live ? 'dark' : (moving ? 'moving' : 'stopped');
+    var what = !live ? 'Not reporting' : (moving ? 'Driving ' + mph + ' mph' : 'Stopped');
+    var forHow = dsi && dsi.currentStateDuration ? hm(secs(dsi.currentStateDuration)) : null;
+    el('dd-now').innerHTML = '<div class="dd-grid">' +
+      '<div><dt>Right now</dt><dd><span class="dd-live"><span class="dd-dot ' + cls + '"></span>' + what +
+        (forHow && !moving && live ? ' <span style="font-weight:400;color:var(--ink-3)">for ' + forHow + '</span>' : '') + '</span></dd></div>' +
+      '<div style="flex:2 1 320px"><dt>Where</dt><dd>' + (address ? esc(address) : '&mdash;') +
+        (dsi && dsi.latitude ? ' <a class="dd-link" target="_blank" rel="noopener" href="https://www.google.com/maps?q=' +
+          dsi.latitude + ',' + dsi.longitude + '">map</a>' : '') + '</dd></div>' +
+      '<div><dt>Truck</dt><dd>' + or0(d.name || devId) + '</dd></div>' +
+      '<div><dt>Last reported</dt><dd>' + (dsi && dsi.dateTime ? clock(dsi.dateTime, tz) +
+        (ageMin !== null ? ' <span style="color:var(--ink-3)">(' + (ageMin < 1 ? 'just now' : ageMin + ' min ago') + ')</span>' : '') : '&mdash;') + '</dd></div>' +
+      '</div>';
+    el('dd-now').style.display = ''; el('dd-nowhead').style.display = '';
+    el('dd-nowtools').textContent = live ? '' : 'the box has not reported recently';
   }
 
   function render(trips, events){
@@ -302,10 +335,25 @@ geotab.addin.driverDay = function () {
         .sort(function(a, b){ return a.start < b.start ? -1 : 1; });
       var events = (res[1] || []).filter(function(e){ return localDay(e.activeFrom, tzOf(e.device.id)) === state.date; });
       render(trips, events);
+      el('dd-now').style.display = 'none'; el('dd-nowhead').style.display = 'none';
+      var recent = trips.length ? trips[trips.length - 1] : (res[0] || [])[(res[0] || []).length - 1];
+      var devId = recent && recent.device && recent.device.id;
+      if(devId && state.date === localDay(new Date().toISOString(), tzOf(devId))) liveState(devId);
     }, function(err){
       el('dd-root').className = '';
       note(esc((err && err.message) || String(err)));
     });
+  }
+
+  function liveState(devId){
+    api.call('Get', {typeName: 'DeviceStatusInfo', search: {deviceSearch: {id: devId}}}, function(rows){
+      var dsi = (rows || [])[0];
+      if(!dsi) return;
+      if(!dsi.latitude && !dsi.longitude) return renderNow(devId, dsi, null);
+      api.call('GetAddresses', {coordinates: [{x: dsi.longitude, y: dsi.latitude}]}, function(addr){
+        renderNow(devId, dsi, ((addr || [])[0] || {}).formattedAddress);
+      }, function(){ renderNow(devId, dsi, null); });
+    }, function(){});
   }
 
   function loadRefs(cb){
