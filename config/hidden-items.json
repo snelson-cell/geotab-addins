@@ -22,6 +22,17 @@
           "en": "Route Starts"
         }
       }
+    },
+    {
+      "hiddenOn": "2026-09-14",
+      "reason": "taken out of the menu; page and its route/zone-stop work kept",
+      "item": {
+        "url": "https://snelson-cell.github.io/geotab-addins/driverday.html?v=2026-09-11.5",
+        "path": "ActivityLink/",
+        "menuName": {
+          "en": "Driver Day"
+        }
+      }
     }
   ]
 }
