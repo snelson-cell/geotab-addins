@@ -312,14 +312,28 @@ geotab.addin.scorecardV2Preview = function () {
 
   function renderOffices(){
     var rows = snap.meta.offices.slice().sort(function(a, b){ return a.r2 - b.r2; });
+    // The live Driver Scorecard's own rank, when the payload carries it. It is a
+    // DIFFERENT 30 days from the two beside it -- that is the whole point of the
+    // column, and why it is dated rather than labelled "V1" a second time.
+    var liveOn = snap.meta.liveGen ? String(snap.meta.liveGen).slice(0, 10) : '';
+    var hasLive = rows.some(function(o){ return o.rL != null; });
     var h = '<table class="v2-t"><thead><tr><th>Office</th><th class="r">Drivers</th>' +
       '<th class="r grp">V1 rank</th><th class="r">V2 rank</th><th class="c">Move</th>' +
+      (hasLive ? '<th class="r grp help" title="Where this office stands on the live Driver ' +
+        'Scorecard, which covers the 30 days to ' + esc(liveOn) + ' -- not the same 30 days ' +
+        'as the two columns to the left. A difference here is the window moving, not a ' +
+        'change of method.">Live board<span class="sub">30 days to ' + esc(liveOn) + '</span></th>' : '') +
       '<th class="r grp">V1 median driver<span class="sub">vs company median</span></th>' +
-      '<th class="r">V2 median driver<span class="sub">vs company median</span></th></tr></thead><tbody>';
+      '<th class="r">V2 median driver<span class="sub">vs company median</span></th>' +
+      (hasLive ? '<th class="r">Live median driver<span class="sub">vs company median</span></th>' : '') +
+      '</tr></thead><tbody>';
     rows.forEach(function(o){
       h += '<tr><td class="name">' + esc(o.o) + '</td><td class="r">' + o.n + '</td>' +
         '<td class="rank grp">' + o.r1 + '</td><td class="v2rank">' + o.r2 + '</td><td class="c">' + move(o.r1 - o.r2) + '</td>' +
-        '<td class="r grp">' + pctWord(o.m1).text + '</td><td class="r">' + pctWord(o.m2).text + '</td></tr>';
+        (hasLive ? '<td class="rank grp">' + (o.rL != null ? o.rL : '&mdash;') + '</td>' : '') +
+        '<td class="r grp">' + pctWord(o.m1).text + '</td><td class="r">' + pctWord(o.m2).text + '</td>' +
+        (hasLive ? '<td class="r">' + (o.mL != null ? pctWord(o.mL).text : '&mdash;') + '</td>' : '') +
+        '</tr>';
     });
     el('v2-offwrap').innerHTML = h + '</tbody></table>';
   }
