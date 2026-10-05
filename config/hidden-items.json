@@ -33,6 +33,39 @@
           "en": "Driver Day"
         }
       }
+    },
+    {
+      "hiddenOn": "2026-10-05",
+      "reason": "taken out of the menu; page kept",
+      "item": {
+        "url": "https://snelson-cell.github.io/geotab-addins/scorecard.html?v=2026-09-15.1",
+        "path": "ActivityLink/",
+        "menuName": {
+          "en": "Driver Scorecard"
+        }
+      }
+    },
+    {
+      "hiddenOn": "2026-10-05",
+      "reason": "taken out of the menu; page kept",
+      "item": {
+        "url": "https://snelson-cell.github.io/geotab-addins/scorecard-v2.html?v=2026-09-15.1",
+        "path": "ActivityLink/",
+        "menuName": {
+          "en": "Scorecard V2 Preview"
+        }
+      }
+    },
+    {
+      "hiddenOn": "2026-10-05",
+      "reason": "taken out of the menu; page kept",
+      "item": {
+        "url": "https://snelson-cell.github.io/geotab-addins/speeding.html?v=2026-09-01.4",
+        "path": "ActivityLink/",
+        "menuName": {
+          "en": "Speeding by Zone"
+        }
+      }
     }
   ]
 }

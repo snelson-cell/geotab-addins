@@ -1,34 +1,13 @@
 {
   "name": "Mira Fleet Charts",
   "supportEmail": "snelson@thegrit.com",
-  "version": "1.58.11",
+  "version": "1.59.0",
   "items": [
     {
       "url": "https://snelson-cell.github.io/geotab-addins/assignments.html?v=2026-09-10.1",
       "path": "ActivityLink/",
       "menuName": {
         "en": "Driver Assignment"
-      }
-    },
-    {
-      "url": "https://snelson-cell.github.io/geotab-addins/scorecard.html?v=2026-09-15.1",
-      "path": "ActivityLink/",
-      "menuName": {
-        "en": "Driver Scorecard"
-      }
-    },
-    {
-      "url": "https://snelson-cell.github.io/geotab-addins/scorecard-v2.html?v=2026-09-15.1",
-      "path": "ActivityLink/",
-      "menuName": {
-        "en": "Scorecard V2 Preview"
-      }
-    },
-    {
-      "url": "https://snelson-cell.github.io/geotab-addins/speeding.html?v=2026-09-01.4",
-      "path": "ActivityLink/",
-      "menuName": {
-        "en": "Speeding by Zone"
       }
     },
     {
