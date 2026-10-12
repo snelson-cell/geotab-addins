@@ -1,7 +1,7 @@
 {
   "name": "Mira Fleet Charts",
   "supportEmail": "snelson@thegrit.com",
-  "version": "1.59.0",
+  "version": "1.60.0",
   "items": [
     {
       "url": "https://snelson-cell.github.io/geotab-addins/assignments.html?v=2026-09-10.1",
@@ -15,13 +15,6 @@
       "path": "ActivityLink/",
       "menuName": {
         "en": "Top Speed by Driver"
-      }
-    },
-    {
-      "url": "https://snelson-cell.github.io/geotab-addins/fleet.html?v=2026-09-08.2",
-      "path": "ActivityLink/",
-      "menuName": {
-        "en": "Fleet Roster"
       }
     },
     {

@@ -66,6 +66,17 @@
           "en": "Speeding by Zone"
         }
       }
+    },
+    {
+      "hiddenOn": "2026-10-12",
+      "reason": "taken out of the menu; page kept",
+      "item": {
+        "url": "https://snelson-cell.github.io/geotab-addins/fleet.html?v=2026-09-08.2",
+        "path": "ActivityLink/",
+        "menuName": {
+          "en": "Fleet Roster"
+        }
+      }
     }
   ]
 }
